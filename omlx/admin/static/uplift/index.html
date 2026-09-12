@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark" data-motion="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>oMLX · Uplift</title>
+<link rel="icon" href="/admin/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="./vendor/uPlot.min.css">
+<link rel="stylesheet" href="./uplift.css">
+</head>
+<body>
+<div class="aurora" aria-hidden="true"></div>
+<div class="wrap">
+
+<header class="top">
+    <div class="logo"><span class="dot" id="status-dot"></span> oMLX <span style="opacity:.5;font-weight:400">Uplift</span></div>
+    <span class="chip" id="chip-uptime">—</span>
+    <span class="chip" id="chip-device">—</span>
+    <span class="spacer"></span>
+    <button class="icon-btn" id="btn-motion" title="Toggle animations">✦</button>
+    <button class="icon-btn" id="btn-theme" title="Toggle theme">◐</button>
+    <a class="icon-btn" href="/admin/dashboard" title="Classic dashboard" style="text-decoration:none">⌂</a>
+</header>
+
+<div class="banner" id="banner"><span>⚠</span><span id="banner-text"></span></div>
+
+<main id="grid">
+    <section class="card s3"><h2>Generation</h2>
+        <div class="stat-value" id="v-gentps">—</div><div class="stat-label">tokens / s</div></section>
+    <section class="card s3"><h2>Prefill</h2>
+        <div class="stat-value t2" id="v-prefilltps">—</div><div class="stat-label">tokens / s</div></section>
+    <section class="card s3"><h2>Requests</h2>
+        <div class="stat-value" id="v-requests">—</div><div class="stat-label">served since start</div></section>
+    <section class="card s3"><h2>Tokens served</h2>
+        <div class="stat-value t2" id="v-tokens">—</div><div class="stat-label" id="v-tokens-sub">&nbsp;</div></section>
+
+    <section class="card s6"><h2>Throughput <span class="right" id="chart-tps-window"></span></h2>
+        <div class="chart-box" id="chart-tps"></div></section>
+    <section class="card s6"><h2>Memory pressure <span class="right" id="mem-label"></span></h2>
+        <div class="chart-box" id="chart-mem"></div></section>
+
+    <section class="card s7"><h2>Models <span class="right" id="models-count"></span></h2>
+        <div id="model-list"><div class="empty">No models loaded</div></div></section>
+    <section class="card s5"><h2>Cache</h2>
+        <div style="display:flex;gap:24px;flex-wrap:wrap">
+            <div><div class="stat-value" id="v-cacheeff" style="font-size:26px">—</div><div class="stat-label">hit efficiency</div></div>
+            <div><div class="stat-value t2" id="v-hotcache" style="font-size:26px">—</div><div class="stat-label">hot cache</div></div>
+        </div>
+        <div class="meter" id="meter-cache"><div></div></div>
+        <div class="stat-sub" id="cache-sub" style="margin-top:8px"></div>
+        <h2 style="margin-top:18px">Queue</h2>
+        <div style="display:flex;gap:24px">
+            <div><div class="stat-value" id="v-active" style="font-size:26px">—</div><div class="stat-label">active</div></div>
+            <div><div class="stat-value t2" id="v-waiting" style="font-size:26px">—</div><div class="stat-label">waiting</div></div>
+        </div></section>
+
+    <section class="card s7"><h2>Today's activity <span class="right" id="usage-sub"></span></h2>
+        <div class="heat" id="heat"></div>
+        <div class="heat-legend"><span>00:00</span><span style="flex:1"></span><span>23:00</span></div></section>
+    <section class="card s5"><h2>Event feed</h2>
+        <div class="feed" id="feed"><div class="empty">Watching…</div></div></section>
+</main>
+</div>
+
+<div id="toasts" aria-live="polite"></div>
+
+<script src="./vendor/uPlot.min.js"></script>
+<script src="./vendor/countUp.umd.js"></script>
+<script src="./vendor/confetti.browser.js"></script>
+<script src="./core.js"></script>
+<script src="./uplift.js"></script>
+</body>
+</html>
