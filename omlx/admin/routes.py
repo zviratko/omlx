@@ -5621,7 +5621,8 @@ async def get_server_stats(
 
     Args:
         model: Filter by model ID. Empty string returns global aggregate.
-        scope: "session" for current session, "alltime" for persisted totals.
+        scope: "session" for current session, "alltime" for persisted
+               totals, "12h"/"24h" for rolling windows from usage history.
     """
     from ..server import resolve_model_id
     from ..server_metrics import get_server_metrics
