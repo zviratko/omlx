@@ -17,8 +17,8 @@
  * when the dragged node is re-inserted).
  */
 (() => {
-    const LAYOUT_KEY = '***';
-    const SETTINGS_KEY = '***';
+    const LAYOUT_KEY = 'omlx-status-layout-v4';
+    const SETTINGS_KEY = 'omlx-status-settings-v4';
     const DRAG_THRESHOLD = 4;   // px before a press becomes a drag
     const ROW = 8;              // px per implicit grid row
     const GAP = 32;             // px vertical gap (card margin-bottom, 2rem)
@@ -50,7 +50,7 @@
         try {
             // v3 encoded a fixed left/right/below zone model that has no
             // faithful flat-grid equivalent: drop it, start from defaults.
-            localStorage.removeItem('omlx-sta…t-v3');
+            localStorage.removeItem('omlx-status-layout-v3');
             const raw = localStorage.getItem(LAYOUT_KEY);
             const parsed = raw ? JSON.parse(raw) : null;
             if (parsed && Array.isArray(parsed.order)) return parsed;

@@ -1162,9 +1162,12 @@
     min-width: 0;
     margin-bottom: 2rem; /* baked into the row-span math; see GAP above */
 }
-/* Spacing is the grid gap + card margin; neutralize legacy mt-8 too. */
+/* Spacing is the grid gap + card margin; neutralize the legacy mb-8/mt-8
+   the wrapped sections carry (an inner bottom margin would inflate the
+   measured height and the row span, leaving a double gap). */
 .omlx-card > *:last-child {
     margin-top: 0;
+    margin-bottom: 0;
 }
 .omlx-drag-handle {
     position: absolute;
