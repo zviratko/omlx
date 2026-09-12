@@ -53,9 +53,107 @@ function normalize(raw) {
             waiting: num(m.waiting_requests) || 0,
             idleSeconds: num(m.idle_seconds),
             state: STATES.includes(modelState(m)) ? modelState(m) : 'Idle',
+            // Live per-request rows: kept raw-ish (guarded) for the request panel
+            // and the client-side percentile tracker.
+            prefilling: (Array.isArray(m.prefilling) ? m.prefilling : []).map(p => ({
+                rid: String(p.request_id || ''),
+                prompt: num(p.prompt_tokens ?? p.prompt_length ?? p.num_prompt_tokens),
+            })).filter(p => p.rid),
+            generating: (Array.isArray(m.generating) ? m.generating : []).map(g => ({
+                rid: String(g.request_id || ''),
+                prompt: num(g.prompt_tokens),
+                generated: num(g.generated_tokens) || 0,
+                tps: num(g.tokens_per_second),
+                elapsed: num(g.elapsed_seconds),
+            })).filter(g => g.rid),
         })),
     };
 }
+
+function pruneOlderThan(history, cutoffMs) {
+    let drop = 0;
+    while (drop < history.length && history[drop].time < cutoffMs) drop++;
+    if (drop) history.splice(0, drop);
+    return history;
+}
+
+/* ---------------- per-request percentile tracker ----------------
+   uPlot can only show what the server kept: hourly aggregates (averages).
+   Percentiles of per-request sizes do not exist server-side, so we build
+   them client-side from in-flight request rows while the page is open. */
+function createRequestTracker(maxSamples) {
+    const cap = maxSamples || 2000;
+    const inflight = new Map();          // rid -> last observed {model, prompt, generated}
+    const samples = { prompt: [], completion: [] };
+    function record(metric, value) {
+        if (value === null || value <= 0) return;
+        samples[metric].push(value);
+        if (samples[metric].length > cap) samples[metric].shift();
+    }
+    return {
+        samples,
+        observe(snapshot) {
+            const seen = new Set();
+            for (const m of snapshot.models) {
+                for (const row of [...(m.prefilling || []), ...(m.generating || [])]) {
+                    seen.add(row.rid);
+                    const prev = inflight.get(row.rid) || {};
+                    inflight.set(row.rid, {
+                        model: m.id,
+                        prompt: row.prompt ?? prev.prompt ?? null,
+                        generated: row.generated ?? prev.generated ?? 0,
+                    });
+                }
+            }
+            // A rid that vanished finished between two polls: log its final size.
+            for (const [rid, info] of inflight) {
+                if (!seen.has(rid)) {
+                    record('prompt', info.prompt);
+                    record('completion', info.generated);
+                    inflight.delete(rid);
+                }
+            }
+        },
+        inflightCount: () => inflight.size,
+    };
+}
+
+/* Linear-interpolated percentile over an unsorted array. p in [0,100]. */
+function percentile(values, p) {
+    if (!values.length) return null;
+    const s = values.slice().sort((a, b) => a - b);
+    const idx = (Math.min(100, Math.max(0, p)) / 100) * (s.length - 1);
+    const lo = Math.floor(idx), hi = Math.ceil(idx);
+    return lo === hi ? s[lo] : s[lo] + (s[hi] - s[lo]) * (idx - lo);
+}
+function mean(values) {
+    if (!values.length) return null;
+    return values.reduce((a, b) => a + b, 0) / values.length;
+}
+
+/* ---------------- layout settings ---------------- */
+const LAYOUT_KEY = '***';
+const LAYOUT_DEFAULTS = { cols: 4, chartWindowSec: 300, intervalMs: 1000, logsHideDebug: true, percentile: 'p95', collapsed: {} };
+const LAYOUT_WINDOWS = [60, 300, 900, 3600];
+const LAYOUT_INTERVALS = [500, 1000, 2000, 5000];
+const LAYOUT_PERCENTILES = ['p50', 'p90', 'p95', 'p99'];
+function loadLayout(storage) {
+    let l = {};
+    try { l = JSON.parse(storage.getItem(LAYOUT_KEY)) || {}; } catch (_) { /* denied storage */ }
+    return {
+        cols: [1, 2, 3, 4, 5].includes(l.cols) ? l.cols : LAYOUT_DEFAULTS.cols,
+        chartWindowSec: LAYOUT_WINDOWS.includes(l.chartWindowSec) ? l.chartWindowSec : LAYOUT_DEFAULTS.chartWindowSec,
+        intervalMs: LAYOUT_INTERVALS.includes(l.intervalMs) ? l.intervalMs : LAYOUT_DEFAULTS.intervalMs,
+        logsHideDebug: l.logsHideDebug !== false,
+        percentile: LAYOUT_PERCENTILES.includes(l.percentile) ? l.percentile : LAYOUT_DEFAULTS.percentile,
+        collapsed: (l.collapsed && typeof l.collapsed === 'object') ? { ...l.collapsed } : {},
+    };
+}
+function saveLayout(storage, layout) {
+    try { storage.setItem(LAYOUT_KEY, JSON.stringify(layout)); } catch (_) { /* ignore */ }
+}
+/* A card never spans more than the grid has columns. */
+function clampSpan(span, cols) { return Math.max(1, Math.min(span, cols)); }
 
 /* Rolling time-window history of samples (ring semantics via splice). */
 function appendSample(history, sample, max) {
@@ -147,7 +245,9 @@ function fmtDuration(s) {
 }
 function fmtNumber(n) { return n === null ? '—' : Math.round(n).toLocaleString('en-US'); }
 
-return { num, r, normalize, modelState, appendSample, eventsBetween, milestonesBetween,
+return { num, r, normalize, modelState, appendSample, pruneOlderThan, eventsBetween, milestonesBetween,
+         createRequestTracker, percentile, mean,
          PREFS_KEY, PREFS_DEFAULTS, loadPrefs, savePrefs,
+         LAYOUT_KEY, LAYOUT_DEFAULTS, LAYOUT_WINDOWS, LAYOUT_INTERVALS, LAYOUT_PERCENTILES, loadLayout, saveLayout, clampSpan,
          fmtCompact, fmtBytes, fmtDuration, fmtNumber };
 });

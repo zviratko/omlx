@@ -20,53 +20,118 @@
     <span class="spacer"></span>
     <button class="icon-btn" id="btn-motion" title="Toggle animations">✦</button>
     <button class="icon-btn" id="btn-theme" title="Toggle theme">◐</button>
+    <button class="icon-btn" id="btn-layout" title="Layout settings">⚙</button>
     <a class="icon-btn" href="/admin/dashboard" title="Classic dashboard" style="text-decoration:none">⌂</a>
 </header>
+
+<div class="popover" id="layout-pop" hidden>
+    <h3>Layout</h3>
+    <label>Columns
+        <select id="opt-cols"></select></label>
+    <label>Chart window
+        <select id="opt-window"></select></label>
+    <label>Poll interval
+        <select id="opt-interval"></select></label>
+    <label class="row"><input type="checkbox" id="opt-hide-debug"> Hide DEBUG in logs</label>
+    <div class="row buttons">
+        <button id="btn-expand-all">Expand all</button>
+        <button id="btn-layout-reset">Reset layout</button>
+    </div>
+    <p class="hint">Settings persist in this browser only (localStorage).</p>
+</div>
 
 <div class="banner" id="banner"><span>⚠</span><span id="banner-text"></span></div>
 
 <main id="grid">
-    <section class="card s3"><h2>Generation</h2>
-        <div class="stat-value" id="v-gentps">—</div><div class="stat-label">tokens / s</div></section>
-    <section class="card s3"><h2>Prefill</h2>
-        <div class="stat-value t2" id="v-prefilltps">—</div><div class="stat-label">tokens / s</div></section>
-    <section class="card s3"><h2>Requests</h2>
-        <div class="stat-value" id="v-requests">—</div><div class="stat-label">served since start</div></section>
-    <section class="card s3"><h2>Tokens served</h2>
-        <div class="stat-value t2" id="v-tokens">—</div><div class="stat-label" id="v-tokens-sub">&nbsp;</div></section>
 
-    <section class="card s6"><h2>Throughput <span class="right" id="chart-tps-window"></span></h2>
-        <div class="chart-box" id="chart-tps"></div></section>
-    <section class="card s6"><h2>Memory pressure <span class="right" id="mem-label"></span></h2>
-        <div class="chart-box" id="chart-mem"></div></section>
-
-    <section class="card s7"><h2>Models <span class="right" id="models-count"></span></h2>
-        <div id="model-list"><div class="empty">No models loaded</div></div></section>
-    <section class="card s5"><h2>Cache</h2>
-        <div style="display:flex;gap:24px;flex-wrap:wrap">
-            <div><div class="stat-value" id="v-cacheeff" style="font-size:26px">—</div><div class="stat-label">hit efficiency</div></div>
-            <div><div class="stat-value t2" id="v-hotcache" style="font-size:26px">—</div><div class="stat-label">hot cache</div></div>
-        </div>
-        <div class="meter" id="meter-cache"><div></div></div>
-        <div class="stat-sub" id="cache-sub" style="margin-top:8px"></div>
-        <h2 style="margin-top:18px">Queue</h2>
-        <div style="display:flex;gap:24px">
-            <div><div class="stat-value" id="v-active" style="font-size:26px">—</div><div class="stat-label">active</div></div>
-            <div><div class="stat-value t2" id="v-waiting" style="font-size:26px">—</div><div class="stat-label">waiting</div></div>
+    <section class="card" data-id="gen" data-cols="1">
+        <h2><button class="collapse" title="Collapse">–</button>Generation<span class="right"></span></h2>
+        <div class="card-body">
+            <div class="stat-value" id="v-gentps">—</div><div class="stat-label">tokens / s</div>
         </div></section>
 
-    <section class="card s7"><h2>Today's activity <span class="right" id="usage-sub"></span></h2>
-        <div class="heat" id="heat"></div>
-        <div class="heat-legend"><span>00:00</span><span style="flex:1"></span><span>23:00</span></div></section>
-    <section class="card s5"><h2>Event feed</h2>
-        <div class="feed" id="feed"><div class="empty">Watching…</div></div></section>
+    <section class="card" data-id="prefill" data-cols="1">
+        <h2><button class="collapse" title="Collapse">–</button>Prefill<span class="right"></span></h2>
+        <div class="card-body">
+            <div class="stat-value t2" id="v-prefilltps">—</div><div class="stat-label">tokens / s</div>
+        </div></section>
+
+    <section class="card" data-id="requests" data-cols="1">
+        <h2><button class="collapse" title="Collapse">–</button>Requests<span class="right"></span></h2>
+        <div class="card-body">
+            <div class="stat-value" id="v-requests">—</div>
+            <div class="stat-label">served · <span id="v-active2">—</span> active · <span id="v-waiting2">—</span> waiting</div>
+        </div></section>
+
+    <section class="card" data-id="tokens" data-cols="1">
+        <h2><button class="collapse" title="Collapse">–</button>Tokens<span class="right"></span></h2>
+        <div class="card-body">
+            <div class="stat-value t2" id="v-tokens">—</div>
+            <div class="stat-label">served total</div>
+            <div class="stat-sub" id="v-tokens-sub" style="margin-top:6px"></div>
+        </div></section>
+
+    <section class="card" data-id="chart-tps" data-cols="2">
+        <h2><button class="collapse" title="Collapse">–</button>Throughput <span class="right" id="chart-tps-window"></span></h2>
+        <div class="card-body"><div class="chart-box" id="chart-tps"></div></div></section>
+
+    <section class="card" data-id="chart-mem" data-cols="2">
+        <h2><button class="collapse" title="Collapse">–</button>Memory pressure <span class="right" id="mem-label"></span></h2>
+        <div class="card-body"><div class="chart-box" id="chart-mem"></div></div></section>
+
+    <section class="card" data-id="reqstats" data-cols="2">
+        <h2><button class="collapse" title="Collapse">–</button>Request sizes
+            <span class="right"><select id="opt-percentile" title="Percentile"></select></span></h2>
+        <div class="card-body">
+            <div class="pair" id="reqstats-grid">
+                <div><div class="stat-value" id="v-prompt-avg" style="font-size:22px">—</div><div class="stat-label">avg prompt tok</div></div>
+                <div><div class="stat-value t2" id="v-prompt-pct" style="font-size:22px">—</div><div class="stat-label" id="lbl-prompt-pct">p95 prompt tok</div></div>
+                <div><div class="stat-value" id="v-compl-avg" style="font-size:22px">—</div><div class="stat-label">avg completion tok</div></div>
+                <div><div class="stat-value t2" id="v-compl-pct" style="font-size:22px">—</div><div class="stat-label" id="lbl-compl-pct">p95 completion tok</div></div>
+            </div>
+            <div class="stat-sub" id="reqstats-note" style="margin-top:10px"></div>
+        </div></section>
+
+    <section class="card" data-id="models" data-cols="2">
+        <h2><button class="collapse" title="Collapse">–</button>Models <span class="right" id="models-count"></span></h2>
+        <div class="card-body"><div id="model-list"><div class="empty">No models loaded</div></div></div></section>
+
+    <section class="card" data-id="cache" data-cols="1">
+        <h2><button class="collapse" title="Collapse">–</button>Cache</h2>
+        <div class="card-body">
+            <div class="stat-value" id="v-cacheeff" style="font-size:26px">—</div>
+            <div class="stat-label">hit efficiency</div>
+            <div class="meter" id="meter-cache"><div></div></div>
+            <div class="stat-sub" id="cache-sub" style="margin-top:8px"></div>
+        </div></section>
+
+    <section class="card" data-id="live" data-cols="1">
+        <h2><button class="collapse" title="Collapse">–</button>In-flight <span class="right" id="live-count"></span></h2>
+        <div class="card-body"><div id="live-list"><div class="empty">Idle</div></div></div></section>
+
+    <section class="card" data-id="usage" data-cols="2">
+        <h2><button class="collapse" title="Collapse">–</button>Usage
+            <span class="right"><select id="opt-usage-range" title="Range"></select> <span id="usage-sub"></span></span></h2>
+        <div class="card-body">
+            <div class="heat" id="heat"></div>
+            <div class="heat-legend"><span>00:00</span><span style="flex:1"></span><span>23:00</span></div>
+            <div id="usage-models" class="usage-table"></div>
+        </div></section>
+
+    <section class="card" data-id="feed" data-cols="1">
+        <h2><button class="collapse" title="Collapse">–</button>Events</h2>
+        <div class="card-body"><div class="feed" id="feed"><div class="empty">Watching…</div></div></div></section>
+
+    <section class="card" data-id="logs" data-cols="2">
+        <h2><button class="collapse" title="Collapse">–</button>Logs <span class="right" id="logs-sub"></span></h2>
+        <div class="card-body"><pre class="logs" id="logs">—</pre></div></section>
+
 </main>
 </div>
 
 <div id="toasts" aria-live="polite"></div>
 
 <script src="./vendor/uPlot.min.js"></script>
-<script src="./vendor/countUp.umd.js"></script>
 <script src="./vendor/confetti.browser.js"></script>
 <script src="./core.js"></script>
 <script src="./uplift.js"></script>

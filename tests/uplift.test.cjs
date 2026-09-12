@@ -110,3 +110,67 @@ test('formatters', () => {
     assert.strictEqual(C.fmtDuration(75), '1m 15s');
     assert.strictEqual(C.fmtNumber(1234567), '1,234,567');
 });
+
+test('pruneOlderThan drops stale samples', () => {
+    const now = Date.now();
+    const h = [{ time: now - 5000 }, { time: now - 2000 }, { time: now }];
+    C.pruneOlderThan(h, now - 3000);
+    assert.strictEqual(h.length, 2);
+});
+
+test('normalize keeps live request rows guarded', () => {
+    const s = snap(raw({ active_models: { models: [{
+        id: 'mm', actual_size: 1, active_requests: 1,
+        prefilling: [{ request_id: 'p1', prompt_tokens: 120 }, { request_id: '', prompt_tokens: 5 }],
+        generating: [{ request_id: 'g1', prompt_tokens: 50, generated_tokens: 9, tokens_per_second: 30.5, elapsed_seconds: 0.3 }],
+    }], model_memory_used: 0, model_memory_max: 1, memory_pressure: {} } }));
+    assert.strictEqual(s.models[0].prefilling.length, 1); // empty rid dropped
+    assert.strictEqual(s.models[0].prefilling[0].prompt, 120);
+    assert.strictEqual(s.models[0].generating[0].generated, 9);
+    assert.strictEqual(s.models[0].generating[0].tps, 30.5);
+});
+
+test('request tracker records finished requests', () => {
+    const t = C.createRequestTracker(100);
+    const row = rid => ({ rid, prompt: 100, generated: 5, tps: 10, elapsed: 0.5 });
+    const snapWith = rows => ({ models: [{ id: 'm', prefilling: [], generating: rows }] });
+    t.observe(snapWith([row('a'), row('b')]));
+    assert.strictEqual(t.inflightCount(), 2);
+    t.observe(snapWith([row('a')]));               // b finished
+    assert.strictEqual(t.samples.completion.length, 1);
+    assert.strictEqual(t.samples.prompt.length, 1);
+    t.observe(snapWith([]));                        // a finished too
+    assert.strictEqual(t.samples.completion.length, 2);
+    assert.strictEqual(t.inflightCount(), 0);
+});
+
+test('percentile and mean', () => {
+    const vals = [10, 20, 30, 40, 50];
+    assert.strictEqual(C.percentile(vals, 0), 10);
+    assert.strictEqual(C.percentile(vals, 100), 50);
+    assert.strictEqual(C.percentile(vals, 50), 30);
+    assert.strictEqual(Math.round(C.percentile(vals, 90)), 46);
+    assert.strictEqual(C.percentile([], 50), null);
+    assert.strictEqual(C.mean(vals), 30);
+    assert.strictEqual(C.mean([]), null);
+});
+
+test('layout persistence and clamping', () => {
+    const items = {};
+    const store = { getItem: k => items[k], setItem: (k, v) => items[k] = v };
+    assert.deepStrictEqual(C.loadLayout(store), C.LAYOUT_DEFAULTS);
+    items[C.LAYOUT_KEY] = 'broken{';
+    assert.deepStrictEqual(C.loadLayout(store), C.LAYOUT_DEFAULTS);
+    items[C.LAYOUT_KEY] = JSON.stringify({ cols: 9, chartWindowSec: 123, intervalMs: 'x',
+        logsHideDebug: false, percentile: 'p42', collapsed: { models: true } });
+    const l = C.loadLayout(store);
+    assert.strictEqual(l.cols, 4);                 // invalid => default
+    assert.strictEqual(l.chartWindowSec, 300);
+    assert.strictEqual(l.intervalMs, 1000);
+    assert.strictEqual(l.logsHideDebug, false);    // valid override kept
+    assert.strictEqual(l.percentile, 'p95');
+    assert.strictEqual(l.collapsed.models, true);
+    assert.strictEqual(C.clampSpan(2, 1), 1);
+    assert.strictEqual(C.clampSpan(2, 5), 2);
+    assert.strictEqual(C.clampSpan(5, 3), 3);
+});
