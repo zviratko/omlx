@@ -67,6 +67,10 @@ function normalize(raw) {
                 elapsed: num(g.elapsed_seconds),
             })).filter(g => g.rid),
         })),
+        // Server-side full-population request stats (mock / future backend).
+        // Passed through guarded: unknown backends simply omit the key.
+        requestStats: raw.request_stats && typeof raw.request_stats === 'object'
+            ? raw.request_stats : null,
     };
 }
 

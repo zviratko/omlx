@@ -87,13 +87,35 @@
                 <div><div class="stat-value t2" id="v-prompt-pct" style="font-size:22px">—</div><div class="stat-label" id="lbl-prompt-pct">p95 prompt tok</div></div>
                 <div><div class="stat-value" id="v-compl-avg" style="font-size:22px">—</div><div class="stat-label">avg completion tok</div></div>
                 <div><div class="stat-value t2" id="v-compl-pct" style="font-size:22px">—</div><div class="stat-label" id="lbl-compl-pct">p95 completion tok</div></div>
+                <div><div class="stat-value" id="v-ttft" style="font-size:22px">—</div><div class="stat-label">queue→first tok ms</div></div>
+                <div><div class="stat-value t2" id="v-errrate" style="font-size:22px">—</div><div class="stat-label">error rate</div></div>
             </div>
             <div class="stat-sub" id="reqstats-note" style="margin-top:10px"></div>
         </div></section>
 
-    <section class="card" data-id="models" data-cols="2">
+    <section class="card" data-id="feed" data-cols="1">
+        <h2><button class="collapse" title="Collapse">–</button>Events</h2>
+        <div class="card-body"><div class="feed" id="feed"><div class="empty">Watching…</div></div></div></section>
+
+    <section class="card" data-id="reqfeed" data-cols="2">
+        <h2><button class="collapse" title="Collapse">–</button>Requests <span class="right" id="reqfeed-sub"></span></h2>
+        <div class="card-body"><div id="reqfeed"><div class="empty">No requests yet</div></div></div></section>
+
+    <section class="card" data-id="models-admin" data-cols="2">
         <h2><button class="collapse" title="Collapse">–</button>Models <span class="right" id="models-count"></span></h2>
-        <div class="card-body"><div id="model-list"><div class="empty">No models loaded</div></div></div></section>
+        <div class="card-body">
+            <div id="model-list"><div class="empty">No models loaded</div></div>
+            <div id="model-admin" class="usage-table"></div>
+            <div id="settings-editor" hidden>
+                <h2 style="margin-top:14px">Settings — <span id="se-model"></span></h2>
+                <div id="se-fields" class="pair"></div>
+                <div style="display:flex;gap:8px;margin-top:12px">
+                    <button class="se-btn" id="se-save">Save</button>
+                    <button class="se-btn" id="se-cancel">Cancel</button>
+                    <span id="se-msg" class="stat-sub" style="align-self:center"></span>
+                </div>
+            </div>
+        </div></section>
 
     <section class="card" data-id="cache" data-cols="1">
         <h2><button class="collapse" title="Collapse">–</button>Cache</h2>

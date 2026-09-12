@@ -210,6 +210,17 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
     animation: pulse 1s ease-in-out infinite; }
 .badge.Loading    { border-color: var(--accent); color: var(--accent);
     animation: pulse 1.8s ease-in-out infinite; }
+.badge.Queued     { color: var(--dim); border-color: var(--edge); }
+.badge.Generating { background: var(--accent); border-color: var(--accent); color: #0b0b0b; }
+.badge.Complete   { background: var(--ink); border-color: var(--ink); color: var(--bg); }
+.badge.Error      { background: var(--red); border-color: var(--red); color: #fff; }
+/* Settings editor + admin table buttons: sharp rectangles, value-shift hover */
+.se-btn { background: transparent; border: 1px solid var(--edge); color: var(--ink);
+    border-radius: 0; padding: 4px 10px; font: 400 11px/1.4 var(--mono); cursor: pointer; }
+.se-btn:hover { background: var(--ink); color: var(--bg); }
+.se-row { display: flex; justify-content: space-between; align-items: center; gap: 10px;
+    font: 300 12px/1.4 var(--mono); margin-bottom: 8px; }
+.se-row input, .se-row select { width: 110px; }
 @keyframes pulse { 50% { opacity: .5; } }
 .model-name { font: 400 12px/1.4 var(--mono); flex: 1; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap; }

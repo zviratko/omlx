@@ -233,6 +233,8 @@ counter('v-prompt-avg', v => C.fmtCompact(v));
 counter('v-prompt-pct', v => C.fmtCompact(v));
 counter('v-compl-avg',  v => C.fmtCompact(v));
 counter('v-compl-pct',  v => C.fmtCompact(v));
+counter('v-ttft',       v => C.fmtNumber(v));
+counter('v-errrate',    v => v.toFixed(2) + '%');
 
 /* ---------------- charts ---------------- */
 const axisFont = '10px ui-monospace, SFMono-Regular, Menlo, monospace'; // uPlot 1.6.32: plain string only
@@ -410,7 +412,7 @@ function render(s) {
 
     renderModels(s);
     renderLive(s);
-    renderRequestStats();
+    renderRequestStats(s);
 
     // Chart buffers (window pruning happens at draw time).
     tpsData[0].push(s.time); tpsData[1].push(s.genTps); tpsData[2].push(s.prefillTps);
@@ -474,17 +476,37 @@ function renderLive(s) {
     }
 }
 
-/* Request sizes: avg from server-side hourly usage aggregates,
-   percentiles from the client-side tracker (page session only). */
-function renderRequestStats() {
+/* Request sizes: prefer server-side full-population stats (mock endpoint or
+   future real backend); fall back to client-side session tracker when absent. */
+function renderRequestStats(s) {
     fillSelectOnce();
     const p = PERCENTILES[layout.percentile];
+    const server = s && s.requestStats ? s.requestStats : null;
+    const pick = (blk, key) => blk && blk[key] !== undefined && blk[key] !== null ? blk[key] : null;
+    const pKey = { p50: 'p50', p90: 'p90', p95: 'p95', p99: 'p99' }[layout.percentile];
+
+    if (server) {
+        const pt = server.prompt_tokens || {}, ct = server.completion_tokens || {};
+        setCounter('v-prompt-avg', pt.avg ?? null);
+        setCounter('v-compl-avg', ct.avg ?? null);
+        setCounter('v-prompt-pct', pick(pt, pKey));
+        setCounter('v-compl-pct', pick(ct, pKey));
+        const ft = server.first_token_ms || {};
+        setCounter('v-ttft', pick(ft, pKey) ?? ft.avg ?? null);
+        const n = (pt.n || 0), errs = server.errors_total || 0;
+        setCounter('v-errrate', (n + errs) > 0 ? errs / (n + errs) * 100 : null);
+        $('reqstats-note').textContent =
+            `server full-population stats · ${n} samples` + (server.source ? ` (${server.source})` : '');
+        return;
+    }
+    // Client-side fallback (session samples only).
     const promptSamples = tracker.samples.prompt, complSamples = tracker.samples.completion;
-    const avgFromUsage = usageAvg;
-    setCounter('v-prompt-avg', avgFromUsage ? avgFromUsage.prompt : (C.mean(promptSamples) ?? null));
-    setCounter('v-compl-avg', avgFromUsage ? avgFromUsage.completion : (C.mean(complSamples) ?? null));
+    setCounter('v-prompt-avg', usageAvg ? usageAvg.prompt : (C.mean(promptSamples) ?? null));
+    setCounter('v-compl-avg', usageAvg ? usageAvg.completion : (C.mean(complSamples) ?? null));
     setCounter('v-prompt-pct', C.percentile(promptSamples, p));
     setCounter('v-compl-pct', C.percentile(complSamples, p));
+    setCounter('v-ttft', null);
+    setCounter('v-errrate', null);
     $('lbl-prompt-pct').textContent = `${layout.percentile} prompt tok`;
     $('lbl-compl-pct').textContent = `${layout.percentile} completion tok`;
     const n = Math.max(promptSamples.length, complSamples.length);
@@ -501,11 +523,28 @@ function fillSelectOnce() {
 }
 
 /* ---------------- polling ---------------- */
-async function fetchJson(url) {
-    const res = await fetch(url, { cache: 'no-store' });
+async function fetchJson(url, opts) {
+    const res = await fetch(url, Object.assign({ cache: 'no-store' }, opts || {}));
     if (!res.ok) throw new Error(`${url} -> ${res.status}`);
     return res.json();
 }
+/* Write helpers: mock backend (and future real backend) endpoints. */
+async function putModelSettings(model, settings) {
+    const res = await fetch(`${API}/admin/api/models/${encodeURIComponent(model)}/settings`,
+        { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(settings) });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.detail ? JSON.stringify(body.detail) : res.status);
+    return body;
+}
+async function postModelAction(model, action) {
+    const res = await fetch(`${API}/admin/api/models/${encodeURIComponent(model)}/${action}`,
+        { method: 'POST' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.detail || res.status);
+    return body;
+}
+const canWrite = () => true;   // writes are attempted; failures surface in the UI toast
 async function pollStats() {
     if (document.hidden) return;
     try {
@@ -533,6 +572,198 @@ function restartPolling() {
     pollStats();
     timer = setInterval(pollStats, layout.intervalMs);
 }
+
+/* ---------------- request lifecycle feed (mock / future backend) ---------------- */
+const REQ_STATES = ['queued', 'prefilling', 'generating', 'complete', 'error'];
+const MAX_REQFEED = 30;
+let reqFeedRows = new Map();   // id -> {state, model, prompt, completion, tps, error, ts}
+let sseSource = null;
+
+function renderReqFeed() {
+    const list = $('reqfeed');
+    const rows = [...reqFeedRows.values()];
+    $('reqfeed-sub').textContent = rows.length
+        ? `${rows.filter(r => ['queued','prefilling','generating'].includes(r.state)).length} active` : '';
+    if (!rows.length) {
+        if (!list.querySelector('.empty')) list.innerHTML = '<div class="empty">No requests yet</div>';
+        return;
+    }
+    list.innerHTML = '';
+    for (const r of rows.slice(0, MAX_REQFEED)) {
+        const row = document.createElement('div'); row.className = 'model-row';
+        const badge = document.createElement('span');
+        badge.className = `badge ${r.state.charAt(0).toUpperCase() + r.state.slice(1)}`;
+        badge.textContent = r.state;
+        const name = document.createElement('span');
+        name.className = 'model-name';
+        name.textContent = r.error ? `${r.id} — ${r.error}` : r.id;
+        name.title = `${r.model} · ${r.id}`;
+        const meta = document.createElement('span');
+        meta.className = 'model-meta';
+        const bits = [`in ${C.fmtCompact(r.prompt)}`];
+        if (r.completion) bits.push(`out ${C.fmtCompact(r.completion)}`);
+        if (r.tps) bits.push(`${r.tps.toFixed(0)} t/s`);
+        meta.textContent = bits.join(' · ');
+        row.append(badge, name, meta);
+        list.append(row);
+    }
+}
+function upsertReq(id, patch) {
+    const prev = reqFeedRows.get(id) || { prompt: 0, completion: 0 };
+    reqFeedRows.set(id, Object.assign({}, prev, patch, { ts: Date.now() }));
+    // Keep the newest MAX_REQFEED * 3 records, then trim finished ones first.
+    if (reqFeedRows.size > MAX_REQFEED * 3) {
+        const sorted = [...reqFeedRows.entries()]
+            .sort((a, b) => (b[1].ts || 0) - (a[1].ts || 0));
+        for (const [id2, r] of sorted.slice(MAX_REQFEED)) {
+            if (['complete', 'error'].includes(r.state)) reqFeedRows.delete(id2);
+        }
+    }
+    renderReqFeed();
+}
+function pushServerEvent(ev) {
+    if (ev.type === 'request') {
+        upsertReq(ev.id, { state: ev.state, model: ev.model });
+        pushFeed([{ kind: 'requests', text: `${ev.id.slice(0, 6)} → ${ev.state}` }]);
+        if (ev.state === 'error') flashCard('v-errrate', 'bad');
+        if (ev.state === 'complete') flashCard('v-requests', 'ok');
+    } else if (ev.type === 'model-load') {
+        pushFeed([{ kind: 'model-add', model: ev.id, text: `${ev.id} load requested` }]);
+    } else if (ev.type === 'model-unload') {
+        pushFeed([{ kind: 'model-remove', model: ev.id, text: `${ev.id} unload` }]);
+    } else if (ev.type === 'settings') {
+        pushFeed([{ kind: 'requests', text: `${ev.id}: settings ${ev.changed.join(', ')}` }]);
+    }
+}
+function connectEventStream() {
+    if (sseSource || !window.EventSource) return;
+    try {
+        sseSource = new EventSource(`${API}/admin/api/requests/stream`);
+        sseSource.onmessage = e => { try { pushServerEvent(JSON.parse(e.data)); } catch (_) {} };
+        sseSource.onerror = () => { /* keep EventSource's own retry */ };
+    } catch (_) { sseSource = null; }
+}
+async function pollRequests() {
+    if (document.hidden) return;
+    try {
+        const d = await fetchJson(`${API}/admin/api/requests?limit=30`);
+        for (const r of d.requests)
+            upsertReq(r.id, { state: r.state, model: r.model, prompt: r.prompt_tokens,
+                              completion: r.completion_tokens, tps: r.tps, error: r.error });
+    } catch (_) { /* endpoint absent on real backend; feed stays as-is */ }
+}
+
+/* ---------------- model admin (settings editor, load/unload) ---------------- */
+const SE_FIELDS = [
+    ['temperature', 'num', 0, 2, 0.05],
+    ['top_p', 'num', 0, 1, 0.05],
+    ['max_tokens', 'num', 1, 32768, 1],
+    ['ttl_seconds', 'num', 30, 86400, 30],
+    ['reasoning_effort', 'select', ['auto', 'none', 'low', 'medium', 'high']],
+];
+let seModel = null, seValues = {};
+function closeEditor() { $('settings-editor').hidden = true; seModel = null; }
+async function openEditor(model) {
+    seModel = model;
+    $('se-model').textContent = model;
+    const fields = $('se-fields');
+    fields.innerHTML = '';
+    try {
+        const d = await fetchJson(`${API}/admin/api/models/${encodeURIComponent(model)}/settings`);
+        seValues = d.settings || {};
+    } catch (_) { seValues = {}; }
+    for (const [key, kind, a, b, step] of SE_FIELDS) {
+        const label = document.createElement('label');
+        label.className = 'se-row';
+        const name = document.createElement('span');
+        name.textContent = key;
+        let input;
+        if (kind === 'select') {
+            input = document.createElement('select');
+            for (const opt of a) {
+                const o = document.createElement('option');
+                o.value = opt; o.textContent = opt;
+                if (seValues[key] === opt) o.selected = true;
+                input.append(o);
+            }
+        } else {
+            input = document.createElement('input');
+            input.type = 'number';
+            input.min = a; input.max = b; input.step = step;
+            input.value = seValues[key] ?? '';
+        }
+        input.dataset.key = key;
+        label.append(name, input);
+        fields.append(label);
+    }
+    $('se-msg').textContent = '';
+    $('settings-editor').hidden = false;
+}
+async function saveEditor() {
+    if (!seModel) return;
+    const payload = {};
+    for (const input of $('se-fields').querySelectorAll('[data-key]')) {
+        const v = input.value;
+        if (v === '') continue;
+        payload[input.dataset.key] = input.type === 'number' ? Number(v) : v;
+    }
+    $('se-msg').textContent = 'saving…';
+    try {
+        await putModelSettings(seModel, payload);
+        $('se-msg').textContent = 'saved ✓';
+        toast(`Settings saved: ${seModel}`);
+        setTimeout(closeEditor, 900);
+    } catch (err) {
+        $('se-msg').textContent = `error: ${err.message}`;
+        toast(`Save failed: ${err.message}`);
+    }
+}
+$('se-save').onclick = saveEditor;
+$('se-cancel').onclick = closeEditor;
+
+async function renderModelAdmin() {
+    let models;
+    try { models = (await fetchJson(`${API}/admin/api/models`)).models; }
+    catch (_) { $('model-admin').innerHTML = ''; return; }
+    const table = $('model-admin');
+    table.innerHTML = '';
+    if (!models.length) return;
+    const head = document.createElement('div'); head.className = 'urow head';
+    for (const h of ['model', 'state', 'settings', '']) {
+        const s = document.createElement('span'); s.textContent = h; head.append(s);
+    }
+    table.append(head);
+    for (const m of models) {
+        const row = document.createElement('div'); row.className = 'urow';
+        const name = document.createElement('span');
+        name.className = 'uname'; name.textContent = (m.pinned ? '📌 ' : '') + m.id; name.title = m.id;
+        const state = document.createElement('span');
+        state.textContent = m.loading ? 'loading' : m.loaded ? 'loaded' : 'unloaded';
+        const settings = document.createElement('span');
+        const s = m.settings || {};
+        settings.textContent = `T${s.temperature ?? '—'} · ${s.max_tokens ?? '—'}`;
+        const actions = document.createElement('span');
+        actions.style.display = 'flex'; actions.style.gap = '4px'; actions.style.justifyContent = 'flex-end';
+        const btn = (label, fn, title) => {
+            const b = document.createElement('button');
+            b.className = 'se-btn'; b.textContent = label; b.title = title || label;
+            b.onclick = async () => {
+                try { await fn(); } catch (err) { toast(`${label} failed: ${err.message}`); }
+                renderModelAdmin();
+            };
+            return b;
+        };
+        actions.append(btn('⚙', () => openEditor(m.id), 'Edit settings'));
+        if (m.loaded) actions.append(btn('unload', () => postModelAction(m.id, 'unload')));
+        else actions.append(btn('load', () => postModelAction(m.id, 'load')));
+        row.append(name, state, settings, actions);
+        table.append(row);
+    }
+}
+renderModelAdmin();
+setInterval(() => { if (!document.hidden) renderModelAdmin(); }, 15000);
+connectEventStream();
+setInterval(() => { if (!document.hidden) pollRequests(); }, 2000);
 
 /* ---------------- usage (heat strip + per-model table) ---------------- */
 let usageAvg = null;

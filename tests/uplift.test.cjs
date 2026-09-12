@@ -174,3 +174,13 @@ test('layout persistence and clamping', () => {
     assert.strictEqual(C.clampSpan(2, 5), 2);
     assert.strictEqual(C.clampSpan(5, 3), 3);
 });
+
+test('normalize passes through server request_stats when present', () => {
+    const s = snap(raw({ request_stats: { prompt_tokens: { avg: 10, p95: 20, n: 5 },
+        first_token_ms: { avg: 300, n: 5 }, errors_total: 1, source: 'mock' } }));
+    assert.ok(s.requestStats);
+    assert.strictEqual(s.requestStats.prompt_tokens.p95, 20);
+    assert.strictEqual(s.requestStats.errors_total, 1);
+    const plain = snap(raw());
+    assert.strictEqual(plain.requestStats, null);   // real backend: absent
+});
