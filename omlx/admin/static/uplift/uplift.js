@@ -18,10 +18,12 @@ const PERCENTILES = { p50: 50, p90: 90, p95: 95, p99: 99 };
 if (!(layout.percentile in PERCENTILES)) layout.percentile = 'p95';
 
 /* ---------------- theme & motion ---------------- */
+const THEME_CYCLE = ['auto', 'light', 'dark', 'enhanced'];
 function applyPrefs() {
-    const dark = prefs.theme === 'dark' || (prefs.theme === 'auto' &&
-        matchMedia('(prefers-color-scheme: dark)').matches);
-    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    const t = prefs.theme;
+    let eff = t;
+    if (t === 'auto') eff = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.dataset.theme = eff;
     const motionOff = prefs.motion === 'off' ||
         matchMedia('(prefers-reduced-motion: reduce)').matches;
     document.documentElement.dataset.motion = motionOff ? 'off' : 'auto';
@@ -32,16 +34,117 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyPrefs
 
 const motionOff = () => document.documentElement.dataset.motion === 'off';
 $('btn-theme').onclick = () => {
-    prefs.theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+    prefs.theme = THEME_CYCLE[(THEME_CYCLE.indexOf(prefs.theme) + 1) % THEME_CYCLE.length];
     C.savePrefs(localStorage, prefs); applyPrefs();
+    toast('Theme: ' + prefs.theme);
 };
 $('btn-motion').onclick = () => {
     prefs.motion = document.documentElement.dataset.motion === 'off' ? 'auto' : 'off';
     C.savePrefs(localStorage, prefs); applyPrefs();
 };
 
-/* ---------------- layout engine (popover + collapse + columns) ---------------- */
+/* ---------------- layout engine (popover + collapse + columns + DnD) ---------------- */
 const cards = [...document.querySelectorAll('.card')];
+const DEFAULT_ORDER = cards.map(c => c.dataset.id);   // markup document order = truth
+
+function applyOrder() {
+    const grid = $('grid');
+    const known = new Set(DEFAULT_ORDER);
+    const ordered = layout.order.filter(id => known.has(id));
+    const rest = DEFAULT_ORDER.filter(id => !ordered.includes(id));
+    for (const id of [...ordered, ...rest]) {
+        const card = grid.querySelector(`.card[data-id="${id}"]`);
+        if (card) grid.append(card);
+    }
+}
+function readOrder() {
+    layout.order = [...$('grid').querySelectorAll('.card')].map(c => c.dataset.id);
+}
+for (const card of cards) {
+    // Grip handle for dragging.
+    const grip = document.createElement('button');
+    grip.className = 'grip'; grip.title = 'Drag to move'; grip.textContent = '⠿';
+    card.querySelector('h2').prepend(grip);
+    card.querySelector('.collapse').after(grip);   // order: collapse, grip, title
+}
+
+/* Pointer-Events drag (NOT HTML5 DnD: unreliable in Safari/WebKit).
+   Window-level move/up listeners survive DOM rearrangement; the source slot
+   stays occupied by a marker; the node moves once on pointerup. */
+(function enableDrag() {
+    const DRAG_THRESHOLD = 4;
+    let drag = null;   // {card, marker, offsetX, offsetY, startX, startY, active}
+    const cleanup = () => {
+        if (!drag) return;
+        drag.card.classList.remove('dragging');
+        drag.card.style.cssText = '';
+        drag.marker?.remove();
+        document.body.classList.remove('dragging-in-progress');
+        drag = null;
+    };
+
+    document.addEventListener('pointerdown', e => {
+        const grip = e.target.closest('.grip');
+        if (!grip || e.button !== 0) return;
+        const card = grip.closest('.card');
+        const rect = card.getBoundingClientRect();
+        drag = { card, marker: null, offsetX: e.clientX - rect.left, offsetY: e.clientY - rect.top,
+                 startX: e.clientX, startY: e.clientY, width: rect.width, height: rect.height, active: false };
+        e.preventDefault();
+    });
+
+    window.addEventListener('pointermove', e => {
+        if (!drag) return;
+        if (!drag.active) {
+            const moved = Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY);
+            if (moved < DRAG_THRESHOLD) return;
+            drag.active = true;
+            document.body.classList.add('dragging-in-progress');
+            drag.marker = document.createElement('div');
+            drag.marker.className = 'drop-marker';
+            drag.card.after(drag.marker);
+            drag.card.classList.add('dragging');
+            drag.card.style.width = drag.width + 'px';
+            drag.card.style.height = drag.height + 'px';
+        }
+        drag.card.style.left = (e.clientX - drag.offsetX) + 'px';
+        drag.card.style.top = (e.clientY - drag.offsetY) + 'px';
+        // Insertion point: before the first card whose center is below/right of
+        // the pointer; append at end when past all of them.
+        const grid = $('grid');
+        let target = null;
+        for (const other of grid.querySelectorAll('.card:not(.dragging)')) {
+            const r = other.getBoundingClientRect();
+            if (e.clientY < r.top + r.height / 2 ||
+                (e.clientY < r.bottom && e.clientX < r.left + r.width / 2)) {
+                target = other; break;
+            }
+        }
+        grid.insertBefore(drag.marker, target);   // target null => append
+        // Edge auto-scroll.
+        const edge = 60;
+        if (e.clientY < edge) window.scrollBy(0, -12);
+        else if (e.clientY > innerHeight - edge) window.scrollBy(0, 12);
+    }, true);
+
+    const finish = e => {
+        if (!drag) return;
+        if (drag.active && drag.marker) {
+            drag.card.classList.remove('dragging');
+            drag.card.style.cssText = '';
+            drag.marker.replaceWith(drag.card);   // land where the marker sits
+            readOrder();
+            C.saveLayout(localStorage, layout);
+        }
+        cleanup();
+    };
+    window.addEventListener('pointerup', finish, true);
+    window.addEventListener('pointercancel', () => cleanup(), true);
+    window.addEventListener('blur', () => cleanup(), true);
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') cleanup(); });
+    addEventListener('resize', () => { if (drag?.active) cleanup(); }, true);
+})();
+
 function fillSelect(sel, options, value) {
     sel.innerHTML = '';
     for (const [v, label] of options) {
@@ -139,9 +242,10 @@ const MAX_POINTS = 4000;        // covers 1h at 1s polls plus usage headroom
 
 function chartColors() {
     const cs = getComputedStyle(document.documentElement);
-    return { dim: cs.getPropertyValue('--text-dim').trim() || '#8b96ab',
-             blue: cs.getPropertyValue('--accent').trim() || '#3d9df6',
-             gold: cs.getPropertyValue('--accent-2').trim() || '#f0b429' };
+    return { dim: cs.getPropertyValue('--dim').trim() || '#a5a096',
+             grid: cs.getPropertyValue('--grid').trim() || '#3a3b40',
+             blue: cs.getPropertyValue('--chart-1').trim() || '#f2f0ea',
+             gold: cs.getPropertyValue('--chart-2').trim() || '#e8a020' };
 }
 function windowedData(data) {
     const cutoff = Date.now() - layout.chartWindowSec * 1000;
@@ -217,8 +321,10 @@ function createCharts() {
 }
 function redrawCharts() {
     if (!tpsChart) return;
-    tpsChart.setData(windowedData(tpsData), false);
-    memChart.setData(windowedData(memData), false);
+    // resetScale=true (default): frozen auto-scales from the empty first draw
+    // would otherwise pin the y-range at 0..1 forever and render blank charts.
+    tpsChart.setData(windowedData(tpsData));
+    memChart.setData(windowedData(memData));
     // setData does not fire the cursor hook: refresh legends explicitly.
     legendUpdater()(tpsChart); legendUpdater()(memChart);
     const shown = windowedData(tpsData)[0].length;
@@ -266,7 +372,7 @@ function celebrate(text) {
     toast(`🎉 ${text}`);
     if (motionOff() || typeof confetti !== 'function') return;
     confetti({ particleCount: 90, spread: 70, origin: { y: 0.7 },
-               colors: ['#3d9df6', '#f0b429', '#34d399', '#e7ecf5'] });
+               colors: ['#c9243b', '#e8a020', '#f2f0ea', '#767268'] });
 }
 function reactTo(events) {
     for (const ev of events) {
@@ -446,7 +552,7 @@ async function pollUsage() {
         [...heat.children].forEach((cell, i) => {
             const v = hours[i] || 0;
             const a = v > 0 ? 0.15 + 0.85 * Math.sqrt(v / max) : 0;
-            cell.style.background = v > 0 ? `color-mix(in oklab, var(--accent) ${Math.round(a * 100)}%, transparent)` : '';
+            cell.style.background = v > 0 ? `color-mix(in oklab, var(--heat) ${Math.round(a * 100)}%, transparent)` : '';
             cell.title = `${String(i).padStart(2, '0')}:00 — ${C.fmtCompact(v)} tokens`;
         });
         const tot = u.totals || {};
@@ -519,6 +625,7 @@ document.addEventListener('visibilitychange', () => {
 });
 
 applyPrefs();
+applyOrder();
 applyLayout();
 createCharts();
 resizeCharts();

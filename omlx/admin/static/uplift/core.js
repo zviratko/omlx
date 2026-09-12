@@ -133,7 +133,7 @@ function mean(values) {
 
 /* ---------------- layout settings ---------------- */
 const LAYOUT_KEY = '***';
-const LAYOUT_DEFAULTS = { cols: 4, chartWindowSec: 300, intervalMs: 1000, logsHideDebug: true, percentile: 'p95', collapsed: {} };
+const LAYOUT_DEFAULTS = { cols: 4, chartWindowSec: 300, intervalMs: 1000, logsHideDebug: true, percentile: 'p95', collapsed: {}, order: [] };
 const LAYOUT_WINDOWS = [60, 300, 900, 3600];
 const LAYOUT_INTERVALS = [500, 1000, 2000, 5000];
 const LAYOUT_PERCENTILES = ['p50', 'p90', 'p95', 'p99'];
@@ -147,6 +147,7 @@ function loadLayout(storage) {
         logsHideDebug: l.logsHideDebug !== false,
         percentile: LAYOUT_PERCENTILES.includes(l.percentile) ? l.percentile : LAYOUT_DEFAULTS.percentile,
         collapsed: (l.collapsed && typeof l.collapsed === 'object') ? { ...l.collapsed } : {},
+        order: Array.isArray(l.order) ? l.order.filter(id => typeof id === 'string') : [],
     };
 }
 function saveLayout(storage, layout) {
@@ -205,11 +206,12 @@ function milestonesBetween(prev, next) {
 /* Settings: validated against known-good values; corrupt/absent => defaults. */
 const PREFS_KEY = '***';
 const PREFS_DEFAULTS = { theme: 'auto', motion: 'auto', intervalMs: 1000, dense: false };
+const THEMES = ['auto', 'light', 'dark', 'enhanced'];
 function loadPrefs(storage) {
     let p = {};
     try { p = JSON.parse(storage.getItem(PREFS_KEY)) || {}; } catch (_) { /* storage may be denied */ }
     return {
-        theme: ['auto', 'dark', 'light'].includes(p.theme) ? p.theme : PREFS_DEFAULTS.theme,
+        theme: THEMES.includes(p.theme) ? p.theme : PREFS_DEFAULTS.theme,
         motion: ['auto', 'off'].includes(p.motion) ? p.motion : PREFS_DEFAULTS.motion,
         intervalMs: [500, 1000, 2000, 5000].includes(p.intervalMs) ? p.intervalMs : PREFS_DEFAULTS.intervalMs,
         dense: p.dense === true,
@@ -247,7 +249,7 @@ function fmtNumber(n) { return n === null ? '—' : Math.round(n).toLocaleString
 
 return { num, r, normalize, modelState, appendSample, pruneOlderThan, eventsBetween, milestonesBetween,
          createRequestTracker, percentile, mean,
-         PREFS_KEY, PREFS_DEFAULTS, loadPrefs, savePrefs,
+         PREFS_KEY, PREFS_DEFAULTS, THEMES, loadPrefs, savePrefs,
          LAYOUT_KEY, LAYOUT_DEFAULTS, LAYOUT_WINDOWS, LAYOUT_INTERVALS, LAYOUT_PERCENTILES, loadLayout, saveLayout, clampSpan,
          fmtCompact, fmtBytes, fmtDuration, fmtNumber };
 });

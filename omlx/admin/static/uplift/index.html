@@ -7,19 +7,18 @@
 <title>oMLX · Uplift</title>
 <link rel="icon" href="/admin/static/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="./vendor/uPlot.min.css">
-<link rel="stylesheet" href="./uplift.css">
+<link rel="stylesheet" href="./uplift.css?v=BUILD">
 </head>
 <body>
-<div class="aurora" aria-hidden="true"></div>
 <div class="wrap">
 
 <header class="top">
-    <div class="logo"><span class="dot" id="status-dot"></span> oMLX <span style="opacity:.5;font-weight:400">Uplift</span></div>
+    <div class="logo"><span class="dot" id="status-dot"></span> oMLX <span style="opacity:.45;font-weight:300">Uplift</span></div>
     <span class="chip" id="chip-uptime">—</span>
     <span class="chip" id="chip-device">—</span>
     <span class="spacer"></span>
     <button class="icon-btn" id="btn-motion" title="Toggle animations">✦</button>
-    <button class="icon-btn" id="btn-theme" title="Toggle theme">◐</button>
+    <button class="icon-btn" id="btn-theme" title="Cycle theme: auto / day / night / enhanced">◐</button>
     <button class="icon-btn" id="btn-layout" title="Layout settings">⚙</button>
     <a class="icon-btn" href="/admin/dashboard" title="Classic dashboard" style="text-decoration:none">⌂</a>
 </header>
@@ -133,7 +132,7 @@
 
 <script src="./vendor/uPlot.min.js"></script>
 <script src="./vendor/confetti.browser.js"></script>
-<script src="./core.js"></script>
-<script src="./uplift.js"></script>
+<script src="./core.js?v=BUILD"></script>
+<script src="./uplift.js?v=BUILD"></script>
 </body>
 </html>

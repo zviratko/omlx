@@ -15,7 +15,10 @@ DEST="$KEG/uplift"
 mkdir -p "$DEST/vendor"
 cp "$SRC/index.html" "$SRC/uplift.js" "$SRC/uplift.css" "$SRC/core.js" "$DEST/"
 cp "$SRC/vendor/"* "$DEST/vendor/"
-echo "Deployed to: $DEST"
+# Cache busting: stamp asset versions so browsers never serve stale CSS/JS.
+BUILD="$(date +%s)"
+sed -i '' "s/BUILD/$BUILD/g" "$DEST/index.html"
+echo "Deployed to: $DEST (cache stamp $BUILD)"
 
 # Helper static server (serves index.html; the keg's own /admin/static route
 # has no .html media type, and we must not patch routes.py without a restart).
