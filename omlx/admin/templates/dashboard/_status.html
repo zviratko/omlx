@@ -29,9 +29,7 @@
                                     {{ t('status.scope_alltime') }}
                                 </button>
                             </div>
-                        </div>
-                        <div class="flex flex-wrap items-center gap-2">
-                            <!-- Clear button -->
+                            <!-- Clear button (belongs with the scope it clears) -->
                             <div class="flex items-center gap-1.5">
                                 <button x-show="(statsScope === 'session' && !showClearStatsConfirm) || (statsScope === 'alltime' && !showClearAlltimeConfirm)"
                                         @click="statsScope === 'session' ? showClearStatsConfirm = true : showClearAlltimeConfirm = true"
@@ -53,6 +51,8 @@
                                     </button>
                                 </div>
                             </div>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-2">
                             <!-- Rolling-scope hint: usage history disabled -->
                             <span x-show="(statsScope === '12h' || statsScope === '24h') && scopedStats.history_available === false"
                                   x-cloak class="text-xs text-amber-600"

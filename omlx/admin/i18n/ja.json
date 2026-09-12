@@ -79,7 +79,6 @@
   "status.width_normal": "標準幅",
   "status.width_wide": "広い",
   "status.width_full": "全幅",
-  "status.width_click": "クリックで幅を変更",
   "status.runtime_cache.observability": "Runtime Cache Observability",
   "status.runtime_cache.tier_memory": "Memory",
   "status.runtime_cache.tier_ssd": "SSD",

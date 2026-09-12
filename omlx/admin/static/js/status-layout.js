@@ -129,6 +129,15 @@
         step();
     }
 
+    /* Trailing-edge settle: used where a burst of events would otherwise
+       reflow the grid dozens of times (slider drag, column changes). Only
+       the final value gets a placement pass. */
+    let settleTimer = null;
+    function scheduleSettle(delay = 140) {
+        clearTimeout(settleTimer);
+        settleTimer = setTimeout(placeStable, delay);
+    }
+
     function schedulePlace() {
         if (placeScheduled) return;
         placeScheduled = true;
@@ -166,12 +175,13 @@
         Object.values(byId).forEach(el => r.appendChild(el));
     }
 
-    /* Per-card width button: cycles normal -> wide -> full. window.t is
-       defined by base.html before any page script runs; fall back to
-       English in case the page is ever rendered without it. */
+    /* Per-card width button: cycles normal -> wide -> full. The icon and
+       title show the NEXT state (what the click will do): 'minus'/'arrows'
+       icons on the current state read as actions and were misread as
+       reversed. window.t is defined by base.html before any page script
+       runs; fall back to English otherwise. */
     const FALLBACK_LABELS = {
         normal: 'Normal width', wide: 'Wide', full: 'Full width',
-        click: 'Click to change width',
     };
     function widthLabels() {
         const label = (key) => {
@@ -183,15 +193,18 @@
         };
         return {
             normal: label('normal'), wide: label('wide'),
-            full: label('full'), click: label('click'),
+            full: label('full'),
         };
     }
 
-    function widthIcon(mode) {
-        if (mode === 'full') return 'maximize';
-        if (mode === 'wide') return 'move-horizontal';
-        return 'minus';
+    function widthIcon(nextMode) {
+        // Icon previews the NEXT state (what clicking produces).
+        if (nextMode === 'wide') return 'columns-2';
+        if (nextMode === 'full') return 'maximize-2';
+        return 'square';
     }
+
+    const NEXT_MODE = { normal: 'wide', wide: 'full', full: 'normal' };
 
     function refreshWidthButtons() {
         const labels = widthLabels();
@@ -199,13 +212,14 @@
             const btn = card.querySelector(':scope > .omlx-width-btn');
             if (!btn) continue;
             const mode = currentMode(card);
+            const next = NEXT_MODE[mode];
             btn.dataset.mode = mode;
-            btn.title = `${labels[mode]} — ${labels.click}`;
+            btn.title = `${labels[mode]} → ${labels[next]}`;
             // Fixed icon-name template, no user data; rebuilt via DOM API
             // so no HTML ever gets parsed from state.
             btn.textContent = '';
             const icon = document.createElement('i');
-            icon.setAttribute('data-lucide', widthIcon(mode));
+            icon.setAttribute('data-lucide', widthIcon(next));
             icon.className = 'w-3.5 h-3.5';
             btn.appendChild(icon);
         }
@@ -240,7 +254,12 @@
     }
 
     /* Drag to reorder: pointerdown on the grip, cards rearrange live as the
-       pointer passes them (dominant-axis hit-test on the hovered card). */
+       pointer passes them (dominant-axis hit-test on the hovered card).
+       A HYSTERESIS band around each target's halfway line prevents flip-
+       flopping when the pointer sits near the boundary and the grid reflow
+       moves cards under the cursor. */
+    const HYST = 24; // px either side of the halfway line that counts as "hold position"
+
     const autoScroll = (y) => {
         const margin = 60;
         if (y < margin) window.scrollBy(0, -12);
@@ -260,6 +279,8 @@
                 dragging = true;
                 card.classList.add('omlx-dragging');
                 document.documentElement.classList.add('omlx-drag-active');
+                // NB: the ResizeObserver re-placement is already suppressed
+                // while a .omlx-dragging card exists (see wire()).
             }
             e.preventDefault();
 
@@ -272,10 +293,21 @@
             const target = under ? under.closest('.omlx-card') : null;
             if (target && target !== card) {
                 const box = target.getBoundingClientRect();
-                const before = Math.abs(x - (box.left + box.width / 2)) * 1.5
-                        <= Math.abs(y - (box.top + box.height / 2))
-                    ? (y - box.top) / box.height < 0.5
-                    : (x - box.left) / box.width < 0.5;
+                const midX = box.left + box.width / 2;
+                const midY = box.top + box.height / 2;
+                const horizontal =
+                    Math.abs(x - midX) * 1.5 <= Math.abs(y - midY);
+                let before;
+                if (horizontal) {
+                    const d = y - midY;
+                    before = Math.abs(d) < HYST ? null   // hold band
+                        : d < 0;
+                } else {
+                    const d = x - midX;
+                    before = Math.abs(d) < HYST ? null   // hold band
+                        : d < 0;
+                }
+                if (before === null) return;  // inside hysteresis band: no swap
                 const current = cards();
                 const wouldBeSame = before
                     ? current[current.indexOf(target) - 1] === card
@@ -349,7 +381,9 @@
     window.applyStatusLayoutSettings = () => {
         settings = loadSettings();
         applyPageWidth();
-        placeStable();
+        // Column/width settings change every column's geometry at once; a
+        // settle pass (not per-keystroke placement) keeps the reflow calm.
+        scheduleSettle(120);
     };
 
     const wire = () => {

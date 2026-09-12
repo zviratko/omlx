@@ -79,7 +79,6 @@
   "status.width_normal": "Largura normal",
   "status.width_wide": "Larga",
   "status.width_full": "Largura total",
-  "status.width_click": "Clique para alterar a largura",
   "status.runtime_cache.observability": "Runtime Cache Observability",
   "status.runtime_cache.tier_memory": "Memory",
   "status.runtime_cache.tier_ssd": "SSD",

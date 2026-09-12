@@ -79,7 +79,6 @@
   "status.width_normal": "일반 너비",
   "status.width_wide": "넓게",
   "status.width_full": "전체 너비",
-  "status.width_click": "클릭하여 너비 변경",
   "status.runtime_cache.observability": "Runtime Cache Observability",
   "status.runtime_cache.tier_memory": "Memory",
   "status.runtime_cache.tier_ssd": "SSD",

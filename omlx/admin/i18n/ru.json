@@ -79,7 +79,6 @@
   "status.width_normal": "Обычная ширина",
   "status.width_wide": "Широкая",
   "status.width_full": "На всю ширину",
-  "status.width_click": "Нажмите, чтобы изменить ширину",
   "status.runtime_cache.observability": "Runtime Cache Observability",
   "status.runtime_cache.tier_memory": "Memory",
   "status.runtime_cache.tier_ssd": "SSD",

@@ -79,7 +79,6 @@
   "status.width_normal": "標準寬度",
   "status.width_wide": "加寬",
   "status.width_full": "整行寬度",
-  "status.width_click": "點擊變更寬度",
   "status.runtime_cache.observability": "Runtime Cache Observability",
   "status.runtime_cache.tier_memory": "Memory",
   "status.runtime_cache.tier_ssd": "SSD",

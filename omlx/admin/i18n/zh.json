@@ -79,7 +79,6 @@
   "status.width_normal": "标准宽度",
   "status.width_wide": "加宽",
   "status.width_full": "整行宽度",
-  "status.width_click": "点击更改宽度",
   "status.runtime_cache.observability": "运行时缓存可观测性",
   "status.runtime_cache.tier_memory": "RAM 缓存",
   "status.runtime_cache.tier_ssd": "SSD 缓存",
