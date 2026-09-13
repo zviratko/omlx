@@ -663,6 +663,23 @@ class Handler(BaseHTTPRequestHandler):
                     REQUESTS.pop(rid_, None)
             emit({"type": "mock-reset"})
             return self._json({"ok": True, "cleared": "shadow overrides + finished sim requests"})
+        if len(parts) == 6 and parts[1] == "admin" and parts[3] == "requests" and parts[-1] == "cancel":
+            id_ = urllib.parse.unquote(parts[4])
+            with LOCK:
+                r = REQUESTS.get(id_)
+                if not r:
+                    return self._json({"detail": "unknown request"}, 404)
+                if r["state"] in ("complete", "error"):
+                    return self._json({"detail": "already finished"}, 409)
+                if r["origin"] != "sim":
+                    return self._json({"detail": "real requests live in oMLX; "
+                                       "gateway cannot cancel them (no upstream route)"}, 501)
+                r["state"], r["error"] = "error", "cancelled (simulated)"
+                r["finished_at"] = time.time()
+                finish_stats(r)
+            emit({"type": "request", "id": id_, "model": r["model"],
+                  "state": "error", "origin": "sim", "cancelled": True})
+            return self._json({"id": id_, "state": r["state"]})
         if len(parts) >= 6 and parts[3] == "models" and parts[-1] in ("load", "unload", "pin", "unpin"):
             mid = urllib.parse.unquote(parts[4])
             action = parts[-1]

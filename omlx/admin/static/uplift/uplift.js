@@ -670,12 +670,26 @@ function renderReqFeed() {
         if (r.tps) bits.push(`${r.tps.toFixed(0)} t/s`);
         meta.textContent = bits.join(' · ');
         row.append(badge, name, meta);
+        if (['queued', 'prefilling', 'generating'].includes(r.state)) {
+            const x = document.createElement('button');
+            x.className = 'se-btn'; x.textContent = '✕'; x.title = 'Cancel request';
+            x.onclick = async () => {
+                try {
+                    const res = await fetch(`${API}/admin/api/requests/${encodeURIComponent(r.id)}/cancel`, { method: 'POST' });
+                    if (res.status === 501) { toast('Real request — oMLX has no cancel route yet'); return; }
+                    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.status);
+                    toast(`Cancelled ${r.id.slice(0, 6)}`);
+                } catch (err) { toast(`Cancel failed: ${err.message}`); }
+                pollRequests();
+            };
+            row.append(x);
+        }
         list.append(row);
     }
 }
 function upsertReq(id, patch) {
     const prev = reqFeedRows.get(id) || { prompt: 0, completion: 0 };
-    reqFeedRows.set(id, Object.assign({}, prev, patch, { ts: Date.now() }));
+    reqFeedRows.set(id, Object.assign({}, prev, patch, { id, ts: Date.now() }));
     if (reqFeedRows.size > MAX_REQFEED * 3) {
         const sorted = [...reqFeedRows.entries()].sort((a, b) => (b[1].ts || 0) - (a[1].ts || 0));
         for (const [id2, r] of sorted.slice(MAX_REQFEED)) {
