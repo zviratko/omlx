@@ -2405,7 +2405,7 @@ function renderGlobalSettings() {
     const wrap = $('gs-body');
     wrap.textContent = '';
     wrap.classList.add('gs-wrap');
-    let box = null;
+    let box = null, bbody = null;
     for (const n of Array.from(body.childNodes)) {
         if (n.nodeType === 1 && n.classList.contains('gs-title')) {
             box = document.createElement('div');
@@ -2413,10 +2413,12 @@ function renderGlobalSettings() {
             const h = document.createElement('div');
             h.className = 'gs-box-title';
             h.textContent = n.textContent;
-            box.append(h);
+            bbody = document.createElement('div');
+            bbody.className = 'gs-box-body';
+            box.append(h, bbody);
             wrap.append(box);
-        } else if (box) {
-            box.append(n);
+        } else if (bbody) {
+            bbody.append(n);
         } else {
             wrap.append(n);
         }

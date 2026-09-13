@@ -6,6 +6,8 @@
 :root {
     --bg: #232427;              /* plain dark grey */
     --card: #2b2c30;
+    --row2: #35363b;            /* alternating row shade inside a panel */
+    --field: #1b1c1f;           /* recessed input well, below card ground */
     --edge: #3a3b40;            /* uniform stroke width everywhere */
     --ink: #f2f0ea;             /* content on dark goes near-white */
     --dim: #a5a096;             /* warm gray, AA on dark grey */
@@ -25,6 +27,8 @@
 [data-theme="light"] {
     --bg: #f6f4ef;              /* paper */
     --card: #f6f4ef;
+    --row2: #ece9e1;            /* alternating row shade on paper */
+    --field: #ffffff;           /* raised white input well on paper */
     --edge: #767268;            /* NASA warm gray */
     --ink: #0b0b0b;
     --dim: #767268;             /* AA on paper */
@@ -39,6 +43,8 @@
 [data-theme="enhanced"] {
     --bg: #000000;              /* pure black, maximum contrast */
     --card: #000000;
+    --row2: #161616;            /* alternating row shade on black */
+    --field: #161616;           /* input well on black, outlined by --edge */
     --edge: #6a6a6a;
     --ink: #ffffff;
     --dim: #c9c4ba;
@@ -463,45 +469,72 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
     background: transparent; border: 1px solid var(--edge); color: var(--ink);
     border-radius: 0; height: 32px; padding: 0 8px; font: 400 12px/1 var(--mono); }
 
-/* ---- Server settings: editable form mirroring the classic layout ------- */
-/* Server settings: segmented multi-column flow, capped page width so a
-   single column never stretches edge to edge (mirrors classic page cap). */
+/* ---- Server settings: instrument-panel sections -------------------------
+   Segmented multi-column flow, capped page width so a single column never
+   stretches edge to edge (mirrors classic page cap). Each section is a
+   framed panel with an inverted signage header strip; rows alternate
+   shades inside the panel; controls sit in recessed field wells. */
 #gs-body.gs-wrap {
-    columns: 320px 3; column-gap: 18px;
+    columns: 340px 3; column-gap: 18px;
     max-width: 1200px; margin: 0 auto;
 }
 .gs-box {
     break-inside: avoid; display: inline-block; width: 100%;
-    margin: 0 0 18px; padding: 0 12px 8px;
-    border: 1px solid var(--rule); background: transparent;
+    margin: 0 0 18px;
+    border: 1px solid var(--edge); background: var(--card);
 }
 .gs-box-title {
+    /* signage header strip: inverted colors, full-bleed across the panel */
     font: 500 11px/1 var(--sans); text-transform: uppercase; letter-spacing: 0.12em;
-    color: var(--ink); border-bottom: 1px solid var(--ink);
-    padding: 10px 0 6px; margin-bottom: 2px;
+    color: var(--bg); background: var(--ink);
+    padding: 9px 12px; border-bottom: 1px solid var(--ink);
 }
-.gs-box .gs-title { display: none; }   /* title is re-emitted as box header */
-.urow.settings { display: grid; grid-template-columns: minmax(220px, 1fr) 300px;
-    gap: 16px; align-items: start; padding: 9px 2px;
-    border-bottom: 1px dotted var(--rule); }
+.gs-box-body { padding: 2px 12px 10px; }
+.gs-box .gs-title { display: none; }   /* title is re-emitted as panel header */
+.urow.settings { display: grid; grid-template-columns: minmax(0, 1fr) 190px;
+    gap: 12px; align-items: center; padding: 9px 6px;
+    border-bottom: 1px solid var(--edge); }
+/* alternating row shade: instrument panel readout lines */
+.urow.settings:nth-of-type(even) { background: var(--row2); }
+.urow.settings:last-child { border-bottom: 0; }
 .urow.settings .gctl { display: flex; justify-content: flex-end; }
-.urow.settings .uname { white-space: normal; overflow: visible; text-overflow: clip; }
+.urow.settings .uname { white-space: normal; overflow: visible; text-overflow: clip;
+    font: 400 12px/1.4 var(--mono); }
+.urow.settings .uname small { display: block; color: var(--dim);
+    font: 300 10px/1.35 var(--sans); margin-top: 2px; }
+[data-theme="light"] .urow.settings .uname small { color: #4a463e; }  /* AA on beige rows */
 /* RESTART badge: auto width + padding — the fixed 84px .spill is narrower
    than the label text, which made it overflow onto the label text */
-.urow.settings .spill { width: auto; padding: 0 6px; margin-top: 3px; }
+.urow.settings .spill { width: auto; padding: 0 6px; margin-top: 4px; }
+/* controls sit in recessed field wells, distinct from the panel ground */
 .urow.settings input, .urow.settings select {
     font: 400 11px/1.4 var(--mono); color: var(--ink);
-    background: transparent; border: 1px solid var(--rule);
-    padding: 5px 7px; min-width: 170px; border-radius: 0; }
+    background: var(--field); border: 1px solid var(--edge);
+    padding: 6px 8px; min-width: 170px; border-radius: 0; }
+[data-theme="light"] .urow.settings input,
+[data-theme="light"] .urow.settings select { border-color: var(--ink); }
+.urow.settings select { -webkit-appearance: none; appearance: none;
+    padding-right: 22px;
+    background-image: linear-gradient(45deg, transparent 50%, var(--dim) 50%),
+                      linear-gradient(135deg, var(--dim) 50%, transparent 50%);
+    background-position: calc(100% - 12px) 55%, calc(100% - 7px) 55%;
+    background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
+.urow.settings select option { background: var(--field); color: var(--ink); }
+.urow.settings input:hover, .urow.settings select:hover { border-color: var(--dim); }
 .urow.settings input:focus, .urow.settings select:focus { border-color: var(--ink); outline: none; }
+.urow.settings input:disabled, .urow.settings select:disabled {
+    color: var(--ink); opacity: 0.55; background: var(--row2); }
 .urow.settings input[type=checkbox] { min-width: 0; width: 15px; height: 15px;
-    accent-color: var(--ink); cursor: pointer; }
-.urow.settings .grange { display: flex; align-items: center; gap: 10px; }
-.urow.settings .gval { font: 400 11px var(--mono); min-width: 34px; text-align: right; }
-.gs-dirs { display: flex; flex-direction: column; gap: 6px; width: 300px; }
+    padding: 0; background: var(--field); accent-color: var(--ink); cursor: pointer; }
+.urow.settings .grange { display: flex; align-items: center; gap: 10px; width: 100%; }
+.urow.settings input[type=range] { background: transparent; border: 0; padding: 0;
+    flex: 1; accent-color: var(--ink); }
+.urow.settings .gval { font: 400 11px var(--mono); min-width: 34px; text-align: right;
+    background: var(--field); border: 1px solid var(--edge); padding: 4px 6px; }
+.gs-dirs { display: flex; flex-direction: column; gap: 6px; width: 100%; }
 .gs-dir { display: flex; gap: 6px; }
-.gs-dir input { flex: 1; }
-.warn-line { color: var(--accent); font-size: 11px; }
+.gs-dir input { flex: 1; min-width: 0; }
+.warn-line { color: var(--accent); font-size: 11px; padding: 8px 6px; }
 
 /* MISSING state = caution amber (the one sanctioned secondary, same
    value as .spill.load), PRESENT = normal, EXTERNAL = dim */
