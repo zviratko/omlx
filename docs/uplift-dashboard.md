@@ -22,7 +22,7 @@ static files only, no oMLX code modified, oMLX is never restarted.
 | | kocour (devbox; terminal backend of this profile) | zviratko-azerty (local M5 Max laptop, 128 GB) |
 |---|---|---|
 | Host | `zviratko@10.20.31.250`, macOS arm64, M1 Max 32 GB, hostname `kocour.local` | daily inference driver, travels to work; was ALSO historically named "kocour" — disambiguate by hostname suffix and IP |
-| Hermes agent | this `uplift` profile's terminal backend runs here; the Hermes process itself lives on the laptop (browser tooling too — note the browser's SSRF guard blocks fresh navigation to LAN IPs) | original dev sessions (history); NOT for uplift dev, but Phase 3 tap install target (`omlx-uplift` formula alongside vanilla) |
+| Hermes agent | this `uplift` profile's terminal backend runs here; the Hermes process itself lives on the laptop (browser tooling too; LAN navigation works — `/etc/hosts` alias `kocour` + SSRF guard relaxed, verified 2026-09-13) | original dev sessions (history); NOT for uplift dev, but Phase 3 tap install target (`omlx-uplift` formula alongside vanilla) |
 | Repo | `~/git/omlx` (ssh remote via agent forwarding; `jundot` = upstream) | `~/git/omlx` — history, do not modify without asking |
 | Real oMLX | brew formula, port **8000**, launchd; admin API protected: POST `/admin/api/login` `{"api_key":<auth.api_key from ~/.omlx/settings.json>}` -> `omlx_admin_session` cookie | port 11435, no auth |
 | venv | `~/venvs/omlx-dev` (brew python@3.11, `pip install -e ".[dev]"`) | – |

@@ -56,8 +56,16 @@ evidence).
 - Queue empty → run another FULL sweep. Only the morning /steer stops.
 
 ## Known context
-- Gateway currently LIVE writes (restart = shadow mode; see handoff doc).
-  Night default: ask in session whether to keep live; if unsure, shadow.
+- PRIORITY (2026-09-13): Phase 1A settings parity tasks P1A-1..8 in
+  .hermes/plans/2026-09-13_uplift-to-production.md outrank QA findings.
+  Missing classic settings: claude_code_* (+mode, opus/sonnet/haiku),
+  CLI assistant model selects (copilot/codex/opencode/openclaw+profile/
+  hermes/pi), hf_endpoint, ms_endpoint, ssd/hot_cache_max_size,
+  gdn_ssd_split_enabled, auto_start_on_launch, server_aliases; gsSave
+  must send the FULL 79-key payload (P1A-6). Parity+interop test = P1A-7.
+- Gateway mode (live vs shadow) is not safety-critical on kocour; leave
+  as started unless the session decides otherwise. Night default: LIVE
+  is fine (dogfoods interoperability).
 - Splice pitfall: after any uplift.js region rewrite, grep survivors:
   renderStoredSettings openPruneDialog initDownloader renderQuantizer
   renderUploader postJson renderTasks closeEditor pollGatewayInfo.

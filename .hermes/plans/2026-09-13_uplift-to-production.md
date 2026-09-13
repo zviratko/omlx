@@ -14,10 +14,49 @@ standard attribution line.
 
 ---
 
-## Phase 1 — Redesign polish (user-in-the-loop + overnight loops)
+## Phase 1 — Feature parity first, then polish (user-in-the-loop + overnight loops)
 
 Mode: interactive by day (user tests Safari/Firefox, reports symptoms),
 autonomous overnight via standing goal + QA sweep loop.
+
+### Phase 1A — SETTINGS PARITY (do first; user directive 2026-09-13)
+Goal: every setting the classic UI exposes is exposed in Uplift, pleasant
+UI, full i18n (D1), and payload-compatible with real oMLX (same flat
+`GlobalSettingsRequest` schema — 79 keys, interoperable both directions).
+
+Gap audit (verified 2026-09-13 against `GlobalSettingsRequest` +
+grep of uplift.js; classic=79 keys, Uplift covers 48):
+- [ ] P1A-1 Claude Code box: `claude_code_mode` + opus/sonnet/haiku
+      model selects (model pickers like classic; where they live in the
+      classic UI = check _settings.html section list first).
+- [ ] P1A-2 CLI assistant model selects: copilot, codex, opencode,
+      openclaw (+ openclaw_tools_profile), hermes, pi (`integrations_*`).
+- [ ] P1A-3 HF/ModelScope endpoints: `hf_endpoint`, `ms_endpoint`
+      (Usage & Network section).
+- [ ] P1A-4 Cache sizes: `ssd_cache_max_size`, `hot_cache_max_size`;
+      advanced: `gdn_ssd_split_enabled` (conditional next to
+      gdn_ssd_pending_max_size).
+- [ ] P1A-5 Server: `auto_start_on_launch` toggle (RESTART badge),
+      `server_aliases` editor.
+- [ ] P1A-6 FULL-PAYLOAD fix: gsSave body must send the complete 79-key
+      payload (missing keys currently omitted -> LIVE saves never write
+      them). Build payload from GET response fields, not a static list.
+      Gateway GS_FLAT_MAP + GS_SHADOW paths extended to match.
+- [ ] P1A-7 Parity test: script that diffs classic `GlobalSettingsRequest`
+      fields vs Uplift GS_MAP + helper-page keys and fails on drift; run
+      in CI loop (node test). Interop test: GET real settings -> save
+      unchanged via Uplift live mode -> real file semantically identical.
+- [ ] P1A-8 Model settings editor parity re-check vs
+      `_modal_model_settings.html` after any upstream schema change
+      (84-field twin in modelspec.js must move with it).
+
+### Phase 1B — i18n parity (DECIDED: full, before PR)
+- [ ] P1B-1 Wire `t()` + locale fetch into uplift.js (classic pattern,
+      9 locales), extract every literal (GS_LABELS block, toasts, pills).
+- [ ] P1B-2 Translate new keys into all 9 locale files (reuse classic
+      wording where keys exist; en.json restart-cache quirk applies).
+
+### Phase 1C — polish loop (was Phase 1)
 
 - **1.1 QA sweep harness** — `tests/uplift-qa.md`: a checklist the agent
   walks with the headless browser: each page (Status/Models×6 sub-pages/
@@ -113,6 +152,26 @@ autonomous overnight via standing goal + QA sweep loop.
 
 ## Revised overnight protocol (v2 — fixes the three observed failures)
 
+### Pre-flight snapshot (MANDATORY before each overnight fire)
+Rollback anchor, done once at the start of the loop (first loop turn):
+1. `git -C ~/git/omlx/worktrees/uplift status` must be clean; if dirty,
+   commit WIP first (`wip(uplift): pre-overnight` ).
+2. Tag + push the anchor: `git tag uplift-night-YYYYMMDD && git push
+   origin uplift-night-YYYYMMDD` (anchor = last human-approved state).
+3. Copy UI files + sandbox state to the rollback bundle:
+   `~/hermes/TMP/uplift-rollback-YYYYMMDD/` = static/uplift/*,
+   scripts/uplift-*.{py,sh}, findings JSON, and the mock's current mode
+   (live/shadow). Restoring = copy back + re-run deploy script + restart
+   gateway in the recorded mode.
+4. Record the anchor SHA + bundle path at the TOP of the findings file
+   (`"rollback": {...}` entry) so the morning wrap-up summary cites it.
+
+Morning full rollback (user decides, ~2 min): `git reset --hard
+uplift-night-YYYYMMDD` in the worktree + restore bundle + redeploy.
+Per-commit undo also possible (anchor..HEAD is the night's worklist;
+loop commits are one-per-finding so cherry-pick/revert granularity
+survives).
+
 Failure → countermeasure:
 1. "claimed finished but change didn't work" ⇒ NEVER mark a finding fixed
    without: redeploy → curl served bytes contain the change → browser
@@ -129,9 +188,16 @@ Failure → countermeasure:
 
 Standing goal line to fire in the evening (paste as-is):
   /goal Run the uplift overnight loop from
-  .hermes/plans/2026-09-13_uplift-to-production.md (section 1.2) in the
-  worktree. Do not stop while the clock is before 06:45 unless blocked on
-  the user. When the findings queue is empty, run another full QA sweep.
+  .hermes/plans/2026-09-13_uplift-to-production.md in the worktree
+  ~/git/omlx/worktrees/uplift. First do the pre-flight snapshot (tag +
+  rollback bundle). Then work Phase 1A parity tasks P1A-1..8 from the
+  plan, then sweep per tests/uplift-qa.md and fix findings with evidence
+  (protocol v2). Do not stop while the clock is before 06:45 unless
+  blocked on the user. When everything is done, sweep again.
+
+Note (user, 2026-09-13): live vs shadow on kocour is NOT a concern —
+oMLX there is not mission critical and the uplift profile is isolated.
+The loop may keep the gateway in whatever mode it started in.
 
 Morning /steer "wrap up" means: finish the finding in hand, one last
 quick sweep, redeploy, update docs/uplift-dashboard.md handoff, commit +
