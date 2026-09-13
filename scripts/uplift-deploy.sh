@@ -50,13 +50,15 @@ echo "Classic dashboard stays at http://127.0.0.1:11435/admin/dashboard (untouch
 # with UPLIFT_UPSTREAM_API_KEY (env only, never logged).
 GPORT=11437
 if ! curl -sf -o /dev/null "http://127.0.0.1:$GPORT/admin/api/mock/info"; then
+    LIVE_FLAG=""
+    [ "${UPLIFT_LIVE_WRITES:-0}" = "1" ] && LIVE_FLAG="--live-writes"
     UPLIFT_UPSTREAM_API_KEY="${UPLIFT_UPSTREAM_API_KEY:-}" \
     nohup python3 "$(cd "$(dirname "$0")" && pwd)/uplift-mock.py" --sim 0.5 --seed \
         --upstream "${UPLIFT_UPSTREAM:-http://127.0.0.1:11435}" \
-        --host "${UPLIFT_BIND_HOST:-127.0.0.1}" \
+        --host "${UPLIFT_BIND_HOST:-127.0.0.1}" $LIVE_FLAG \
         >> "$HOME/hermes/TMP/uplift-mock.log" 2>&1 &
     sleep 1
-    echo "Mock gateway started: http://127.0.0.1:$GPORT"
+    echo "Mock gateway started: http://127.0.0.1:$GPORT${LIVE_FLAG:+ (LIVE writes)}"
 else
     echo "Mock gateway already running: http://127.0.0.1:$GPORT"
 fi

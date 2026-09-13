@@ -881,17 +881,21 @@ function restartPolling() {
 }
 
 /* ---------------- gateway status chip ---------------- */
+let GW_LIVE = false;   // true when the gateway runs in --live-writes mode
 async function pollGatewayInfo() {
     const chip = $('chip-gateway');
     if (API !== API_DEFAULT) { chip.textContent = 'direct'; chip.title = 'API ' + (API || location.origin); return; }
     try {
         const d = await fetchJson(`${API}/admin/api/mock/info`);
+        GW_LIVE = !!d.live_writes;
         chip.textContent = d.ok
-            ? `gw↑ok · r${d.observed_real}/s${d.simulated}`
+            ? (GW_LIVE ? 'gw↑LIVE' : `gw↑ok · r${d.observed_real}/s${d.simulated}`)
             : 'gw↑down';
         chip.classList.toggle('state-ok', !!d.ok);
         chip.title = `gateway → ${d.upstream}: ${d.ok ? 'reachable' : (d.last_error || 'unreachable')}\n` +
-                     `shadow overrides: ${Object.keys(d.overrides || {}).length} · sim ${d.sim_rate}/s`;
+                     (GW_LIVE ? 'LIVE writes: changes modify real oMLX\n'
+                              : `shadow overrides: ${Object.keys(d.overrides || {}).length} · `) +
+                     `sim ${d.sim_rate}/s`;
     } catch (_) { chip.textContent = 'gw?'; chip.classList.remove('state-ok'); }
 }
 
@@ -1619,7 +1623,8 @@ async function saveEditor() {
     msg.textContent = 'saving…';
     try {
         const r = await putModelSettings(seModel, payload);
-        const note = r.requires_reload ? 'saved ✓ reload required' : 'saved ✓ (shadow)';
+        const savedNote = r._shadow ? 'saved ✓ (shadow)' : 'saved ✓';
+        const note = r.requires_reload ? 'saved ✓ reload required' : savedNote;
         msg.textContent = note;
         toast(`Settings saved: ${seModel}`);
         setTimeout(closeEditor, 1200);
@@ -2100,7 +2105,9 @@ async function gsSave(fields) {
         });
         if (!r.ok) { toast('save failed: HTTP ' + r.status); return false; }
         GS._shadow = body;
-        $('gs-sub').textContent = 'saved ✓ (shadow — real oMLX untouched)';
+        $('gs-sub').textContent = GW_LIVE
+            ? 'saved ✓ (live — written to real oMLX)'
+            : 'saved ✓ (shadow — real oMLX untouched)';
         return true;
     } catch (err) { toast('save failed: ' + err.message); return false; }
 }

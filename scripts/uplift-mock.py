@@ -54,6 +54,7 @@ RNG = random.Random(42)
 
 ARGS = None                      # parsed CLI (set in main)
 UPSTREAM = "http://127.0.0.1:11435"
+LIVE_WRITES = False              # --live-writes: forward writes to real oMLX
 UP_STATUS = {"ok": False, "last_error": None, "last_ok_ts": None, "polls": 0}
 STORE = None                     # sandboxed settings/profile/template store (UpliftStore)
 GS_SHADOW_PATH = None            # sandbox file holding integrations_* overrides
@@ -173,6 +174,31 @@ def upstream_get_text(path, timeout=6):
         return r.read().decode("utf-8", "replace")
 
 
+def upstream_write(method, path, payload, timeout=15):
+    """Forward a write to the real server (--live-writes mode).
+
+    Returns (status_code, response_json). HTTP 4xx from the real server is
+    returned, not raised, so the caller can pass the real validation error
+    through to the UI. Connection/5xx errors raise like any failed proxy call.
+    """
+    req = urllib.request.Request(
+        UPSTREAM + path, data=json.dumps(payload).encode(),
+        headers=_up_headers({"Content-Type": "application/json"}),
+        method=method)
+    try:
+        with _up_open(req, timeout) as r:
+            return r.status, _safe_json(r.read())
+    except urllib.error.HTTPError as e:
+        return e.code, _safe_json(e.read())
+
+
+def _safe_json(raw):
+    try:
+        return json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        return {"detail": raw.decode("utf-8", "replace")[:500]}
+
+
 
 # Shadow flat key -> GET response location (mirrors GlobalSettingsRequest
 # field->nested mapping in omlx/admin/routes.py; api_key stays masked).
@@ -254,7 +280,9 @@ def merge_model(base):
     s.update(o.get("settings") or {})
     # Sandboxed store is the settings source of truth for every model whose
     # record exists there (seeded copy of real settings + all gateway writes).
-    if STORE is not None:
+    # In --live-writes mode the REAL server is the source of truth instead:
+    # settings arrive inside GET /admin/api/models and writes are forwarded.
+    if STORE is not None and not LIVE_WRITES:
         st = STORE.get_settings(mid)
         st_pop = store_mod.to_dict_stripping_none(st)
         for k in store_mod.MODEL_DEFAULTS:
@@ -505,18 +533,23 @@ def model_clock():
                     emit({"type": "model-ready", "id": mid})
 
 
+def base_models_fetch_once():
+    """One-shot refresh of the real models snapshot (live-writes post-action)."""
+    try:
+        data = upstream_get("/admin/api/models")
+        with LOCK:
+            MODELS_BASE.clear()
+            for m in data.get("models", []):
+                MODELS_BASE[m["id"]] = m
+            FETCH["models_ts"] = time.time()
+    except Exception:  # noqa: BLE001 - next poll recovers
+        pass
+
+
 def base_models_refresh():
     """Fetch the real models list (schema + settings) periodically."""
     while True:
-        try:
-            data = upstream_get("/admin/api/models")
-            with LOCK:
-                MODELS_BASE.clear()
-                for m in data.get("models", []):
-                    MODELS_BASE[m["id"]] = m
-                FETCH["models_ts"] = time.time()
-        except Exception as e:  # noqa: BLE001
-            UP_STATUS["last_error"] = f"models: {type(e).__name__}: {e}"
+        base_models_fetch_once()
         time.sleep(10)
 
 
@@ -637,7 +670,7 @@ class Handler(BaseHTTPRequestHandler):
     def _proxy(self, path, cache_key=None):
         """GET through to upstream; merge overrides where applicable."""
         try:
-            if path.startswith("/admin/api/models"):
+            if path.split("?")[0] == "/admin/api/models":
                 with LOCK:
                     merged = [merge_model(m) for m in MODELS_BASE.values()]
                 return self._json({"models": merged, "_gateway": {"fetched": FETCH["models_ts"]}})
@@ -680,6 +713,7 @@ class Handler(BaseHTTPRequestHandler):
             with LOCK:
                 self._json({"upstream": UPSTREAM, **UP_STATUS,
                             "sim_rate": ARGS.sim,
+                            "live_writes": LIVE_WRITES,
                             "observed_real": ORIGIN_COUNT["real"],
                             "simulated": ORIGIN_COUNT["sim"],
                             "overrides": {k: {kk: vv for kk, vv in v.items()
@@ -693,7 +727,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:  # noqa: BLE001
                 return self._json({"detail": f"upstream unreachable: {e}",
                                    "_gateway_offline": True}, 502)
-            if GS_SHADOW:
+            if GS_SHADOW and not LIVE_WRITES:
                 # GS_SHADOW keys: integrations keys stored unprefixed (as the
                 # classic form posts integrations_*), global settings as flat
                 # GlobalSettingsRequest keys. Route each back to its section.
@@ -706,7 +740,7 @@ class Handler(BaseHTTPRequestHandler):
                         data.setdefault(sec, {})[field] = GS_SHADOW[flat]
                 if "api_key" in GS_SHADOW:
                     data.setdefault("auth", {})["api_key"] = "••••"
-            data["_shadow"] = dict(GS_SHADOW)
+            data["_shadow"] = {} if LIVE_WRITES else dict(GS_SHADOW)
             self._json(data)
         elif p == "/admin/api/models" or p.startswith("/admin/api/models?"):
             self._proxy(p + ("?" + u.query if u.query else ""))
@@ -719,14 +753,20 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     s = dict((base or {}).get("settings") or {})
                     s.update(MODELS_OVER.get(mid, {}).get("settings") or {})
-                    if STORE is not None:
+                    if STORE is not None and not LIVE_WRITES:
                         s = store_mod.to_dict_stripping_none(STORE.get_settings(mid))
                     self._json({"id": mid, "settings": s})
         elif p.startswith("/admin/api/models/") and p.endswith("/profiles"):
-            mid = urllib.parse.unquote(p[len("/admin/api/models/"):-len("/profiles")])
-            self._json({"profiles": STORE.list_profiles(mid) if STORE else []})
+            if LIVE_WRITES:
+                self._proxy(p)
+            else:
+                mid = urllib.parse.unquote(p[len("/admin/api/models/"):-len("/profiles")])
+                self._json({"profiles": STORE.list_profiles(mid) if STORE else []})
         elif p == "/admin/api/profile-templates":
-            self._json({"templates": STORE.list_templates() if STORE else []})
+            if LIVE_WRITES:
+                self._proxy(p)
+            else:
+                self._json({"templates": STORE.list_templates() if STORE else []})
         elif p == "/admin/api/profile-fields":
             self._json({"universal": list(store_mod.UNIVERSAL_PROFILE_FIELDS),
                         "model_specific": list(store_mod.MODEL_SPECIFIC_PROFILE_FIELDS)})
@@ -821,9 +861,44 @@ class Handler(BaseHTTPRequestHandler):
             return None
 
     # ---- writes: always intercepted, NEVER forwarded upstream ----
+    # (--live-writes mode reverses this: everything real goes upstream;
+    #  mock-only control routes stay here.)
+    MOCK_ONLY_PREFIXES = ("/admin/api/mock/", "/admin/api/requests/")
+
+    def _live_forward(self, method, p, body):
+        """--live-writes: forward a write upstream, pass response through."""
+        body = body or {}
+        # Never resend the masked placeholder the GET returns for api_key —
+        # the real server would try to validate "••••" as a new key.
+        if method == "POST" and p == "/admin/api/global-settings" \
+                and body.get("api_key") == "••••":
+            body.pop("api_key")
+        try:
+            code, resp = upstream_write(method, p, body)
+        except Exception as e:  # noqa: BLE001
+            return self._json({"detail": f"upstream unreachable: {e}"}, 502)
+        # Refresh the base snapshot immediately so the next GET shows real
+        # state instead of waiting for the 10s poll.
+        if code == 200 and p.startswith("/admin/api/models/") \
+                and p.endswith("/settings") and isinstance(resp, dict) \
+                and resp.get("settings"):
+            mid = urllib.parse.unquote(
+                p[len("/admin/api/models/"):-len("/settings")])
+            base = dict(MODELS_BASE.get(mid) or {})
+            base["settings"] = resp["settings"]
+            MODELS_BASE[mid] = base
+        return self._json(resp, code)
+
+    def _live_skipped(self, p):
+        return p.startswith(self.MOCK_ONLY_PREFIXES) or \
+            p == "/admin/api/prune-model-settings" or \
+            p == "/admin/api/model-settings-index"
+
     def do_PUT(self):
         p = urlparse(self.path).path
         parts = p.split("/")
+        if LIVE_WRITES and not self._live_skipped(p):
+            return self._live_forward("PUT", p, self._read_body())
         if p.startswith("/admin/api/models/") and p.endswith("/settings"):
             mid = urllib.parse.unquote(p[len("/admin/api/models/"):-len("/settings")])
             body = self._read_body()
@@ -909,10 +984,26 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         p = urlparse(self.path).path
         parts = p.split("/")
+        # --live-writes: forward everything the real server owns. Exceptions
+        # stay local: mock control routes, the sim-cancel route, and
+        # upload/validate-token (a UI-entered token is never sent upstream).
+        # pin/unpin have no upstream route; they translate to PUT settings.
+        if LIVE_WRITES and not self._live_skipped(p) \
+                and p != "/admin/api/upload/validate-token":
+            pin = len(parts) >= 6 and parts[3] == "models" \
+                and parts[-1] in ("pin", "unpin")
+            if pin:
+                mid = urllib.parse.unquote(parts[4])
+                return self._live_forward(
+                    "PUT", f"/admin/api/models/{urllib.parse.quote(mid, safe='')}/settings",
+                    {"is_pinned": parts[-1] == "pin"})
+            if len(parts) >= 6 and parts[3] == "models" \
+                    and parts[-1] in ("load", "unload"):
+                threading.Timer(0.4, base_models_fetch_once).start()
+            return self._live_forward("POST", p, self._read_body())
         if p == "/admin/api/global-settings":
             # classic saveIntegrationSettings() sends flat integrations_* keys;
             # saveGlobalSettings() sends flat GlobalSettingsRequest keys.
-            # Capture both into the shadow overlay, never touch real oMLX.
             body = self._read_body() or {}
             changed = {k[len("integrations_"):]: v
                        for k, v in body.items() if k.startswith("integrations_")}
@@ -1115,6 +1206,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         p = urlparse(self.path).path
         parts = p.split("/")
+        if LIVE_WRITES and not self._live_skipped(p):
+            return self._live_forward("DELETE", p, None)
         if len(parts) >= 7 and parts[1] == "admin" and parts[3] == "models" and parts[5] == "profiles":
             mid, name = urllib.parse.unquote(parts[4]), urllib.parse.unquote(parts[6])
             if STORE and STORE.delete_profile(mid, name):
@@ -1167,7 +1260,7 @@ def observer_loop():
 
 
 def main():
-    global ARGS, UPSTREAM, STORE
+    global ARGS, UPSTREAM, STORE, LIVE_WRITES, GS_SHADOW_PATH, UPSTREAM_API_KEY
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=11437)
     ap.add_argument("--host", default="127.0.0.1",
@@ -1175,18 +1268,20 @@ def main():
     ap.add_argument("--upstream", default="http://127.0.0.1:11435")
     ap.add_argument("--api-key", default=os.environ.get("UPLIFT_UPSTREAM_API_KEY") or None,
                     help="Bearer key if the upstream requires auth (never logged)")
+    ap.add_argument("--live-writes", action="store_true",
+                    help="forward settings/load/unload/task writes to the REAL "
+                         "oMLX server instead of shadowing them into the sandbox")
     ap.add_argument("--sim", type=float, default=0.5,
                     help="synthetic requests per second (0 = observe real only)")
-    global GS_SHADOW_PATH
     ap.add_argument("--base", default=os.path.expanduser("~/hermes/TMP/omlx-uplift-data"),
                     help="sandbox dir for model_settings.json / model_profiles.json / "
                          "global_templates.json (NEVER ~/.omlx)")
     ap.add_argument("--seed", action="store_true",
                     help="seed the sandbox from the real ~/.omlx files if missing (copy, read-only on originals)")
-    global UPSTREAM_API_KEY
     ARGS = ap.parse_args()
     UPSTREAM = ARGS.upstream
     UPSTREAM_API_KEY = ARGS.api_key
+    LIVE_WRITES = ARGS.live_writes
     if UPSTREAM_API_KEY:
         try:
             _login_locked()
@@ -1215,7 +1310,12 @@ def main():
     threading.Thread(target=model_clock, daemon=True).start()
     threading.Thread(target=base_models_refresh, daemon=True).start()
     srv = ThreadingHTTPServer((ARGS.host, ARGS.port), Handler)
-    print(f"uplift gateway on http://127.0.0.1:{ARGS.port} -> upstream {UPSTREAM} (sim {ARGS.sim}/s)")
+    mode = "LIVE writes -> real oMLX" if LIVE_WRITES else "shadow writes (sandbox)"
+    print(f"uplift gateway on http://127.0.0.1:{ARGS.port} -> upstream {UPSTREAM} "
+          f"(sim {ARGS.sim}/s, {mode})")
+    if LIVE_WRITES:
+        print("WARNING: --live-writes is ON — settings/load/unload/task writes "
+              "modify the REAL oMLX configuration.")
     srv.serve_forever()
 
 

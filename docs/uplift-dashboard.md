@@ -1,7 +1,8 @@
 # Uplift Dashboard — project state & handoff
 
 Status file for continuing this project in a fresh session on any machine.
-Read this first, then the code. Last update: 2026-09-13 (kocour migration).
+Read this first, then the code. Last update: 2026-09-13 (kocour migration +
+dedicated `uplift` Hermes profile on the devbox).
 
 ## What this is
 
@@ -21,6 +22,7 @@ static files only, no oMLX code modified, oMLX is never restarted.
 | | kocour (PRIMARY dev machine) | old local Mac (retired, read-only) |
 |---|---|---|
 | Host | `zviratko@10.20.31.250`, macOS arm64 | this laptop network position |
+| Hermes agent | dedicated `uplift` profile runs REMOTELY here (terminal backend = ssh into kocour; the agent cannot see the local Mac's profile dir from here — hostname check `kocour.local` confirms isolation) | original dev sessions (history) |
 | Repo | `~/git/omlx` (ssh remote via agent forwarding; `jundot` = upstream) | `~/git/omlx` — do not modify |
 | Real oMLX | brew formula, port **8000**, launchd; admin API protected: POST `/admin/api/login` `{"api_key":<auth.api_key from ~/.omlx/settings.json>}` -> `omlx_admin_session` cookie | port 11435, no auth |
 | venv | `~/venvs/omlx-dev` (brew python@3.11, `pip install -e ".[dev]"`) | – |
@@ -63,6 +65,18 @@ kill $(lsof -tnP -iTCP:11437 -sTCP:LISTEN)  # then re-run deploy
   state (`--api-key`/env, re-login on 401), simulates request lifecycles,
   SSE stream, cancel for sim rows only, percentiles computed client-side,
   task simulation for downloader/quantizer/uploader, shadow settings store.
+  **`--live-writes` mode** (env `UPLIFT_LIVE_WRITES=1` in the deploy
+  script): forwards model-settings PUT, global-settings POST, load/unload/
+  pin (pin -> `PUT settings {is_pinned}`; no upstream route), profiles,
+  templates, and task writes to the REAL server; real validation responses
+  pass through verbatim; masked `api_key "••••"` is never resent. Stays
+  local: mock control routes, sim cancel, upload/validate-token (UI token
+  never forwarded). In live mode the sandbox store is inactive; real server
+  is the settings source of truth (snapshot refreshed right after writes).
+  UI gateway chip shows `gw↑LIVE` and save banners say "live — written to
+  real oMLX". Caveat: real oMLX does NOT range-validate temperature
+  (accepts 99); the mock does. PUT to an unknown model creates a settings
+  record upstream (verified with MiniCPM5-2B; reset to defaults after).
 - `scripts/omlx_settings_store.py` — faithful replica of
   ModelSettingsManager; writes real-format JSON to the sandbox dir only.
 - UI default API base is page-host-relative (`//hostname:11437`), so LAN
@@ -147,6 +161,33 @@ are never written.
   settings-schema change.
 
 ## TODO / possible next steps (nothing promised)
+
+### Real oMLX backend gaps (verified 2026-09-13 against :8000)
+Features that exist ONLY in the gateway, candidates for upstream PRs:
+1. Request lifecycle log + `GET /admin/api/requests` (404 on real) and
+   `POST /admin/api/requests/{id}/cancel` — real /stats shows only live
+   rows; gateway polls at 1s so fast requests are missed. Cancel needs a
+   scheduler route (gateway returns 501 for real-origin requests).
+2. SSE stream for request events (real SSE is benchmark-only); UI
+   currently falls back to 2s polling against the real server.
+3. Server-side percentiles (`request_stats`): token sizes, TTFT, total-ms,
+   p50-p99. Could be computed from usage-history SQLite upstream.
+4. Prune orphaned model settings (`POST /admin/api/prune-model-settings`,
+   `GET /admin/api/model-settings-index`) — no upstream equivalent at all.
+5. `GET /admin/api/models/{id}/settings` — 405 upstream (PUT only), but
+   data rides inside `GET /api/models` (`asdict(settings)`), so the mock
+   route is convenience only; not a real gap.
+Not gaps (deliberate shadow layer only): global settings GET/POST,
+model load/unload, downloader/quantizer/uploader task routes all exist on
+the real server — use `--live-writes` to talk to them for real.
+
+### Branch sync (working, keep doing it)
+Fork `origin`=zviratko/omlx, upstream remote `jundot`. Routine: `git fetch
+jundot main && git merge jundot/main` in the worktree (merge, not rebase,
+day-to-day — our files are additive so conflicts are ~never); rebase onto
+jundot/main once right before an upstream PR. First sync 2026-09-13:
+5d961abe merged 9 upstream commits, zero conflicts. Watch: a native
+/uplift route would touch routes.py = first real overlap.
 
 - [ ] PR to upstream `jundot/omlx` when the user says the dashboard is
       ready (attribution: keep zviratko primary, Hermes line as wrap-up).
