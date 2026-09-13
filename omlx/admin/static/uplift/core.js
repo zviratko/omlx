@@ -65,6 +65,7 @@ function normalize(raw) {
             prefilling: (Array.isArray(m.prefilling) ? m.prefilling : []).map(p => ({
                 rid: String(p.request_id || ''),
                 prompt: num(p.prompt_tokens ?? p.prompt_length ?? p.num_prompt_tokens),
+                progress: p.progress >= 0 && p.progress <= 1 ? p.progress : null,
             })).filter(p => p.rid),
             generating: (Array.isArray(m.generating) ? m.generating : []).map(g => ({
                 rid: String(g.request_id || ''),

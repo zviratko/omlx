@@ -498,7 +498,7 @@ function renderLive(s) {
     const list = $('live-list');
     const rows = [];
     for (const m of s.models) {
-        for (const p of m.prefilling) rows.push({ model: m.id, kind: 'Prefilling', prompt: p.prompt });
+        for (const p of m.prefilling) rows.push({ model: m.id, kind: 'Prefilling', prompt: p.prompt, progress: p.progress });
         for (const g of m.generating) rows.push({ model: m.id, kind: 'Generating', prompt: g.prompt, generated: g.generated, tps: g.tps });
     }
     $('live-count').textContent = rows.length ? `${rows.length}` : '';
@@ -509,6 +509,7 @@ function renderLive(s) {
     list.innerHTML = '';
     for (const r of rows) {
         const row = document.createElement('div'); row.className = 'model-row';
+        row.style.flexWrap = 'wrap';
         const badge = document.createElement('span');
         badge.className = `badge ${r.kind}`; badge.textContent = r.kind;
         const name = document.createElement('span');
@@ -519,8 +520,17 @@ function renderLive(s) {
         if (r.prompt) bits.push(`in ${C.fmtCompact(r.prompt)}`);
         if (r.generated !== undefined) bits.push(`out ${C.fmtCompact(r.generated)}`);
         if (r.tps) bits.push(`${r.tps.toFixed(0)} t/s`);
+        if (r.progress !== undefined && r.progress !== null) bits.push(`${Math.round(r.progress * 100)}%`);
         meta.textContent = bits.join(' · ');
         row.append(badge, name, meta);
+        if (r.progress !== undefined && r.progress !== null) {
+            const bar = document.createElement('div');
+            bar.className = 'meter'; bar.style.flex = '1 0 100%'; bar.style.marginTop = '4px';
+            const fill = document.createElement('div');
+            fill.style.width = Math.round(r.progress * 100) + '%';
+            bar.append(fill);
+            row.append(bar);
+        }
         list.append(row);
     }
 }
