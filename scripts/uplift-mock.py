@@ -106,20 +106,54 @@ def emit(ev):
 
 # ------------------------------------------------------------ http helpers
 UPSTREAM_API_KEY = None          # set via --api-key / UPLIFT_UPSTREAM_API_KEY
+_SESSION_COOKIE = None           # omlx admin session (cookie-based auth)
+
+
+def _login_locked():
+    """POST /admin/api/login with the API key, cache the session cookie."""
+    global _SESSION_COOKIE
+    if not UPSTREAM_API_KEY:
+        return None
+    req = urllib.request.Request(
+        UPSTREAM + "/admin/api/login",
+        data=json.dumps({"api_key": UPSTREAM_API_KEY, "remember": True}).encode(),
+        headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=6) as r:
+        for hdr in r.headers.get_all("Set-Cookie") or []:
+            if hdr.startswith("omlx_admin_session="):
+                _SESSION_COOKIE = hdr.split(";")[0]
+                return _SESSION_COOKIE
+    return None
 
 
 def _up_headers(extra=None):
     h = {"Accept": "application/json"}
-    if UPSTREAM_API_KEY:
-        h["Authorization"] = "Bearer " + UPSTREAM_API_KEY
+    if _SESSION_COOKIE:
+        h["Cookie"] = _SESSION_COOKIE
     if extra:
         h.update(extra)
     return h
 
 
+def _up_open(req, timeout):
+    """urlopen with one transparent re-login on 401 (session expires)."""
+    try:
+        return urllib.request.urlopen(req, timeout=timeout)
+    except urllib.error.HTTPError as e:
+        if e.code == 401 and UPSTREAM_API_KEY:
+            if _login_locked():
+                hdrs = dict(req.headers)
+                hdrs["Cookie"] = _SESSION_COOKIE
+                body = req.data if hasattr(req, "data") else None
+                retry = urllib.request.Request(req.full_url, data=body,
+                                               headers=hdrs, method=req.get_method())
+                return urllib.request.urlopen(retry, timeout=timeout)
+        raise
+
+
 def upstream_get(path, timeout=4):
     req = urllib.request.Request(UPSTREAM + path, headers=_up_headers())
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    with _up_open(req, timeout) as r:
         return json.loads(r.read())
 
 
@@ -128,14 +162,14 @@ def upstream_post(path, payload, timeout=15):
         UPSTREAM + path, data=json.dumps(payload).encode(),
         headers=_up_headers({"Content-Type": "application/json"}),
         method="POST")
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    with _up_open(req, timeout) as r:
         return json.loads(r.read())
 
 
 def upstream_get_text(path, timeout=6):
     req = urllib.request.Request(UPSTREAM + path,
                                  headers=_up_headers({"Accept": "text/plain,*/*"}))
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    with _up_open(req, timeout) as r:
         return r.read().decode("utf-8", "replace")
 
 
@@ -1151,6 +1185,12 @@ def main():
     ARGS = ap.parse_args()
     UPSTREAM = ARGS.upstream
     UPSTREAM_API_KEY = ARGS.api_key
+    if UPSTREAM_API_KEY:
+        try:
+            _login_locked()
+            print("upstream login: session cookie acquired")
+        except Exception as e:  # noqa: BLE001
+            print(f"upstream login failed ({e}); GETs may 401 until retry")
     if ARGS.seed:
         real_base = os.environ.get("OMLX_BASE_PATH") or os.path.expanduser("~/.omlx")
         copied = store_mod.seed_from_real(real_base, ARGS.base)
