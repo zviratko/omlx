@@ -464,16 +464,31 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
     border-radius: 0; height: 32px; padding: 0 8px; font: 400 12px/1 var(--mono); }
 
 /* ---- Server settings: editable form mirroring the classic layout ------- */
-.gs-title {
-    font: 500 11px/1 var(--sans); text-transform: uppercase; letter-spacing: 0.12em;
-    color: var(--ink); border-top: 1px solid var(--ink);
-    padding: 14px 0 6px; margin-top: 8px;
+/* Server settings: segmented multi-column flow, capped page width so a
+   single column never stretches edge to edge (mirrors classic page cap). */
+#gs-body.gs-wrap {
+    columns: 320px 3; column-gap: 18px;
+    max-width: 1200px; margin: 0 auto;
 }
-.admin-table .gs-title:first-child { margin-top: 0; }
+.gs-box {
+    break-inside: avoid; display: inline-block; width: 100%;
+    margin: 0 0 18px; padding: 0 12px 8px;
+    border: 1px solid var(--rule); background: transparent;
+}
+.gs-box-title {
+    font: 500 11px/1 var(--sans); text-transform: uppercase; letter-spacing: 0.12em;
+    color: var(--ink); border-bottom: 1px solid var(--ink);
+    padding: 10px 0 6px; margin-bottom: 2px;
+}
+.gs-box .gs-title { display: none; }   /* title is re-emitted as box header */
 .urow.settings { display: grid; grid-template-columns: minmax(220px, 1fr) 300px;
     gap: 16px; align-items: start; padding: 9px 2px;
     border-bottom: 1px dotted var(--rule); }
 .urow.settings .gctl { display: flex; justify-content: flex-end; }
+.urow.settings .uname { white-space: normal; overflow: visible; text-overflow: clip; }
+/* RESTART badge: auto width + padding — the fixed 84px .spill is narrower
+   than the label text, which made it overflow onto the label text */
+.urow.settings .spill { width: auto; padding: 0 6px; margin-top: 3px; }
 .urow.settings input, .urow.settings select {
     font: 400 11px/1.4 var(--mono); color: var(--ink);
     background: transparent; border: 1px solid var(--rule);

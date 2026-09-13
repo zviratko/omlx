@@ -2194,7 +2194,7 @@ async function pollGlobalSettings() {
 }
 
 function renderGlobalSettings() {
-    const body = $('gs-body');
+    const body = document.createElement('div');   // staged; grouped into boxes below
     body.textContent = '';
     const L = GS_LABELS;
 
@@ -2398,6 +2398,28 @@ function renderGlobalSettings() {
             prow.querySelector('.uname').append(w);
         }
         body.append(prow);
+    }
+
+    // group staged children into bordered section boxes inside a capped
+    // multi-column flow (gs-wrap); each gs-title starts a new box
+    const wrap = $('gs-body');
+    wrap.textContent = '';
+    wrap.classList.add('gs-wrap');
+    let box = null;
+    for (const n of Array.from(body.childNodes)) {
+        if (n.nodeType === 1 && n.classList.contains('gs-title')) {
+            box = document.createElement('div');
+            box.className = 'gs-box';
+            const h = document.createElement('div');
+            h.className = 'gs-box-title';
+            h.textContent = n.textContent;
+            box.append(h);
+            wrap.append(box);
+        } else if (box) {
+            box.append(n);
+        } else {
+            wrap.append(n);
+        }
     }
 }
 

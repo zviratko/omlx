@@ -101,6 +101,11 @@ are never written.
   MCP, Usage & Network, Advanced), same fields/hints/RESTART badges,
   conditional rows (custom guard ceiling, GDN sidecar + int8 warning),
   sliders, model-dir add/remove. Full flat payload saved per change.
+- Server Settings page layout (2026-09-13): segmented into 11 bordered
+  section boxes flowing in a capped multi-column layout (#gs-body.gs-wrap:
+  columns 320px x 3, max-width 1200px centered). RESTART badge width fixed
+  (was fixed 84px .spill narrower than its text, overlapping the label;
+  now auto-width + padding, wraps below label text).
 - Logs tab with level filtering; hotkeys 1-5; drag-drop layout order
   (`omlx-uplift-layout-v1` in localStorage); prefs
   (`omlx-uplift-prefs-v1`).
