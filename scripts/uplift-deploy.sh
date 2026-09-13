@@ -22,10 +22,21 @@ echo "Deployed to: $DEST (cache stamp $BUILD)"
 
 # Helper static server (serves index.html; the keg's own /admin/static route
 # has no .html media type, and we must not patch routes.py without a restart).
+# Uses uplift-server.py: index.html is served with no-store so deploys land
+# immediately (python -m http.server lets browsers keep a stale index fresh).
 PORT=11436
 if ! curl -sf -o /dev/null "http://127.0.0.1:$PORT/index.html"; then
-    (cd "$DEST" && nohup python3 -m http.server "$PORT" --bind 127.0.0.1 >/dev/null 2>&1 &)
+    nohup python3 "$(cd "$(dirname "$0")" && pwd)/uplift-server.py" --port "$PORT" "$DEST" \
+        >> "$HOME/hermes/TMP/uplift-server.log" 2>&1 &
     sleep 1
+elif ! curl -sI "http://127.0.0.1:$PORT/index.html" | grep -qi "cache-control: no-store"; then
+    # Old python -m http.server instance: replace with the no-cache server.
+    kill "$(lsof -tnP -iTCP:$PORT -sTCP:LISTEN)" 2>/dev/null || true
+    sleep 0.5
+    nohup python3 "$(cd "$(dirname "$0")" && pwd)/uplift-server.py" --port "$PORT" "$DEST" \
+        >> "$HOME/hermes/TMP/uplift-server.log" 2>&1 &
+    sleep 1
+    echo "Helper server upgraded to no-cache uplift-server.py"
 fi
 echo "Uplift dashboard: http://127.0.0.1:$PORT/index.html"
 echo "Classic dashboard stays at http://127.0.0.1:11435/admin/dashboard (untouched)"

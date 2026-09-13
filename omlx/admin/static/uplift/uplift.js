@@ -904,27 +904,35 @@ async function pollUsage() {
             : null;
         usageRange = u.range || usageRange;
 
-        // Heatmap (last day row of the range, or yesterday when range=yesterday).
+        // Heatmap: single row for day ranges, full day×hour grid for 7d+.
         const hm = u.heatmap || [];
-        const day = hm[hm.length - 1];
-        const hours = day ? day.tokens : new Array(24).fill(0);
-        const max = Math.max(1, ...hours);
         const heat = $('heat');
-        if (heat.children.length !== 24) {
+        const multi = hm.length > 1;
+        heat.classList.toggle('multi', multi);
+        heat.style.gridTemplateRows = multi ? `repeat(${hm.length}, auto)` : '';
+        const want = hm.length * 24;
+        if (heat.children.length !== want) {
             heat.innerHTML = '';
-            for (let i = 0; i < 24; i++) heat.append(document.createElement('i'));
+            for (let i = 0; i < want; i++) heat.append(document.createElement('i'));
         }
-        [...heat.children].forEach((c, i) => {
-            const v = hours[i] || 0;
-            const a = v > 0 ? 0.15 + 0.85 * Math.sqrt(v / max) : 0;
-            c.style.background = v > 0 ? `color-mix(in oklab, var(--heat) ${Math.round(a * 100)}%, transparent)` : '';
-            c.title = `${String(i).padStart(2, '0')}:00 — ${C.fmtCompact(v)} tokens`;
+        const allMax = Math.max(1, ...hm.flatMap(d => d.tokens || [0]));
+        let cells = [...heat.children];
+        hm.forEach((day, dIdx) => {
+            (day.tokens || []).slice(0, 24).forEach((v, hIdx) => {
+                const c = cells[dIdx * 24 + hIdx];
+                if (!c) return;
+                const a = v > 0 ? 0.15 + 0.85 * Math.sqrt(v / allMax) : 0;
+                c.style.background = v > 0 ? `color-mix(in oklab, var(--heat) ${Math.round(a * 100)}%, transparent)` : '';
+                c.title = `${day.date || ''} ${String(hIdx).padStart(2, '0')}:00 — ${C.fmtCompact(v)} tokens`;
+            });
         });
         $('usage-sub').textContent = tot.requests !== undefined
             ? `${C.fmtNumber(tot.requests)} req · ${C.fmtCompact(tot.total_tokens)} tok · cached ${C.fmtCompact(tot.cached_tokens)}` : '';
 
-        // Hourly tokens chart (from heatmap if daily granularity, else from models).
+        // Hourly tokens chart (last day of the range).
         if (!usageChart) createUsageChart();
+        const lastDay = hm[hm.length - 1];
+        const hours = lastDay ? (lastDay.tokens || []).slice(0, 24) : [];
         if (usageChart && hours.length === 24) {
             const base = new Date(); base.setHours(0, 0, 0, 0);
             const ts = hours.map((_, i) => base.getTime() + i * 3600e3);

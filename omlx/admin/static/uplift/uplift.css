@@ -253,6 +253,7 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
 /* ---- Usage heat + table ---- */
 .heat { display: grid; grid-template-columns: repeat(24, 1fr); gap: 2px; }
 .heat i { aspect-ratio: 1; background: var(--grid); }
+.heat.multi i { aspect-ratio: auto; height: 9px; }
 .heat-legend { display: flex; gap: 10px; color: var(--dim); font: 300 10px/1.4 var(--mono); margin-top: 8px; }
 .usage-table { margin-top: 12px; font: 400 11px/1.5 var(--mono); }
 .usage-table .urow { display: grid; grid-template-columns: minmax(0,2fr) repeat(3, minmax(0,1fr));
