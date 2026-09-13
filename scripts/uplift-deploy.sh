@@ -5,7 +5,9 @@
 set -euo pipefail
 
 SRC="$(cd "$(dirname "$0")/.." && pwd)/omlx/admin/static/uplift"
-KEG="$(brew --prefix omlx 2>/dev/null)/libexec/lib/python3.11/site-packages/omlx/admin/static"
+# brew is not on PATH in non-login shells (e.g. ssh without -l)
+BREW="$(command -v brew || echo /opt/homebrew/bin/brew)"
+KEG="$("$BREW" --prefix omlx 2>/dev/null)/libexec/lib/python3.11/site-packages/omlx/admin/static"
 
 if [ ! -d "$KEG" ]; then
     echo "ERROR: keg static dir not found at $KEG" >&2; exit 1
