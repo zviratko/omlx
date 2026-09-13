@@ -351,6 +351,7 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
     background: var(--card); border: 1px solid var(--ink);
     display: flex; flex-direction: column;
 }
+.dd-menu[hidden] { display: none; }   /* flex would otherwise beat the hidden attr */
 .dd-menu a {
     color: var(--ink); font: 400 11px/1 var(--mono); text-transform: uppercase;
     letter-spacing: 0.08em; text-decoration: none; padding: 10px 14px;
@@ -422,6 +423,20 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
 .modal.nasa .row.buttons button.danger:hover { background: var(--red); color: #fff; }
 .se-btn.danger { border-color: var(--red); color: var(--red); }
 [data-theme="enhanced"] .se-btn.danger { color: #ff5f5f; border-color: #ff5f5f; }
+
+/* ---- Quantizer / uploader forms (label above square field, transitional) -- */
+.qz-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px; align-items: end; padding: 4px 0; }
+.qz-form .field { display: flex; flex-direction: column; gap: 4px; }
+.qz-form .field > span { font: 300 11px/1.3 var(--sans); color: var(--dim);
+    text-transform: uppercase; letter-spacing: 0.06em; }
+.qz-form .field small { color: var(--dim); font: 300 10px/1.3 var(--sans); }
+.qz-form input[type="text"], .qz-form input[type="password"], .qz-form select {
+    background: transparent; border: 1px solid var(--edge); color: var(--ink);
+    border-radius: 0; height: 32px; padding: 0 8px; font: 400 12px/1 var(--mono); }
+.qz-form input:focus, .qz-form select:focus { outline: 1px solid var(--ink); }
+.qz-form input[type="checkbox"] { accent-color: var(--ink); width: 16px; margin: 8px 0; }
+.qz-est { grid-column: 1 / -1; font: 400 12px/1.4 var(--mono); padding-top: 4px; }
 
 /* ---- Full-page logs ---- */
 .logs-page { max-height: calc(100vh - 280px); min-height: 400px; }

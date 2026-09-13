@@ -2032,60 +2032,164 @@ function initDownloader() {
 }
 
 function renderQuantizer() {
-    const f = ($('qz-filter').value || '').toLowerCase();
-    fetchJson(`${API}/admin/api/oq/models`).then(d => {
-        const host = $('qz-models'); host.innerHTML = '';
-        const models = (d.models || []).filter(m => !f || m.name.toLowerCase().includes(f));
-        $('qz-sub').textContent = `${models.length} local models`;
-        if (!models.length) { host.innerHTML = '<div class="empty">No match</div>'; return; }
-        for (const m of models) {
-            const row = document.createElement('div'); row.className = 'urow usage';
-            const name = cell(m.name); name.className = 'uname';
-            row.append(name, cell(m.model_type || ''), cell(m.size_formatted || C.fmtBytes(m.size || 0)));
-            const act = document.createElement('span'); act.className = 'rowacts';
-            const b = document.createElement('button');
-            b.className = 'se-btn act'; b.textContent = 'quantize';
-            b.title = 'Run oQ quantization (shadow)';
-            b.onclick = () => postJson(`${API}/admin/api/oq/start`,
-                { model_path: m.path, model_name: m.name }).then(r => {
-                    toast('quantize queued (shadow): ' + (r.task_id || r.id || ''));
-                    renderTasks('qz-tasks', 'oq');
-                }).catch(e => toast('quantize: ' + e.message));
-            act.append(b); row.append(act);
-            host.append(row);
+    // Same payload shape as the classic page: oq/start {model_path, oq_level,
+    // group_size, dtype, text_only, preserve_mtp, enhanced, ...} + live estimate.
+    const host = $('qz-form');
+    if (!host.dataset.built) {
+        host.dataset.built = '1';
+        host.innerHTML = '';
+        const g = document.createElement('div');
+        g.className = 'qz-form';
+        const mk = (label, ctl, hint) => {
+            const row = document.createElement('label');
+            row.className = 'field';
+            const t = document.createElement('span'); t.textContent = label;
+            row.append(t, ctl);
+            if (hint) { const h = document.createElement('small'); h.textContent = hint; row.append(h); }
+            g.append(row); return ctl;
+        };
+        const sel = mk('Model', document.createElement('select'));
+        const lvl = mk('oQ level', (() => {
+            const s = document.createElement('select');
+            for (const l of [2, 2.5, 2.7, 3, 3.5, 4, 5, 6, 8]) {
+                const o = document.createElement('option');
+                o.value = l; o.textContent = 'oQ' + l; s.append(o);
+            }
+            s.value = '4'; return s;
+        })());
+        const dtype = mk('Dtype', (() => {
+            const s = document.createElement('select');
+            for (const d of ['bfloat16', 'float16']) {
+                const o = document.createElement('option');
+                o.value = d; o.textContent = d; s.append(o);
+            }
+            return s;
+        })());
+        const textOnly = mk('Text only', (() => {
+            const w = document.createElement('input'); w.type = 'checkbox'; return w;
+        })(), 'skip vision tower for VLMs');
+        const preserveMtp = mk('Preserve MTP', (() => {
+            const w = document.createElement('input'); w.type = 'checkbox'; return w;
+        })(), 'keep multi-token-prediction heads');
+        const est = document.createElement('div');
+        est.className = 'qz-est dim'; est.textContent = '—';
+        const start = document.createElement('button');
+        start.className = 'se-btn'; start.textContent = 'Start quantization';
+        g.append(est, start);
+        host.append(g);
+
+        let models = [];
+        fetchJson(`${API}/admin/api/oq/models`).then(d => {
+            models = (d.all_models || d.models || []).filter(m => !m.is_quantized);
+            sel.innerHTML = '';
+            for (const m of models) {
+                const o = document.createElement('option');
+                o.value = m.path;
+                o.textContent = `${m.name} (${m.size_formatted || C.fmtBytes(m.size)})`;
+                sel.append(o);
+            }
+            $('qz-sub').textContent = `${models.length} quantizable models`;
+            refreshEst();
+        }).catch(e => emptyMsg(host, e.message));
+
+        function refreshEst() {
+            if (!sel.value) return;
+            fetchJson(`${API}/admin/api/oq/estimate?model_path=${encodeURIComponent(sel.value)}&oq_level=${lvl.value}`)
+                .then(e => {
+                    const suffix = (dtype.value === 'float16' ? 'f16' : '');
+                    est.textContent = `est: ${e.output_size_formatted || C.fmtBytes(e.output_size_bytes)} · ` +
+                        `${e.effective_bpw} bpw · stream ${e.memory_streaming_formatted || ''}${suffix}`;
+                })
+                .catch(e => { est.textContent = 'estimate: ' + e.message; });
         }
-    }).catch(e => { emptyMsg($('qz-models'), e.message); });
+        sel.onchange = refreshEst; lvl.onchange = refreshEst;
+
+        start.onclick = () => {
+            const m = models.find(x => x.path === sel.value);
+            if (!m) { toast('Pick a model'); return; }
+            start.disabled = true;
+            postJson(`${API}/admin/api/oq/start`, {
+                model_path: m.path,
+                oq_level: parseFloat(lvl.value),
+                group_size: 64,
+                dtype: dtype.value,
+                text_only: textOnly.checked,
+                preserve_mtp: preserveMtp.checked && m.has_mtp_heads,
+                sensitivity_model_path: '',
+            }).then(r => {
+                toast('quantize queued (shadow): ' + m.name);
+                renderTasks('qz-tasks', 'oq');
+            }).catch(e => toast('quantize: ' + e.message))
+              .finally(() => { start.disabled = false; });
+        };
+    }
     renderTasks('qz-tasks', 'oq');
 }
-$('qz-filter').oninput = () => renderQuantizer();
 
 function renderUploader() {
-    const f = ($('up-filter').value || '').toLowerCase();
-    fetchJson(`${API}/admin/api/oq/models`).then(d => {
-        const host = $('up-models'); host.innerHTML = '';
-        const models = (d.models || []).filter(m => !f || m.name.toLowerCase().includes(f));
-        $('up-sub').textContent = `${models.length} uploadable models`;
-        if (!models.length) { host.innerHTML = '<div class="empty">No match</div>'; return; }
-        for (const m of models) {
-            const row = document.createElement('div'); row.className = 'urow usage';
-            const name = cell(m.name); name.className = 'uname';
-            row.append(name, cell(m.model_type || ''), cell(m.size_formatted || C.fmtBytes(m.size || 0)));
-            const act = document.createElement('span'); act.className = 'rowacts';
-            const b = document.createElement('button');
-            b.className = 'se-btn act'; b.textContent = 'upload';
-            b.title = 'Upload to Hugging Face (shadow — needs a token in the classic UI to really run)';
-            b.onclick = () => postJson(`${API}/admin/api/upload/start`,
-                { model_path: m.path, model_name: m.name }).then(r => {
-                    toast('upload queued (shadow): ' + (r.task_id || r.id || ''));
-                    renderTasks('up-tasks', 'upload');
-                }).catch(e => toast('upload: ' + e.message));
-            act.append(b); row.append(act);
-            host.append(row);
-        }
-    }).catch(e => { emptyMsg($('up-models'), e.message); });
+    // Classic payload: upload/start {model_path, repo_id, hf_token, private}
+    const host = $('up-form');
+    if (!host.dataset.built) {
+        host.dataset.built = '1';
+        host.innerHTML = '';
+        const g = document.createElement('div');
+        g.className = 'qz-form';
+        const mk = (label, ctl) => {
+            const row = document.createElement('label');
+            row.className = 'field';
+            const t = document.createElement('span'); t.textContent = label;
+            row.append(t, ctl); g.append(row); return ctl;
+        };
+        const sel = mk('Model', document.createElement('select'));
+        const repo = mk('Repo id', (() => {
+            const i = document.createElement('input');
+            i.type = 'text'; i.placeholder = 'username/model-name'; return i;
+        })());
+        const tok = mk('HF token', (() => {
+            const i = document.createElement('input');
+            i.type = 'password'; i.placeholder = 'hf_… (stored in shadow only)'; return i;
+        })());
+        const priv = mk('Private', (() => {
+            const w = document.createElement('input'); w.type = 'checkbox'; return w;
+        })());
+        const start = document.createElement('button');
+        start.className = 'se-btn'; start.textContent = 'Upload';
+        g.append(start);
+        host.append(g);
+
+        let models = [];
+        fetchJson(`${API}/admin/api/oq/models`).then(d => {
+            models = d.all_models || d.models || [];
+            sel.innerHTML = '';
+            for (const m of models) {
+                const o = document.createElement('option');
+                o.value = m.path;
+                o.textContent = `${m.name} (${m.size_formatted || C.fmtBytes(m.size)})`;
+                sel.append(o);
+            }
+            $('up-sub').textContent = `${models.length} local models`;
+        }).catch(e => emptyMsg(host, e.message));
+
+        start.onclick = () => {
+            const m = models.find(x => x.path === sel.value);
+            if (!m) { toast('Pick a model'); return; }
+            if (!repo.value.trim()) { toast('repo id required'); return; }
+            start.disabled = true;
+            postJson(`${API}/admin/api/upload/start`, {
+                model_path: m.path,
+                repo_id: repo.value.trim(),
+                hf_token: tok.value,
+                private: priv.checked,
+            }).then(() => {
+                toast('upload queued (shadow): ' + repo.value.trim());
+                renderTasks('up-tasks', 'upload');
+            }).catch(e => toast('upload: ' + e.message))
+              .finally(() => { start.disabled = false; });
+        };
+    }
     renderTasks('up-tasks', 'upload');
 }
-$('up-filter').oninput = () => renderUploader();
+
 
 /* ---------------- settings sub-pages: stored model settings + prune ----- */
 let storedIndex = null;

@@ -175,12 +175,9 @@
     <section class="card wide" data-id="qz-page" data-cols="3" data-tab="models" data-sub="quantizer" data-full="1">
         <h2><button class="collapse" title="Collapse">–</button>oQ quantization <span class="right" id="qz-sub"></span></h2>
         <div class="card-body">
-            <div class="filterbar">
-                <input type="search" id="qz-filter" placeholder="filter local models…">
-                <span class="spacer"></span>
-                <span class="stat-sub">runs quantized in the shadow sandbox</span>
-            </div>
-            <div id="qz-models" class="admin-table"><div class="empty">—</div></div>
+            <div class="se-hint" style="margin-bottom:8px">Runs quantized in the shadow sandbox (same fields and
+                live estimate as the classic page; the real oQ engine is never touched).</div>
+            <div id="qz-form" class="admin-table"><div class="empty">—</div></div>
             <h3 style="margin:16px 0 6px">Tasks</h3>
             <div id="qz-tasks" class="admin-table"><div class="empty">No tasks</div></div>
         </div></section>
@@ -188,12 +185,9 @@
     <section class="card wide" data-id="up-page" data-cols="3" data-tab="models" data-sub="uploader" data-full="1">
         <h2><button class="collapse" title="Collapse">–</button>oQ uploader <span class="right" id="up-sub"></span></h2>
         <div class="card-body">
-            <div class="filterbar">
-                <input type="search" id="up-filter" placeholder="filter uploadable models…">
-                <span class="spacer"></span>
-                <span class="stat-sub">uploads run in the shadow sandbox</span>
-            </div>
-            <div id="up-models" class="admin-table"><div class="empty">—</div></div>
+            <div class="se-hint" style="margin-bottom:8px">Uploads run in the shadow sandbox; the token stays in
+                this browser and never reaches the real server.</div>
+            <div id="up-form" class="admin-table"><div class="empty">—</div></div>
             <h3 style="margin:16px 0 6px">Tasks</h3>
             <div id="up-tasks" class="admin-table"><div class="empty">No tasks</div></div>
         </div></section>

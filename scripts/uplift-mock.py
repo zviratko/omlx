@@ -897,15 +897,26 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"task_id": tid, "status": "downloading", "_shadow": True})
         if p == "/admin/api/oq/start":
             body = self._read_body() or {}
-            name = body.get("model_name") or (body.get("model_path") or "?").rsplit("/", 1)[-1]
-            tid = start_shadow_task("oq", "quantizing", name,
-                                    dest=f"~/.omlx-models/{name}-oq")
+            lvl = body.get("oq_level")
+            if not isinstance(lvl, (int, float)) or not (2 <= lvl <= 8):
+                return self._json({"detail": f"invalid oq_level: {lvl!r} (2..8)"}, 400)
+            if not body.get("model_path"):
+                return self._json({"detail": "model_path required"}, 400)
+            name = body.get("model_name") or body["model_path"].rsplit("/", 1)[-1]
+            tid = start_shadow_task("oq", "quantizing", f"{name} → oQ{lvl}",
+                                    dest=f"~/.omlx-models/{name}-oQ{lvl}")
             return self._json({"task_id": tid, "status": "quantizing", "_shadow": True})
         if p == "/admin/api/upload/start":
             body = self._read_body() or {}
-            name = body.get("model_name") or (body.get("model_path") or "?").rsplit("/", 1)[-1]
+            if not body.get("model_path"):
+                return self._json({"detail": "model_path required"}, 400)
+            if not (body.get("repo_id") or "").strip():
+                return self._json({"detail": "repo_id required"}, 400)
+            if not (body.get("hf_token") or "").strip():
+                return self._json({"detail": "invalid token: empty"}, 401)
+            name = body["repo_id"].strip()
             tid = start_shadow_task("upload", "uploading", name,
-                                    dest=body.get("target_repo") or f"hf:{name}")
+                                    dest=f"hf:{name}")
             return self._json({"task_id": tid, "status": "uploading", "_shadow": True})
         if p.endswith("/cancel") and "/admin/api/" in p:
             tid = urllib.parse.unquote(p.rsplit("/", 2)[-2])
