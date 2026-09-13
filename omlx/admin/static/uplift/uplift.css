@@ -269,6 +269,7 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
     white-space: pre-wrap; word-break: break-word; border: 1px solid var(--edge); padding: 10px 12px; }
 .logs .lv-ERROR { color: var(--red); }
 .logs .lv-WARNING { color: var(--accent); }
+.logs .lv-TRACE, .logs .lv-DEBUG { opacity: 0.65; }
 
 /* ---- Toasts: solid rectangles, bracket corners ---- */
 #toasts { position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 6px; z-index: 50; }

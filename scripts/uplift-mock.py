@@ -281,6 +281,14 @@ def sim_tick(speed):
     with LOCK:
         loaded = [mid for mid in MODELS_BASE
                   if effective_loaded(mid) and MODELS_OVER.get(mid, {}).get("loading_until") is None]
+        if not loaded and not MODELS_BASE:
+            # Upstream never answered (offline demo): invent two placeholder
+            # models so the lifecycle sim still runs.
+            MODELS_BASE.setdefault("demo-model-a", {"id": "demo-model-a",
+                                                    "estimated_size": 8_000_000_000, "loaded": True})
+            MODELS_BASE.setdefault("demo-model-b", {"id": "demo-model-b",
+                                                    "estimated_size": 2_000_000_000, "loaded": True})
+            loaded = ["demo-model-a", "demo-model-b"]
         if loaded and RNG.random() < min(0.95, 1.25 * speed):
             mid = RNG.choice(loaded)
             prompt = int(math.exp(RNG.uniform(4.5, 11.7)))
