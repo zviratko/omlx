@@ -368,11 +368,10 @@ function legendUpdater() {
         });
     };
 }
-/* Hover readout bar (under each chart): TIME + every series value at the
-   nearest sample. Self-contained: computes the index from the mouse X via
-   posToVal (fallback: pixel->timestamp scan of data[0]), so it works even if
-   uPlot's own cursor bookkeeping is off. Values snap to the nearest collected
-   sample, never interpolated. */
+/* Nearest-sample lookup for the tooltip: computes the index from the mouse X
+   via posToVal (fallback: pixel->timestamp scan of data[0]), so it works even
+   if uPlot's own cursor bookkeeping is off. Values snap to the nearest
+   collected sample, never interpolated. */
 function nearestIndexByX(c, clientX) {
     const xs = c.data[0];
     if (!xs || !xs.length) return null;
@@ -393,32 +392,6 @@ function nearestIndexByX(c, clientX) {
         if (d < best) { best = d; i = k; }
     }
     return i;
-}
-function updateHover(c, readoutId, idx) {
-    const bar = $(readoutId);
-    if (!bar || !c || !c.data[0] || !c.data[0].length) return;
-    let i = idx;
-    if (i === null || i === undefined) i = c.data[0].length - 1;   // idle: latest
-    i = Math.min(i, c.data[0].length - 1);
-    bar.textContent = '';                                          // rebuild, textContent only
-    const time = document.createElement('span');
-    time.className = 'hr-time';
-    time.textContent = new Date(c.data[0][i]).toLocaleTimeString('en-GB');
-    bar.append(time);
-    for (let s = 1; s < c.series.length; s++) {
-        const v = c.data[s] ? c.data[s][i] : null;
-        if (v === undefined) continue;
-        const chip = document.createElement('span');
-        chip.className = 'hr-val';
-        const lab = document.createElement('b');
-        lab.textContent = (c.series[s] && c.series[s].label) || ('s' + s);
-        lab.style.color = chartStroke(c, s);
-        const val = document.createElement('span');
-        val.textContent = (v === null) ? '—' : seriesValue(v);
-        chip.append(lab, document.createTextNode(' '), val);
-        bar.append(chip);
-    }
-    bar.classList.toggle('idle', idx === null || idx === undefined);
 }
 function chartStroke(c, s) {
     try { return typeof c.series[s].stroke === 'string' ? c.series[s].stroke : 'inherit'; }
@@ -469,20 +442,17 @@ function showTip(c, ev, i) {
     tip.style.left = lx + 'px';
     tip.style.top = ly + 'px';
 }
-function bindHoverReadout(c, readoutId) {
+function bindCursorTip(c) {
     if (!c || !c.over) return;
     c.over.addEventListener('mousemove', ev => {
         const i = (c.cursor.idx != null) ? c.cursor.idx : nearestIndexByX(c, ev.clientX);
         hoverTs.set(c, c.data[0][i]);              // pin across poll re-windowing
-        updateHover(c, readoutId, i);
         showTip(c, ev, i);
     });
     c.over.addEventListener('mouseleave', () => {
         hoverTs.set(c, null);
-        updateHover(c, readoutId, null);           // back to latest, dimmed
         if (c._tip) c._tip.hidden = true;
     });
-    updateHover(c, readoutId, null);
 }
 /* The vendored uPlot build does not dispatch hooks.cursor.subscribe (no
    'subscribe' in the bundle) — a legend updater wired via hooks only ran on
@@ -530,7 +500,7 @@ function createCharts() {
     memOpts.scales.y = { range: [0, 100] };
     memChart = new uPlot(memOpts, windowedData(memData), $('chart-mem'));
     bindCursorUpdater(tpsChart); bindCursorUpdater(memChart);
-    bindHoverReadout(tpsChart, 'readout-tps'); bindHoverReadout(memChart, 'readout-mem');
+    bindCursorTip(tpsChart); bindCursorTip(memChart);
     resizeCharts();
     redrawCharts();
 }
@@ -542,8 +512,6 @@ function redrawCharts() {
     // when not hovering, show the latest samples.
     restoreCursor(tpsChart) || legendUpdater()(tpsChart);
     restoreCursor(memChart) || legendUpdater()(memChart);
-    updateHover(tpsChart, 'readout-tps', hoverTs.get(tpsChart) != null ? tpsChart.cursor.idx : null);
-    updateHover(memChart, 'readout-mem', hoverTs.get(memChart) != null ? memChart.cursor.idx : null);
     const shown = windowedData(tpsData)[0].length;
     $('chart-tps-window').textContent = shown > 1 ? `${layout.chartWindowSec >= 3600 ? '1h' : layout.chartWindowSec / 60 + 'm'} window` : '';
 }
@@ -1581,7 +1549,7 @@ function createUsageChart() {
         cursor: { drag: { x: false, y: false }, points: { show: true, size: 6, fill: col.dim } },
         legend: { show: false },
     }, [[], []], el);
-    bindHoverReadout(usageChart, 'readout-usage');
+    bindCursorTip(usageChart);
 }
 async function pollUsage() {
     if (document.hidden) return;
