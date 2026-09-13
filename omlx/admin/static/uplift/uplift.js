@@ -823,24 +823,358 @@ async function pollRequests() {
 }
 
 /* ---------------- model manager (Models tab) ---------------- */
-const SE_BASIC = [
-    ['temperature', 'num', 0, 2, 0.05],
-    ['top_p', 'num', 0, 1, 0.05],
-    ['max_tokens', 'num', 1, 262144, 1],
-    ['ttl_seconds', 'num', 30, 86400, 30],
-];
-const SE_ENUM = { reasoning_effort: ['auto', 'none', 'low', 'medium', 'high', 'xhigh', 'max'] };
-const SE_FEATURE = ['dflash_enabled', 'mtp_enabled', 'turboquant_kv_enabled',
-                    'specprefill_enabled', 'qwen35_ane_prefill_enabled',
-                    'moe_expert_offload_enabled', 'guided_grammar_enabled',
-                    'trust_remote_code', 'is_favorite', 'is_hidden'];
-let seModel = null, seValues = {};
+let seModel = null, seValues = {};   // seValues = live form state (modelspec shape)
+
+/* ---- spec-driven settings form (parity with classic _modal_model_settings) ---- */
+/* seValues holds the modelspec form state (UpliftModelSpec.buildState shape).
+   Widgets write straight into seValues and re-run renderEditorFields() so the
+   same conditional visibility the classic modal uses (x-show rules) applies. */
+let seFormModel = null;      // the /admin/api/models entry this editor is for
+
+function seBind(kind, key, opts) {
+    /* one labeled field bound to seValues[key]; matches classic addRow() but
+       writes the modelspec state shape and supports selects/options/text */
+    const label = document.createElement('label');
+    label.className = 'se-row';
+    const name = document.createElement('span');
+    name.textContent = opts && opts.label ? opts.label : key;
+    let input;
+    if (kind === 'select') {
+        input = document.createElement('select');
+        for (const o of (opts.options || [])) {
+            const el = document.createElement('option');
+            el.value = o.value; el.textContent = o.label != null ? o.label : o.value;
+            if (String(seValues[key]) === String(o.value)) el.selected = true;
+            input.append(el);
+        }
+        if (opts.picker) {              // draft-model picker: selected value may not be in pool
+            const cur = seValues[key];
+            if (cur && ![...input.options].some(el => el.value === cur)) {
+                const el = document.createElement('option');
+                el.value = cur; el.textContent = cur + ' (current)'; el.selected = true;
+                input.prepend(el);
+            }
+        }
+    } else if (kind === 'bool') {
+        input = document.createElement('input');
+        input.type = 'checkbox';
+        input.checked = seValues[key] === true;
+    } else if (kind === 'text') {
+        input = document.createElement('input');
+        input.type = 'text';
+        input.value = seValues[key] == null ? '' : seValues[key];
+    } else if (kind === 'textarea') {
+        input = document.createElement('textarea');
+        input.rows = 3;
+        input.value = seValues[key] == null ? '' : seValues[key];
+    } else {
+        input = document.createElement('input');
+        input.type = 'number';
+        if (opts) { if (opts.min != null) input.min = opts.min;
+                    if (opts.max != null) input.max = opts.max;
+                    if (opts.step != null) input.step = opts.step; }
+        const cur = seValues[key];
+        input.value = (cur === null || cur === undefined) ? '' : cur;
+    }
+    if (opts && opts.disabled) input.disabled = true;
+    const evt = (kind === 'textarea' || kind === 'text' || kind === 'number') ? 'input' : 'change';
+    input.addEventListener(evt, () => {
+        if (kind === 'bool') seValues[key] = input.checked;
+        else if (kind === 'number') seValues[key] = input.value === '' ? null : Number(input.value);
+        else if (kind === 'select') seValues[key] = input.value;
+        else seValues[key] = input.value;
+        if (opts && opts.onChange) opts.onChange(seValues);
+    });
+    label.append(name, input);
+    if (opts && opts.hint) {
+        const h = document.createElement('small');
+        h.className = 'se-hint'; h.textContent = opts.hint;
+        label.append(h);
+    }
+    return label;
+}
+
+function seSection(title) {
+    const h = document.createElement('h5');
+    h.className = 'se-section'; h.textContent = title;
+    return h;
+}
+
+function renderEditorFields(container) {
+    const S = window.UpliftModelSpec;
+    const m = seFormModel || {};
+    container.textContent = '';
+    const grid = () => { const g = document.createElement('div'); g.className = 'pair'; container.append(g); return g; };
+
+    /* ---- basic ---- */
+    container.append(seSection('Basic'));
+    let g = grid();
+    g.append(seBind('text', 'model_alias', { label: 'alias' }));
+    g.append(seBind('select', 'model_type_override', {
+        label: 'type override',
+        options: [{ value: '' }, ...S.MODEL_TYPE_OPTIONS.map(v => ({ value: v }))] }));
+    g.append(seBind('number', 'max_context_window', { label: 'max ctx', step: 1 }));
+    g.append(seBind('number', 'max_tokens', { label: 'max tokens', step: 1 }));
+    const sampling = [
+        ['temperature', 0, 2, 0.05], ['top_p', 0, 1, 0.05], ['top_k', 0, null, 1],
+        ['repetition_penalty', 0.5, 2, 0.01], ['min_p', 0, 1, 0.01], ['presence_penalty', -2, 2, 0.05]];
+    if (!S.isDiffusion(m)) for (const [k, mn, mx, st] of sampling)
+        g.append(seBind('number', k, { min: mn, max: mx, step: st }));
+    g.append(seBind('number', 'ttl_seconds', { label: 'ttl s', step: 1 }));
+
+    /* ---- advanced ---- */
+    container.append(seSection('Advanced'));
+    g = grid();
+    if (!S.isDiffusion(m)) {
+        if (m.thinking_default !== undefined && m.thinking_default !== null || seValues.enable_thinking != null) {
+            const tv = seValues.enable_thinking;
+            g.append(seBind('select', 'enable_thinking', {
+                label: 'thinking', disabled: !!m.thinking_forced,
+                options: [{ value: '', label: m.thinking_default === true ? 'default (on)' : 'default (off)' },
+                          { value: 'true', label: 'on' }, { value: 'false', label: 'off' }],
+            }));
+            // select needs string values; store real bool/null back
+            const sel = g.lastChild.querySelector('select');
+            sel.value = tv === true ? 'true' : tv === false ? 'false' : '';
+            sel.addEventListener('change', () => {
+                seValues.enable_thinking = sel.value === '' ? null : sel.value === 'true'; });
+        }
+        // NOTE: preserve_thinking has NO widget in the classic modal (it only
+        // appears in the diffusion unsupported-field lists) — parity: none here.
+        if (seValues.reasoning_parser !== undefined || m.reasoning_parsers) {
+            const rp = (m.reasoning_parsers || ['']).map(v => ({ value: v }));
+            if (!rp.some(o => o.value === (seValues.reasoning_parser || '')))
+                rp.push({ value: seValues.reasoning_parser || '' });
+            g.append(seBind('select', 'reasoning_parser', { options: rp }));
+        }
+        g.append(seBind('bool', 'enableThinkingBudget', { label: 'thinking budget' }));
+        if (seValues.enableThinkingBudget)
+            g.append(seBind('number', 'thinking_budget_tokens', { min: 1, step: 1 }));
+        g.append(seBind('bool', 'enableToolResultLimit', { label: 'tool result limit' }));
+        if (seValues.enableToolResultLimit)
+            g.append(seBind('number', 'max_tool_result_tokens', { min: 1, step: 1 }));
+        g.append(seBind('bool', 'guided_grammar_enabled', { label: 'guided grammar' }));
+        if (seValues.guided_grammar_enabled) {
+            const gg = seBind('textarea', 'guided_grammar');
+            gg.classList.add('se-wide');
+            g.append(gg);
+        }
+        g.append(seBind('bool', 'enableIndexCache', { label: 'index cache' }));
+        if (seValues.enableIndexCache)
+            g.append(seBind('number', 'index_cache_freq', { min: 1, step: 1 }));
+    }
+    g.append(seBind('bool', 'trust_remote_code'));
+
+    /* chat-template kwargs (subset: key/value rows, add/remove) */
+    if (!S.isDiffusion(m)) renderCtKwargs(container);
+
+    /* ---- acceleration ---- */
+    container.append(seSection('Acceleration'));
+    g = grid();
+    if (seValues.turboquant_kv_enabled !== undefined && !S.isDiffusion(m)) {
+        g.append(seBind('bool', 'turboquant_kv_enabled', { label: 'turboquant KV',
+            onChange: renderEditorFields.bind(null, container) }));
+        if (seValues.turboquant_kv_enabled)
+            g.append(seBind('number', 'turboquant_kv_bits', { min: 2, max: 8, step: 0.25 }));
+    }
+    if (m.qwen4_ple_ssd_offload_supported || seValues.qwen4_ple_ssd_offload)
+        g.append(seBind('bool', 'qwen4_ple_ssd_offload', { label: 'PLE SSD offload',
+            disabled: !!m.qwen4_ple_ssd_offload_forced }));
+    if (seValues.deepseek_v41_ced_prefill_supported)
+        g.append(seBind('bool', 'deepseek_v41_ced_prefill_enabled'));
+    if (m.deepseek_v41_engram_ssd_offload_supported)
+        g.append(seBind('bool', 'deepseek_v41_engram_ssd_offload',
+            { label: 'engram SSD offload', disabled: !!m.deepseek_v41_engram_ssd_offload_forced }));
+    if (m.moe_expert_offload_supported && !S.isDiffusion(m)) {
+        g.append(seBind('bool', 'moe_expert_offload_enabled', { label: 'MoE expert offload',
+            onChange: renderEditorFields.bind(null, container) }));
+        if (seValues.moe_expert_offload_enabled)
+            g.append(seBind('number', 'moe_expert_offload_resident_fraction',
+                { label: 'MoE resident frac', min: 0.01, max: 1, step: 0.01 }));
+    }
+    if (S.isQwenOqA8(m)) {
+        g.append(seBind('bool', 'qwen35_oq_a8_enabled', { label: 'oQ A8 prefill',
+            onChange: renderEditorFields.bind(null, container) }));
+        if (seValues.qwen35_oq_a8_enabled)
+            g.append(seBind('number', 'qwen35_oq_a8_min_tokens', { label: 'oQ min tokens', min: 1, step: 1 }));
+    }
+    if (m.ane_prefill_backend && !S.isDiffusion(m)) renderAne(container, g);
+
+    /* ---- experimental (spec decode) ---- */
+    container.append(seSection('Experimental'));
+    g = grid();
+    const models = adminModels.length ? adminModels : [];
+    const S_ = window.UpliftModelSpec;
+    if (!S_.isDiffusion(m)) {
+        if (seValues.specprefill_enabled !== undefined) {
+            g.append(seBind('bool', 'specprefill_enabled', { label: 'SpecPrefill',
+                onChange: renderEditorFields.bind(null, container) }));
+            if (seValues.specprefill_enabled) {
+                const pool = S_.specprefillCandidates(models, m.id).map(x => ({ value: x.id }));
+                g.append(seBind('select', 'specprefill_draft_model',
+                    { label: 'spec draft', options: [{ value: '' }, ...pool], picker: true }));
+                g.append(seBind('number', 'specprefill_keep_pct', { label: 'spec keep', min: 0.1, max: 0.5, step: 0.05 }));
+                g.append(seBind('number', 'specprefill_threshold', { label: 'spec thresh', min: 0, max: 1, step: 0.05 }));
+            }
+        }
+        if (seValues.dflash_enabled !== undefined) {
+            g.append(seBind('bool', 'dflash_enabled', { label: 'DFlash',
+                hint: m.dflash_compatible === false ? (m.dflash_compatibility_reason || 'not compatible') : '',
+                onChange: renderEditorFields.bind(null, container) }));
+            if (seValues.dflash_enabled) {
+                const pool = S_.dflashCandidates(models, m.id).map(x => ({ value: x.id }));
+                g.append(seBind('select', 'dflash_draft_model',
+                    { label: 'dflash draft', options: [{ value: '' }, ...pool], picker: true }));
+                g.append(seBind('bool', 'dflash_draft_quant_enabled', { label: 'draft quant',
+                    onChange: renderEditorFields.bind(null, container) }));
+                if (seValues.dflash_draft_quant_enabled) {
+                    g.append(seBind('number', 'dflash_draft_quant_weight_bits', { min: 2, max: 8, step: 1 }));
+                    g.append(seBind('number', 'dflash_draft_quant_activation_bits', { min: 8, max: 16, step: 1 }));
+                    g.append(seBind('number', 'dflash_draft_quant_group_size', { min: 16, max: 256, step: 16 }));
+                }
+                g.append(seBind('number', 'dflash_max_ctx', { label: 'dflash max ctx', step: 1 }));
+                g.append(seBind('bool', 'dflash_in_memory_cache', { label: 'dflash RAM cache',
+                    onChange: renderEditorFields.bind(null, container) }));
+                if (seValues.dflash_in_memory_cache) {
+                    g.append(seBind('number', 'dflash_in_memory_cache_max_entries', { label: 'cache entries', min: 1, step: 1 }));
+                    g.append(seBind('number', 'dflash_in_memory_cache_max_gib', { label: 'cache GiB', min: 1, step: 1 }));
+                    if (seValues.dflash_ssd_cache_available) {
+                        g.append(seBind('bool', 'dflash_ssd_cache', { label: 'dflash SSD cache' }));
+                        if (seValues.dflash_ssd_cache)
+                            g.append(seBind('number', 'dflash_ssd_cache_max_gib', { label: 'SSD GiB', min: 1, step: 1 }));
+                    }
+                }
+                g.append(seBind('number', 'dflash_draft_window_size', { label: 'draft window', step: 1 }));
+                g.append(seBind('number', 'dflash_draft_sink_size', { label: 'draft sink', min: 0, step: 1 }));
+                g.append(seBind('number', 'dflash_block_size', { label: 'block size', step: 1 }));
+                g.append(seBind('select', 'dflash_verify_mode', {
+                    options: [{ value: 'adaptive' }, { value: 'greedy' }, { value: 'nucleus' }], picker: true }));
+            }
+        }
+        if (seValues.mtp_enabled !== undefined) {
+            g.append(seBind('bool', 'mtp_enabled', { label: 'Lightning MTP',
+                hint: m.mtp_compatible ? '' : (m.mtp_compatibility_reason || 'not compatible'),
+                onChange: renderEditorFields.bind(null, container) }));
+        }
+        const drafterType = (m.config_model_type || '').toLowerCase().replace(/-/g, '_');
+        if (seValues.vlm_mtp_enabled !== undefined &&
+            S_.VLM_MTP_DRAFTER_CONFIG_MODEL_TYPES.has(drafterType)) {
+            g.append(seBind('bool', 'vlm_mtp_enabled', { label: 'VLM MTP',
+                onChange: renderEditorFields.bind(null, container) }));
+            if (seValues.vlm_mtp_enabled) {
+                const pool = S_.vlmMtpDrafters(models, m.id).map(x => ({ value: x.id }));
+                g.append(seBind('select', 'vlm_mtp_draft_model',
+                    { label: 'vlm mtp drafter', options: [{ value: '' }, ...pool], picker: true }));
+                g.append(seBind('number', 'vlm_mtp_draft_block_size', { label: 'mtp block', step: 1 }));
+            }
+        }
+    }
+}
+
+/* A-NE prefill: main + GDN + CPU sub-groups (classic modal, acceleration) */
+function renderAne(container, g) {
+    const S = window.UpliftModelSpec;
+    g.append(seBind('bool', 'qwen35_ane_prefill_enabled', { label: 'ANE prefill',
+        onChange: renderEditorFields.bind(null, container) }));
+    if (!seValues.qwen35_ane_prefill_enabled) return;
+    g.append(seBind('number', 'qwen35_ane_prefill_sequence_length', { label: 'ANE prompt blk', min: 1024, step: 64 }));
+    g.append(seBind('number', 'qwen35_ane_prefill_tail_padding_min_tokens', { label: 'ANE pad ≥', min: 0, step: 1 }));
+    g.append(seBind('number', 'qwen35_ane_prefill_fraction', { label: 'ANE frac', min: 0, max: 1, step: 0.01 }));
+    g.append(seBind('number', 'qwen35_ane_prefill_shared_fraction', { label: 'ANE shared', min: 0, max: 1, step: 0.01 }));
+    g.append(seBind('number', 'qwen35_ane_prefill_max_layers', { label: 'ANE layers', min: 1, step: 1 }));
+    g.append(seBind('bool', 'qwen35_ane_prefill_fused_down', { label: 'ANE fused down' }));
+    g.append(seBind('bool', 'qwen35_ane_prefill_dual_ane', { label: 'dual ANE' }));
+    g.append(seBind('bool', 'qwen35_ane_prefill_gdn', { label: 'ANE GDN',
+        onChange: renderEditorFields.bind(null, container) }));
+    if (seValues.qwen35_ane_prefill_gdn) {
+        g.append(seBind('number', 'qwen35_ane_prefill_gdn_fraction', { label: 'GDN frac', min: 0, max: 1, step: 0.01 }));
+        g.append(seBind('number', 'qwen35_ane_prefill_gdn_max_layers', { label: 'GDN layers', min: 0, step: 1 }));
+    }
+    g.append(seBind('bool', 'qwen35_ane_prefill_cpu_enabled', { label: 'CPU prefill',
+        onChange: renderEditorFields.bind(null, container) }));
+    if (seValues.qwen35_ane_prefill_cpu_enabled) {
+        g.append(seBind('number', 'qwen35_ane_prefill_cpu_fraction', { label: 'CPU frac', min: 0, max: 1, step: 0.001 }));
+        g.append(seBind('number', 'qwen35_ane_prefill_cpu_down_fraction', { label: 'CPU down frac', min: 0, max: 1, step: 0.001 }));
+        g.append(seBind('number', 'qwen35_ane_prefill_cpu_gdn_fraction', { label: 'CPU GDN frac', min: 0, max: 1, step: 0.001 }));
+        g.append(seBind('number', 'qwen35_ane_prefill_cpu_threads', { label: 'CPU threads', min: 1, step: 1 }));
+        g.append(seBind('bool', 'qwen35_ane_prefill_cpu_shared_resource', { label: 'CPU shared' }));
+    }
+}
+
+/* chat_template_kwargs editor: value kinds per classic modal */
+function renderCtKwargs(container) {
+    const S = window.UpliftModelSpec;
+    container.append(seSection('Chat template kwargs'));
+    const g = document.createElement('div');
+    g.className = 'pair'; container.append(g);
+    const entries = seValues.ctKwargEntries || [];
+    entries.forEach((e, idx) => {
+        if (e.force) {
+            const l = document.createElement('label'); l.className = 'se-row';
+            const fk = document.createElement('span'); fk.textContent = `${e.key} (forced)`;
+            const fv = document.createElement('span'); fv.className = 'stat-sub'; fv.textContent = String(e.value);
+            l.append(fk, fv);
+            g.append(l); return;
+        }
+        const row = document.createElement('div');
+        row.className = 'se-row se-kwarg';
+        const key = document.createElement('input');
+        key.type = 'text'; key.value = e.key || ''; key.placeholder = 'key';
+        key.addEventListener('input', () => { e.key = key.value; });
+        let val;
+        if (e.type === 'enable_thinking') {
+            val = document.createElement('select');
+            ['true', 'false'].forEach(v => { const o = document.createElement('option'); o.value = v; val.append(o); });
+            val.value = String(e.value);
+            val.addEventListener('change', () => { e.value = val.value; });
+        } else if (e.type === 'reasoning_effort') {
+            val = document.createElement('select');
+            ['low', 'medium', 'high', 'xhigh', 'max', '__custom__'].forEach(v => {
+                const o = document.createElement('option'); o.value = v; o.textContent = v; val.append(o); });
+            val.value = e.custom ? '__custom__' : e.value;
+            val.addEventListener('change', () => {
+                if (val.value === '__custom__') { e.custom = true; } else { e.custom = false; e.value = val.value; }
+                renderEditorFields(container);
+            });
+            if (e.custom) {
+                const cv = document.createElement('input');
+                cv.type = 'text'; cv.value = e.customValue || '';
+                cv.addEventListener('input', () => { e.customValue = cv.value; });
+                row.append(key, val, cv);
+            }
+        } else {
+            val = document.createElement('input');
+            val.type = 'text'; val.value = String(e.value == null ? '' : e.value);
+            val.addEventListener('input', () => { e.value = val.value; });
+        }
+        const rm = document.createElement('button');
+        rm.className = 'se-btn'; rm.textContent = '×';
+        rm.addEventListener('click', () => {
+            seValues.ctKwargEntries.splice(idx, 1);
+            renderEditorFields(container);
+        });
+        if (!row.children.length) row.append(key, val);
+        row.append(rm);
+        g.append(row);
+    });
+    const add = document.createElement('button');
+    add.className = 'se-btn'; add.textContent = '+ kwarg';
+    add.addEventListener('click', () => {
+        seValues.ctKwargEntries.push({ type: 'custom', key: '', value: '', force: false });
+        renderEditorFields(container);
+    });
+    g.append(add);
+}
 
 function editorNode() {
     const panel = document.createElement('div');
     panel.className = 'row-editor';
+    const head = document.createElement('div');
+    head.className = 'editor-head';
+    head.textContent = seModel + (seFormModel && seFormModel.model_alias ? ` · ${seFormModel.model_alias}` : '');
+    const profilesHost = document.createElement('div');
+    profilesHost.className = 'se-profiles';
     const fields = document.createElement('div');
-    fields.className = 'pair';
     fields.id = 'se-fields';
     const bar = document.createElement('div');
     bar.className = 'editor-bar';
@@ -851,13 +1185,14 @@ function editorNode() {
     const msg = document.createElement('span');
     msg.className = 'stat-sub'; msg.id = 'se-msg';
     bar.append(save, close, msg);
-    panel.append(fields, bar);
+    panel.append(head, profilesHost, fields, bar);
     save.onclick = saveEditor;
     close.onclick = () => closeEditor();
     return panel;
 }
 function closeEditor() {
-    seModel = null;
+    seModel = null; seFormModel = null;
+    renderModelAdmin(); // rows were frozen while the editor was open
     document.querySelectorAll('.row-editor').forEach(n => n.remove());
     document.querySelectorAll('.urow.expanded').forEach(r => r.classList.remove('expanded'));
     const fb = $('model-editor-fallback');
@@ -866,52 +1201,29 @@ function closeEditor() {
 async function openEditor(model) {
     closeEditor();
     seModel = model;
-    // Find (or wait for) the model's table row; fall back to a detached panel.
     let row = [...document.querySelectorAll('#model-admin .urow:not(.head)')]
         .find(r => r.dataset.mid === model);
-    if (!row) { await renderModelAdmin(); 
+    if (!row) { await renderModelAdmin(true);
         row = [...document.querySelectorAll('#model-admin .urow:not(.head)')]
             .find(r => r.dataset.mid === model); }
+    let settings = {}, entry = null;
     try {
         const d = await fetchJson(`${API}/admin/api/models/${encodeURIComponent(model)}/settings`);
-        seValues = d.settings || {};
-    } catch (_) { seValues = {}; }
+        settings = d.settings || {};
+    } catch (_) { settings = {}; }
+    try {
+        const list = adminModels.length ? adminModels
+            : (await fetchJson(`${API}/admin/api/models`)).models;
+        entry = list.find(x => x.id === model) || null;
+    } catch (_) { entry = null; }
+    seFormModel = entry || { id: model };
+    seValues = window.UpliftModelSpec.buildState(seFormModel, settings);
+    // is_hidden/is_favorite/is_default/pinned are toggled from the models ROW
+    // (classic _models.html), never in the settings modal — parity: not here.
     const panel = editorNode();
-    const fields = panel.querySelector('#se-fields');
-    const addRow = (key, kind, a, b, step) => {
-        const label = document.createElement('label');
-        label.className = 'se-row';
-        const name = document.createElement('span');
-        name.textContent = key;
-        let input;
-        if (kind === 'select') {
-            input = document.createElement('select');
-            for (const opt of a) {
-                const o = document.createElement('option');
-                o.value = opt; o.textContent = opt;
-                if (seValues[key] === opt) o.selected = true;
-                input.append(o);
-            }
-        } else if (kind === 'bool') {
-            input = document.createElement('input');
-            input.type = 'checkbox';
-            input.checked = seValues[key] === true;
-        } else {
-            input = document.createElement('input');
-            input.type = 'number';
-            input.min = a; input.max = b; input.step = step;
-            const cur = seValues[key];
-            input.value = (cur === null || cur === undefined) ? '' : cur;
-        }
-        input.dataset.key = key;
-        label.append(name, input);
-        fields.append(label);
-    };
-    for (const f of SE_BASIC) addRow(...f);
-    for (const [k, opts] of Object.entries(SE_ENUM)) addRow(k, 'select', opts);
-    for (const k of SE_FEATURE) if (k in seValues) addRow(k, 'bool');
+    renderEditorFields(panel.querySelector('#se-fields'));
+    seLoadProfiles(model, panel.querySelector('.se-profiles'));
     if (row) {
-        // Expand downward: insert below the row, spanning the full table width.
         row.classList.add('expanded');
         row.after(panel);
         panel.scrollIntoView({ block: 'nearest' });
@@ -921,37 +1233,148 @@ async function openEditor(model) {
         $('model-editor-fallback').querySelector('.card-body').append(panel);
     }
 }
+
+/* ---- per-model profiles (sidebar of the classic editor) ---- */
+async function seLoadProfiles(model, host) {
+    let profs = [];
+    try { profs = (await fetchJson(`${API}/admin/api/models/${encodeURIComponent(model)}/profiles`)).profiles || []; } catch (_) {}
+    host.textContent = '';
+    const row = document.createElement('div');
+    row.className = 'se-prof-row';
+    const sel = document.createElement('select');
+    const none = document.createElement('option'); none.value = ''; none.textContent = 'profiles…';
+    sel.append(none, ...profs.map(p => { const o = document.createElement('option');
+        o.value = p.name; o.textContent = p.display_name || p.name; return o; }));
+    const applyB = document.createElement('button'); applyB.className = 'se-btn'; applyB.textContent = 'Apply';
+    const delB = document.createElement('button'); delB.className = 'se-btn'; delB.textContent = 'Delete';
+    const saveAs = document.createElement('input');
+    saveAs.type = 'text'; saveAs.placeholder = 'save current as…'; saveAs.className = 'se-prof-name';
+    const saveB = document.createElement('button'); saveB.className = 'se-btn'; saveB.textContent = 'Save';
+    const write = async (path, opts) => {          // detail-aware JSON call
+        const res = await fetch(path, Object.assign({ cache: 'no-store' }, opts));
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.detail || body.error || String(res.status));
+        return body;
+    };
+    applyB.onclick = async () => {
+        if (!sel.value) return;
+        try {
+            await write(`${API}/admin/api/models/${encodeURIComponent(model)}/profiles/${encodeURIComponent(sel.value)}/apply`,
+                { method: 'POST' });
+            toast(`Applied profile ${sel.value}`);
+            openEditor(model);
+        } catch (e) { toast(`Apply failed: ${e.message}`); }
+    };
+    delB.onclick = async () => {
+        if (!sel.value) return;
+        try {
+            await write(`${API}/admin/api/models/${encodeURIComponent(model)}/profiles/${encodeURIComponent(sel.value)}`,
+                { method: 'DELETE' });
+            toast(`Deleted profile ${sel.value}`);
+            seLoadProfiles(model, host);
+        } catch (e) { toast(`Delete failed: ${e.message}`); }
+    };
+    saveB.onclick = async () => {
+        const name = saveAs.value.trim();
+        if (!name) { toast('profile name required'); return; }
+        const payload = window.UpliftModelSpec.buildPayload(seValues, seFormModel);
+        try {
+            await write(`${API}/admin/api/models/${encodeURIComponent(model)}/profiles`,
+                { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ name, settings: payload }) });
+            toast(`Saved profile ${name}`);
+            seLoadProfiles(model, host);
+        } catch (e) { toast(`Profile: ${e.message}`); }
+    };
+    row.append(sel, applyB, delB, saveAs, saveB);
+    host.append(row);
+    // Global templates (global_templates.json): apply or snapshot into a template.
+    let tpls = [];
+    try { tpls = (await fetchJson(`${API}/admin/api/profile-templates`)).templates || []; } catch (_) {}
+    if (tpls.length || true) {
+        const trow = document.createElement('div');
+        trow.className = 'se-prof-row';
+        const tsel = document.createElement('select');
+        const tnone = document.createElement('option'); tnone.value = ''; tnone.textContent = 'templates…';
+        tsel.append(tnone, ...tpls.map(t => { const o = document.createElement('option');
+            o.value = t.name; o.textContent = t.display_name || t.name; return o; }));
+        const tApply = document.createElement('button'); tApply.className = 'se-btn'; tApply.textContent = 'Apply';
+        const tSnap = document.createElement('button'); tSnap.className = 'se-btn'; tSnap.textContent = 'Snapshot as';
+        const uniFields = async () => {
+            try { return (await fetchJson(`${API}/admin/api/profile-fields`)).universal || []; } catch (_) { return []; }
+        };
+        tApply.onclick = async () => {
+            if (!tsel.value) return;
+            try {
+                // Classic applyTemplateToForm: template is source of truth —
+                // upsert the model profile from it, then apply the profile.
+                const tpl = tpls.find(t => t.name === tsel.value) || {};
+                const prof = `${API}/admin/api/models/${encodeURIComponent(model)}/profiles`;
+                let pname = tpl.name;
+                await write(prof, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: pname, display_name: tpl.display_name || tpl.name,
+                                           description: tpl.description || null,
+                                           settings: tpl.settings || {}, source_template: tpl.name }) });
+                await write(`${prof}/${encodeURIComponent(pname)}/apply`, { method: 'POST' });
+                toast(`Applied template ${pname}`);
+                openEditor(model);
+            } catch (e) { toast(`Template apply failed: ${e.message}`); }
+        };
+        tSnap.onclick = async () => {
+            const name = saveAs.value.trim() || tsel.value;
+            if (!name) { toast('type a name in “save current as…” first'); return; }
+            const full = window.UpliftModelSpec.buildPayload(seValues, seFormModel);
+            const uni = new Set(await uniFields());
+            const settings = {};
+            for (const [k, v] of Object.entries(full)) if (uni.has(k)) settings[k] = v;
+            try {
+                await write(`${API}/admin/api/profile-templates`,
+                    { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ name, settings }) });
+                toast(`Saved template ${name}`);
+                seLoadProfiles(model, host);
+            } catch (e) { toast(`Template: ${e.message}`); }
+        };
+        trow.append(document.createTextNode('global '), tsel, tApply, tSnap);
+        host.append(trow);
+    }
+}
+
 async function saveEditor() {
     if (!seModel) return;
     const panel = document.querySelector('.row-editor');
     if (!panel) return;
-    const payload = {};
-    for (const input of panel.querySelectorAll('[data-key]')) {
-        const key = input.dataset.key;
-        if (input.type === 'checkbox') { payload[key] = input.checked; continue; }
-        const v = input.value;
-        if (v === '') continue;
-        payload[key] = input.type === 'number' ? Number(v) : v;
+    const msg = panel.querySelector('#se-msg');
+    const errors = window.UpliftModelSpec.validate(seValues);
+    if (errors.length) {
+        msg.textContent = errors[0];
+        toast(errors[0]);
+        return;
     }
-    panel.querySelector('#se-msg').textContent = 'saving…';
+    const payload = window.UpliftModelSpec.buildPayload(seValues, seFormModel);
+    // boolean management flags ride the same PUT (real API accepts them too)
+    if ('is_hidden' in seValues) payload.is_hidden = !!seValues.is_hidden;
+    if ('is_favorite' in seValues) payload.is_favorite = !!seValues.is_favorite;
+    msg.textContent = 'saving…';
     try {
-        await putModelSettings(seModel, payload);
-        panel.querySelector('#se-msg').textContent = 'saved ✓ (shadow)';
+        const r = await putModelSettings(seModel, payload);
+        const note = r.requires_reload ? 'saved ✓ reload required' : 'saved ✓ (shadow)';
+        msg.textContent = note;
         toast(`Settings saved: ${seModel}`);
-        renderModelAdmin();
-        setTimeout(closeEditor, 900);
+        setTimeout(closeEditor, 1200);
     } catch (err) {
-        panel.querySelector('#se-msg').textContent = `error: ${err.message}`;
+        msg.textContent = `error: ${err.message}`;
         toast(`Save failed: ${err.message}`);
     }
 }
 
 let adminModels = [];
-async function renderModelAdmin() {
+async function renderModelAdmin(force) {
     let models;
     try { models = (await fetchJson(`${API}/admin/api/models`)).models; }
     catch (_) { $('model-admin').innerHTML = '<div class="empty">API unreachable</div>'; return; }
     adminModels = models;
+    if (seModel && !force) return;   // editor open: don't re-render rows over a live form
     const filter = ($('ma-filter').value || '').toLowerCase();
     const onlyLoaded = $('ma-only-loaded').checked;
     const shown = models.filter(m =>
@@ -1002,6 +1425,16 @@ async function renderModelAdmin() {
         };
         actions.append(btn(m.pinned ? '📌' : '📍', () => postModelAction(m.id, m.pinned ? 'unpin' : 'pin'),
                            m.pinned ? 'Unpin' : 'Pin'));
+        // Favorite / hide / default toggles: same PUT {field: value} the classic rows use.
+        actions.append(btn(m.is_favorite ? '★' : '☆',
+            () => putModelSettings(m.id, { is_favorite: !m.is_favorite }),
+            m.is_favorite ? 'Unfavorite' : 'Favorite'));
+        actions.append(btn(m.is_hidden ? '🙈' : '👁',
+            () => putModelSettings(m.id, { is_hidden: !m.is_hidden }),
+            m.is_hidden ? 'Unhide' : 'Hide'));
+        if (m.is_default) actions.append(cell('·def·').cloneNode(true));
+        else actions.append(btn('def', () => putModelSettings(m.id, { is_default: true }),
+                                'Make default model'));
         actions.append(btn('⚙', () => openEditor(m.id), 'Edit settings', true));
         if (m.loaded) actions.append(btn('unload', () => postModelAction(m.id, 'unload')));
         else actions.append(btn('load', () => postModelAction(m.id, 'load')));

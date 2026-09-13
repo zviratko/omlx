@@ -31,16 +31,22 @@ UI:  http://127.0.0.1:11436/index.html   (defaults to this mock)
 import argparse
 import json
 import math
+import os
 import queue
 import random
 import string
+import sys
 import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import omlx_settings_store as store_mod
 
 START = time.time()
 LOCK = threading.Lock()
@@ -49,6 +55,7 @@ RNG = random.Random(42)
 ARGS = None                      # parsed CLI (set in main)
 UPSTREAM = "http://127.0.0.1:11435"
 UP_STATUS = {"ok": False, "last_error": None, "last_ok_ts": None, "polls": 0}
+STORE = None                     # sandboxed settings/profile/template store (UpliftStore)
 
 # ------------------------------------------------------------------ shadow
 # model_id -> full upstream /admin/api/models entry (schema) under MODELS_BASE;
@@ -132,8 +139,32 @@ def merge_model(base):
         m["estimated_size"] = est or m["actual_size"]
     s = dict(base.get("settings") or {})
     s.update(o.get("settings") or {})
+    # Sandboxed store is the settings source of truth for every model whose
+    # record exists there (seeded copy of real settings + all gateway writes).
+    if STORE is not None:
+        st = STORE.get_settings(mid)
+        st_pop = store_mod.to_dict_stripping_none(st)
+        for k in store_mod.MODEL_DEFAULTS:
+            if k in st_pop:
+                s[k] = st_pop[k]
+            else:
+                s.pop(k, None)
+        m["is_default"] = st.get("is_default", False)
+        m["is_hidden"] = st.get("is_hidden", False)
+        m["is_favorite"] = st.get("is_favorite", False)
+        if st.get("model_alias"):
+            m["model_alias"] = st["model_alias"]
+        if st.get("display_name"):
+            m["display_name"] = st["display_name"]
+        if st.get("active_profile_name"):
+            m["active_profile_name"] = st["active_profile_name"]
+        if st.get("model_type_override"):
+            m["model_type"] = st["model_type_override"]
+        # Reflect store-driven pin in the fields the classic UI reads.
+        if st.get("is_pinned"):
+            m["pinned"] = True
     m["settings"] = s
-    m["_shadow"] = bool(o)
+    m["_shadow"] = bool(o) or (STORE is not None)
     return m
 
 
@@ -546,7 +577,7 @@ class Handler(BaseHTTPRequestHandler):
         elif p == "/admin/api/models" or p.startswith("/admin/api/models?"):
             self._proxy(p + ("?" + u.query if u.query else ""))
         elif p.startswith("/admin/api/models/") and p.endswith("/settings"):
-            mid = p[len("/admin/api/models/"):-len("/settings")]
+            mid = urllib.parse.unquote(p[len("/admin/api/models/"):-len("/settings")])
             with LOCK:
                 base = MODELS_BASE.get(mid)
                 if not base and mid not in MODELS_OVER:
@@ -554,7 +585,20 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     s = dict((base or {}).get("settings") or {})
                     s.update(MODELS_OVER.get(mid, {}).get("settings") or {})
+                    if STORE is not None:
+                        s = store_mod.to_dict_stripping_none(STORE.get_settings(mid))
                     self._json({"id": mid, "settings": s})
+        elif p.startswith("/admin/api/models/") and p.endswith("/profiles"):
+            mid = urllib.parse.unquote(p[len("/admin/api/models/"):-len("/profiles")])
+            self._json({"profiles": STORE.list_profiles(mid) if STORE else []})
+        elif p == "/admin/api/profile-templates":
+            self._json({"templates": STORE.list_templates() if STORE else []})
+        elif p == "/admin/api/profile-fields":
+            self._json({"universal": list(store_mod.UNIVERSAL_PROFILE_FIELDS),
+                        "model_specific": list(store_mod.MODEL_SPECIFIC_PROFILE_FIELDS)})
+        elif p.startswith("/admin/api/models/") and p.endswith("/generation_config"):
+            # Read-only passthrough to the real server.
+            self._proxy(p)
         elif p == "/admin/api/logs":
             self._proxy(p + ("?" + u.query if u.query else ""))
         else:
@@ -605,51 +649,87 @@ class Handler(BaseHTTPRequestHandler):
     # ---- writes: always intercepted, NEVER forwarded upstream ----
     def do_PUT(self):
         p = urlparse(self.path).path
+        parts = p.split("/")
         if p.startswith("/admin/api/models/") and p.endswith("/settings"):
             mid = urllib.parse.unquote(p[len("/admin/api/models/"):-len("/settings")])
             body = self._read_body()
             if body is None:
                 return self._json({"detail": "invalid JSON"}, 400)
+            if STORE is None:
+                return self._json({"detail": "store unavailable"}, 503)
+            base = MODELS_BASE.get(mid) or {}
+            if mid not in MODELS_BASE and mid not in MODELS_OVER:
+                return self._json({"detail": "unknown model"}, 404)
+            prev = STORE.get_settings(mid)
+            alias_taken = STORE.alias_taken(MODELS_BASE)
             with LOCK:
-                if mid not in MODELS_BASE and mid not in MODELS_OVER:
-                    return self._json({"detail": "unknown model"}, 404)
-                o = over(mid)
-                cur = o.setdefault("settings", {})
-                errs = {}
-                for k, v in body.items():
-                    if k == "pinned":
-                        o["pinned"] = bool(v)
-                        continue
-                    if k in SETTINGS_ENUMS:
-                        if v in SETTINGS_ENUMS[k]:
-                            cur[k] = v
-                        else:
-                            errs[k] = f"must be one of {SETTINGS_ENUMS[k]}"
-                        continue
-                    spec = SETTINGS_TYPES.get(k)
-                    if spec is None:
-                        # Unknown field: accept primitives (real schema is wide).
-                        if isinstance(v, bool) or isinstance(v, (int, float, str)) or v is None:
-                            cur[k] = v
-                        else:
-                            errs[k] = "unsupported value type"
-                        continue
-                    typ, lo, hi = spec
-                    if isinstance(v, bool) or not isinstance(v, (int, float)):
-                        errs[k] = "must be number"
-                    elif not (lo <= float(v) <= hi):
-                        errs[k] = f"out of range [{lo}, {hi}]"
-                    else:
-                        cur[k] = typ(v)
-                if errs:
-                    return self._json({"detail": errs}, 422)
-                emit({"type": "settings", "id": mid, "changed": list(body)})
-                merged = dict((MODELS_BASE.get(mid) or {}).get("settings") or {})
-                merged.update(cur)
-                return self._json({"id": mid, "settings": merged,
-                                   "pinned": o.get("pinned",
-                                                   (MODELS_BASE.get(mid) or {}).get("pinned")),
-                                   "_shadow": True})
+                try:
+                    merged = STORE.update_from_admin(
+                        mid, body, alias_taken, base.get("config_model_type", ""))
+                except RuntimeError as e:
+                    if str(e).startswith("alias-conflict:"):
+                        return self._json({"detail": f"Alias '{str(e)[15:]}' is already used"}, 400)
+                    raise
+                except ValueError as e:
+                    return self._json({"detail": str(e)}, 400)
+            # management flags ride through the same endpoint; sync shadow so
+            # the classic pin badge agrees immediately
+            if "is_pinned" in body:
+                over(mid)["pinned"] = bool(body["is_pinned"])
+            sig_before = store_mod.engine_signature(prev)
+            sig_after = store_mod.engine_signature(merged)
+            loaded = effective_loaded(mid)
+            requires_reload = loaded and sig_before != sig_after
+            emit({"type": "settings", "id": mid, "changed": list(body),
+                  "requires_reload": requires_reload})
+            return self._json({
+                "success": True, "model_id": mid,
+                "settings": store_mod.to_dict_stripping_none(merged),
+                "model_type": merged.get("model_type_override") or base.get("model_type"),
+                "engine_type": base.get("engine_type"),
+                "requires_reload": requires_reload,
+                "auto_unloaded": False, "auto_reloaded": False,
+                "_shadow": True})
+        # PUT /api/models/{id}/profiles/{name}  (update)
+        if len(parts) >= 7 and parts[1] == "admin" and parts[3] == "models" and parts[5] == "profiles":
+            mid = urllib.parse.unquote(parts[4])
+            name = urllib.parse.unquote(parts[6])
+            body = self._read_body() or {}
+            if STORE is None:
+                return self._json({"detail": "store unavailable"}, 503)
+            try:
+                updated = STORE.update_profile(
+                    mid, name, new_name=body.get("new_name"),
+                    display_name=body.get("display_name"), description=body.get("description"),
+                    settings=body.get("settings"), source_template=body.get("source_template"),
+                    expose_as_model=body.get("expose_as_model"), api_name=body.get("api_name"))
+            except store_mod.InvalidProfileNameError as e:
+                return self._json({"detail": str(e)}, 400)
+            except ValueError as e:
+                return self._json({"detail": str(e)}, 409)
+            if updated is None:
+                return self._json({"detail": f"Profile not found: {name}"}, 404)
+            if body.get("also_save_as_template") and body.get("settings") is not None:
+                STORE.upsert_template(updated["name"],
+                                      display_name=updated.get("display_name"),
+                                      description=updated.get("description"),
+                                      settings=body["settings"])
+            emit({"type": "profile", "id": mid, "action": "update", "name": updated["name"]})
+            return self._json({"profile": updated})
+        # PUT /api/profile-templates/{name}
+        if len(parts) == 5 and parts[1] == "admin" and parts[3] == "profile-templates":
+            name = urllib.parse.unquote(parts[4])
+            body = self._read_body() or {}
+            if STORE is None:
+                return self._json({"detail": "store unavailable"}, 503)
+            try:
+                rec = STORE.upsert_template(name,
+                                            display_name=body.get("display_name"),
+                                            description=body.get("description"),
+                                            settings=body.get("settings"))
+            except store_mod.InvalidProfileNameError as e:
+                return self._json({"detail": str(e)}, 400)
+            return self._json({"template": rec})
         return self._json({"detail": "write endpoint not provided by gateway", "_intercepted": True}, 404)
 
     def do_POST(self):
@@ -709,9 +789,75 @@ class Handler(BaseHTTPRequestHandler):
                     emit({"type": "model-unload", "id": mid})
                 elif action in ("pin", "unpin"):
                     o["pinned"] = action == "pin"
+                    if STORE is not None:
+                        STORE.set_flag(mid, "is_pinned", action == "pin")
                     emit({"type": "model-pin", "id": mid, "pinned": o["pinned"]})
                 return self._json({"id": mid, "loaded": effective_loaded(mid),
                                    "pinned": o.get("pinned"), "_shadow": True})
+        # POST /api/models/{id}/profiles  (create)
+        if len(parts) == 6 and parts[1] == "admin" and parts[3] == "models" and parts[5] == "profiles":
+            mid = urllib.parse.unquote(parts[4])
+            body = self._read_body() or {}
+            if STORE is None:
+                return self._json({"detail": "store unavailable"}, 503)
+            try:
+                rec = STORE.save_profile(
+                    mid, body.get("name"), display_name=body.get("display_name"),
+                    description=body.get("description"), settings=body.get("settings") or {},
+                    source_template=body.get("source_template"),
+                    expose_as_model=bool(body.get("expose_as_model")), api_name=body.get("api_name"))
+            except store_mod.InvalidProfileNameError as e:
+                return self._json({"detail": str(e)}, 400)
+            except ValueError as e:
+                return self._json({"detail": str(e)}, 409)
+            if body.get("also_save_as_template"):
+                STORE.upsert_template(rec["name"], display_name=rec.get("display_name"),
+                                      description=rec.get("description"),
+                                      settings=body.get("settings") or {})
+            emit({"type": "profile", "id": mid, "action": "create", "name": rec["name"]})
+            return self._json({"profile": rec})
+        # POST /api/models/{id}/profiles/{name}/apply
+        if len(parts) == 8 and parts[1] == "admin" and parts[3] == "models" \
+                and parts[5] == "profiles" and parts[7] == "apply":
+            mid, name = urllib.parse.unquote(parts[4]), urllib.parse.unquote(parts[6])
+            if STORE is None:
+                return self._json({"detail": "store unavailable"}, 503)
+            base = MODELS_BASE.get(mid) or {}
+            applied = STORE.apply_profile(mid, name, base.get("config_model_type", ""))
+            if applied is None:
+                return self._json({"detail": f"Profile not found: {name}"}, 404)
+            emit({"type": "profile", "id": mid, "action": "apply", "name": name})
+            return self._json({"model_id": mid,
+                               "settings": store_mod.to_dict_stripping_none(applied)})
+        # POST /api/profile-templates  (create/upsert)
+        if len(parts) == 4 and parts[1] == "admin" and parts[3] == "profile-templates":
+            body = self._read_body() or {}
+            if STORE is None:
+                return self._json({"detail": "store unavailable"}, 503)
+            try:
+                rec = STORE.upsert_template(body.get("name"),
+                                            display_name=body.get("display_name"),
+                                            description=body.get("description"),
+                                            settings=body.get("settings") or {})
+            except store_mod.InvalidProfileNameError as e:
+                return self._json({"detail": str(e)}, 400)
+            return self._json({"template": rec})
+        return self._json({"detail": "write endpoint not provided by gateway", "_intercepted": True}, 404)
+
+    def do_DELETE(self):
+        p = urlparse(self.path).path
+        parts = p.split("/")
+        if len(parts) >= 7 and parts[1] == "admin" and parts[3] == "models" and parts[5] == "profiles":
+            mid, name = urllib.parse.unquote(parts[4]), urllib.parse.unquote(parts[6])
+            if STORE and STORE.delete_profile(mid, name):
+                emit({"type": "profile", "id": mid, "action": "delete", "name": name})
+                return self._json({"deleted": True, "name": name})
+            return self._json({"detail": f"Profile not found: {name}"}, 404)
+        if len(parts) == 5 and parts[1] == "admin" and parts[3] == "profile-templates":
+            name = urllib.parse.unquote(parts[4])
+            if STORE and STORE.delete_template(name):
+                return self._json({"deleted": True, "name": name})
+            return self._json({"detail": f"Template not found: {name}"}, 404)
         return self._json({"detail": "write endpoint not provided by gateway", "_intercepted": True}, 404)
 
 
@@ -722,14 +868,28 @@ def observer_loop():
 
 
 def main():
-    global ARGS, UPSTREAM
+    global ARGS, UPSTREAM, STORE
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=11437)
     ap.add_argument("--upstream", default="http://127.0.0.1:11435")
     ap.add_argument("--sim", type=float, default=0.5,
                     help="synthetic requests per second (0 = observe real only)")
+    ap.add_argument("--base", default=os.path.expanduser("~/hermes/TMP/omlx-uplift-data"),
+                    help="sandbox dir for model_settings.json / model_profiles.json / "
+                         "global_templates.json (NEVER ~/.omlx)")
+    ap.add_argument("--seed", action="store_true",
+                    help="seed the sandbox from the real ~/.omlx files if missing (copy, read-only on originals)")
     ARGS = ap.parse_args()
     UPSTREAM = ARGS.upstream
+    if ARGS.seed:
+        real_base = os.environ.get("OMLX_BASE_PATH") or os.path.expanduser("~/.omlx")
+        copied = store_mod.seed_from_real(real_base, ARGS.base)
+        if copied:
+            print(f"seeded sandbox from {real_base}: {', '.join(copied)}")
+    STORE = store_mod.UpliftStore(ARGS.base)
+    print(f"settings store: sandbox {ARGS.base} "
+          f"({len(STORE.known_model_ids())} records, "
+          f"{len(STORE.list_templates())} templates)")
     threading.Thread(target=observer_loop, daemon=True).start()
     threading.Thread(target=sim_clock, daemon=True).start()
     threading.Thread(target=model_clock, daemon=True).start()

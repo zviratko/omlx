@@ -13,7 +13,7 @@ fi
 
 DEST="$KEG/uplift"
 mkdir -p "$DEST/vendor"
-cp "$SRC/index.html" "$SRC/uplift.js" "$SRC/uplift.css" "$SRC/core.js" "$DEST/"
+cp "$SRC/index.html" "$SRC/uplift.js" "$SRC/uplift.css" "$SRC/core.js" "$SRC/modelspec.js" "$DEST/"
 cp "$SRC/vendor/"* "$DEST/vendor/"
 # Cache busting: stamp asset versions so browsers never serve stale CSS/JS.
 BUILD="$(date +%s)"
@@ -44,7 +44,7 @@ echo "Classic dashboard stays at http://127.0.0.1:11435/admin/dashboard (untouch
 # Mock gateway (API for the UI: proxies oMLX + shadow writes + lifecycle sim).
 GPORT=11437
 if ! curl -sf -o /dev/null "http://127.0.0.1:$GPORT/admin/api/mock/info"; then
-    nohup python3 "$(cd "$(dirname "$0")" && pwd)/uplift-mock.py" --sim 0.5 \
+    nohup python3 "$(cd "$(dirname "$0")" && pwd)/uplift-mock.py" --sim 0.5 --seed \
         >> "$HOME/hermes/TMP/uplift-mock.log" 2>&1 &
     sleep 1
     echo "Mock gateway started: http://127.0.0.1:$GPORT"
