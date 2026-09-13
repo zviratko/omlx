@@ -9,7 +9,8 @@ const $ = id => document.getElementById(id);
    and layers simulated data. Override with ?api= (e.g. =http://127.0.0.1:11435
    to bypass, or empty when served by oMLX itself in future hosting). */
 const qp = new URLSearchParams(location.search);
-const API = qp.has('api') ? qp.get('api') : 'http://127.0.0.1:11437';
+const API_DEFAULT = location.protocol + '//' + location.hostname + ':11437';
+const API = qp.has('api') ? qp.get('api') : API_DEFAULT;
 
 const prefs = C.loadPrefs(localStorage);
 const layout = C.loadLayout(localStorage);
@@ -882,7 +883,7 @@ function restartPolling() {
 /* ---------------- gateway status chip ---------------- */
 async function pollGatewayInfo() {
     const chip = $('chip-gateway');
-    if (API !== 'http://127.0.0.1:11437') { chip.textContent = 'direct'; chip.title = 'API ' + (API || location.origin); return; }
+    if (API !== API_DEFAULT) { chip.textContent = 'direct'; chip.title = 'API ' + (API || location.origin); return; }
     try {
         const d = await fetchJson(`${API}/admin/api/mock/info`);
         chip.textContent = d.ok

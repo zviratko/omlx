@@ -28,14 +28,16 @@ echo "Deployed to: $DEST (cache stamp $BUILD)"
 # immediately (python -m http.server lets browsers keep a stale index fresh).
 PORT=11436
 if ! curl -sf -o /dev/null "http://127.0.0.1:$PORT/index.html"; then
-    nohup python3 "$(cd "$(dirname "$0")" && pwd)/uplift-server.py" --port "$PORT" "$DEST" \
+    nohup python3 "$(cd "$(dirname "$0")" && pwd)/uplift-server.py" --port "$PORT" \
+        --host "${UPLIFT_BIND_HOST:-127.0.0.1}" "$DEST" \
         >> "$HOME/hermes/TMP/uplift-server.log" 2>&1 &
     sleep 1
 elif ! curl -sI "http://127.0.0.1:$PORT/index.html" | grep -qi "cache-control: no-store"; then
     # Old python -m http.server instance: replace with the no-cache server.
     kill "$(lsof -tnP -iTCP:$PORT -sTCP:LISTEN)" 2>/dev/null || true
     sleep 0.5
-    nohup python3 "$(cd "$(dirname "$0")" && pwd)/uplift-server.py" --port "$PORT" "$DEST" \
+    nohup python3 "$(cd "$(dirname "$0")" && pwd)/uplift-server.py" --port "$PORT" \
+        --host "${UPLIFT_BIND_HOST:-127.0.0.1}" "$DEST" \
         >> "$HOME/hermes/TMP/uplift-server.log" 2>&1 &
     sleep 1
     echo "Helper server upgraded to no-cache uplift-server.py"
@@ -51,6 +53,7 @@ if ! curl -sf -o /dev/null "http://127.0.0.1:$GPORT/admin/api/mock/info"; then
     UPLIFT_UPSTREAM_API_KEY="${UPLIFT_UPSTREAM_API_KEY:-}" \
     nohup python3 "$(cd "$(dirname "$0")" && pwd)/uplift-mock.py" --sim 0.5 --seed \
         --upstream "${UPLIFT_UPSTREAM:-http://127.0.0.1:11435}" \
+        --host "${UPLIFT_BIND_HOST:-127.0.0.1}" \
         >> "$HOME/hermes/TMP/uplift-mock.log" 2>&1 &
     sleep 1
     echo "Mock gateway started: http://127.0.0.1:$GPORT"

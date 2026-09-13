@@ -1170,6 +1170,8 @@ def main():
     global ARGS, UPSTREAM, STORE
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=11437)
+    ap.add_argument("--host", default="127.0.0.1",
+                    help="bind address (0.0.0.0 to expose on the LAN)")
     ap.add_argument("--upstream", default="http://127.0.0.1:11435")
     ap.add_argument("--api-key", default=os.environ.get("UPLIFT_UPSTREAM_API_KEY") or None,
                     help="Bearer key if the upstream requires auth (never logged)")
@@ -1212,7 +1214,7 @@ def main():
     threading.Thread(target=sim_clock, daemon=True).start()
     threading.Thread(target=model_clock, daemon=True).start()
     threading.Thread(target=base_models_refresh, daemon=True).start()
-    srv = ThreadingHTTPServer(("127.0.0.1", ARGS.port), Handler)
+    srv = ThreadingHTTPServer((ARGS.host, ARGS.port), Handler)
     print(f"uplift gateway on http://127.0.0.1:{ARGS.port} -> upstream {UPSTREAM} (sim {ARGS.sim}/s)")
     srv.serve_forever()
 

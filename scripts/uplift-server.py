@@ -28,11 +28,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=11436)
+    ap.add_argument("--host", default="127.0.0.1",
+                    help="bind address (0.0.0.0 to expose on the LAN)")
     ap.add_argument("directory", nargs="?", default=".")
     args = ap.parse_args()
     handler = functools.partial(Handler, directory=args.directory)
     socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer(("127.0.0.1", args.port), handler) as srv:
+    with socketserver.TCPServer((args.host, args.port), handler) as srv:
         print(f"uplift static server on http://127.0.0.1:{args.port} ({args.directory})")
         srv.serve_forever()
 
