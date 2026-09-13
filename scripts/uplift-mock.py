@@ -105,8 +105,20 @@ def emit(ev):
 
 
 # ------------------------------------------------------------ http helpers
+UPSTREAM_API_KEY = None          # set via --api-key / UPLIFT_UPSTREAM_API_KEY
+
+
+def _up_headers(extra=None):
+    h = {"Accept": "application/json"}
+    if UPSTREAM_API_KEY:
+        h["Authorization"] = "Bearer " + UPSTREAM_API_KEY
+    if extra:
+        h.update(extra)
+    return h
+
+
 def upstream_get(path, timeout=4):
-    req = urllib.request.Request(UPSTREAM + path, headers={"Accept": "application/json"})
+    req = urllib.request.Request(UPSTREAM + path, headers=_up_headers())
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read())
 
@@ -114,14 +126,15 @@ def upstream_get(path, timeout=4):
 def upstream_post(path, payload, timeout=15):
     req = urllib.request.Request(
         UPSTREAM + path, data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        headers=_up_headers({"Content-Type": "application/json"}),
         method="POST")
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read())
 
 
 def upstream_get_text(path, timeout=6):
-    req = urllib.request.Request(UPSTREAM + path, headers={"Accept": "text/plain,*/*"})
+    req = urllib.request.Request(UPSTREAM + path,
+                                 headers=_up_headers({"Accept": "text/plain,*/*"}))
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.read().decode("utf-8", "replace")
 
@@ -1124,6 +1137,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=11437)
     ap.add_argument("--upstream", default="http://127.0.0.1:11435")
+    ap.add_argument("--api-key", default=os.environ.get("UPLIFT_UPSTREAM_API_KEY") or None,
+                    help="Bearer key if the upstream requires auth (never logged)")
     ap.add_argument("--sim", type=float, default=0.5,
                     help="synthetic requests per second (0 = observe real only)")
     global GS_SHADOW_PATH
@@ -1132,8 +1147,10 @@ def main():
                          "global_templates.json (NEVER ~/.omlx)")
     ap.add_argument("--seed", action="store_true",
                     help="seed the sandbox from the real ~/.omlx files if missing (copy, read-only on originals)")
+    global UPSTREAM_API_KEY
     ARGS = ap.parse_args()
     UPSTREAM = ARGS.upstream
+    UPSTREAM_API_KEY = ARGS.api_key
     if ARGS.seed:
         real_base = os.environ.get("OMLX_BASE_PATH") or os.path.expanduser("~/.omlx")
         copied = store_mod.seed_from_real(real_base, ARGS.base)

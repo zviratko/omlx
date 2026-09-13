@@ -42,9 +42,13 @@ echo "Uplift dashboard: http://127.0.0.1:$PORT/index.html"
 echo "Classic dashboard stays at http://127.0.0.1:11435/admin/dashboard (untouched)"
 
 # Mock gateway (API for the UI: proxies oMLX + shadow writes + lifecycle sim).
+# Override upstream with UPLIFT_UPSTREAM (e.g. http://127.0.0.1:8000) and auth
+# with UPLIFT_UPSTREAM_API_KEY (env only, never logged).
 GPORT=11437
 if ! curl -sf -o /dev/null "http://127.0.0.1:$GPORT/admin/api/mock/info"; then
+    UPLIFT_UPSTREAM_API_KEY="${UPLIFT_UPSTREAM_API_KEY:-}" \
     nohup python3 "$(cd "$(dirname "$0")" && pwd)/uplift-mock.py" --sim 0.5 --seed \
+        --upstream "${UPLIFT_UPSTREAM:-http://127.0.0.1:11435}" \
         >> "$HOME/hermes/TMP/uplift-mock.log" 2>&1 &
     sleep 1
     echo "Mock gateway started: http://127.0.0.1:$GPORT"
