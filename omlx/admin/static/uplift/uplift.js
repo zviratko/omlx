@@ -271,6 +271,27 @@ counter('v-u-compl',    v => C.fmtCompact(v));
 
 /* ---------------- charts ---------------- */
 const axisFont = '10px ui-monospace, SFMono-Regular, Menlo, monospace';
+/* Remember where the mouse is hovering, by TIMESTAMP not index: setData on a
+   sliding window shifts indices, which made hovered values snap to the latest
+   sample after the next poll (looked like hover only worked on data points). */
+const hoverTs = new WeakMap();       // chart -> hovered timestamp (ms) | null
+function rememberHover(c) {
+    if (c.cursor.idx === null || c.cursor.idx === undefined) { hoverTs.set(c, null); return; }
+    const ts = c.data[0][c.cursor.idx];
+    if (typeof ts === 'number') hoverTs.set(c, ts);
+}
+function restoreCursor(c) {
+    const t = hoverTs.get(c);
+    if (t === null || t === undefined) return;
+    const xs = c.data[0];
+    if (!xs.length) return;
+    let i = 0, best = Infinity;
+    for (let k = 0; k < xs.length; k++) {
+        const d = Math.abs(xs[k] - t);
+        if (d < best) { best = d; i = k; }
+    }
+    c.setCursor({ idx: i }, false);  // fires hooks + moves the focus point
+}
 const tpsData = [[], [], []];        // time, generation tok/s, prefill tok/s
 const memData = [[], [], [], [], [], []];  // time, memory %, cache GB, hot1, hot2, hot3
 const MAX_POINTS = 4000;
@@ -326,6 +347,7 @@ function baseOpts(specs, axes, legendHook) {
    slice currently displayed — so indices always match c.cursor.idx. */
 function legendUpdater() {
     return c => {
+        rememberHover(c);
         const rows = [...c.root.querySelectorAll('.u-legend .u-series')];
         if (!rows.length) return;
         const hasTimeRow = rows[0] && rows[0].querySelector('.u-label')?.textContent === 'Time';
@@ -359,6 +381,7 @@ function createCharts() {
         legendUpdater());
     // y2 axis sits on the right; uPlot axis 'side': 1=right of grid, 3=left.
     tpsChart = new uPlot(tpsOpts, windowedData(tpsData), $('chart-tps'));
+    window.__uplotTps = tpsChart;   // debug handle
     // Memory % left; runtime cache GB (total + top-3 models' hot cache) right.
     const memSpecs = [line('model memory', 'blue', true, 'y'),
                       line('cache total', 'gold', false, 'y2')];
@@ -383,7 +406,10 @@ function redrawCharts() {
     if (!tpsChart) return;
     tpsChart.setData(windowedData(tpsData));
     memChart.setData(windowedData(memData));
-    legendUpdater()(tpsChart); legendUpdater()(memChart);
+    // Keep the hovered position pinned across polls (index shifts otherwise);
+    // when not hovering, show the latest samples.
+    restoreCursor(tpsChart) || legendUpdater()(tpsChart);
+    restoreCursor(memChart) || legendUpdater()(memChart);
     const shown = windowedData(tpsData)[0].length;
     $('chart-tps-window').textContent = shown > 1 ? `${layout.chartWindowSec >= 3600 ? '1h' : layout.chartWindowSec / 60 + 'm'} window` : '';
 }
@@ -397,6 +423,15 @@ function resizeCharts() {
     if (usageChart && w3 > 0) usageChart.setSize({ width: w3, height: 200 });
 }
 new ResizeObserver(resizeCharts).observe($('grid'));
+/* Pointer left the plot: drop the pinned hover so legends show latest again. */
+for (const sel of ['#chart-tps', '#chart-mem']) {
+    const el = $(sel.slice(1));
+    if (el) el.addEventListener('mouseleave', () => {
+        hoverTs.set(sel === '#chart-tps' ? tpsChart : memChart, null);
+        const c = sel === '#chart-tps' ? tpsChart : memChart;
+        if (c) { c.setCursor({ idx: c.data[0].length - 1 }, false); }
+    });
+}
 
 /* ---------------- event feed / reactions ---------------- */
 const MAX_FEED = 40;
@@ -441,6 +476,29 @@ function reactTo(events) {
         if (ev.kind === 'restart')      flashCard('v-gentps', 'bad');
         if (ev.kind === 'pressure' && ev.text.includes('hard')) flashCard('mem-label', 'bad');
     }
+}
+/* Milestone gate: fire each round crossing at most once per page session,
+   immune to overlapping polls comparing against a stale snapshot (that
+   re-reported the same crossing and made toasts/confetti fire twice). */
+const milestoneFloor = {};   // key -> highest multiple already celebrated
+function milestoneStep(key) { return key === 'requests' ? 1000 : 1e6; }
+function gateMilestones(hits) {
+    const fresh = [];
+    for (const h of hits) {
+        const step = milestoneStep(h.key);
+        const crossed = Math.floor(h.value / step);
+        if (milestoneFloor[h.key] === undefined) {
+            milestoneFloor[h.key] = crossed;   // baseline at page load; later crossings fire
+            continue;
+        }
+        if (crossed > milestoneFloor[h.key]) {
+            milestoneFloor[h.key] = crossed;
+            fresh.push(h);
+        } else if (crossed < milestoneFloor[h.key]) {
+            milestoneFloor[h.key] = crossed;   // server restart: re-baseline silently
+        }
+    }
+    return fresh;
 }
 
 /* ---------------- rendering ---------------- */
@@ -614,10 +672,14 @@ async function pollStats() {
         const events = C.eventsBetween(prevStats, s);
         const miles = C.milestonesBetween(prevStats, s);
         prevStats = stats; stats = s;
+        if (milestoneFloor.requests === undefined && s.requests !== null)
+            milestoneFloor.requests = Math.floor(s.requests / milestoneStep('requests'));
+        if (milestoneFloor.totalTokens === undefined && s.totalTokens !== null)
+            milestoneFloor.totalTokens = Math.floor(s.totalTokens / milestoneStep('totalTokens'));
         tracker.observe(s);
         render(s);
         reactTo(events);
-        for (const mi of miles) celebrate(`${C.fmtNumber(mi.value)} ${mi.label}`);
+        for (const mi of gateMilestones(miles)) celebrate(`${C.fmtNumber(mi.value)} ${mi.label}`);
     } catch (err) {
         if (++failCount >= 2) {
             document.body.classList.add('stale');
@@ -759,16 +821,48 @@ const SE_FEATURE = ['dflash_enabled', 'mtp_enabled', 'turboquant_kv_enabled',
                     'trust_remote_code', 'is_favorite', 'is_hidden'];
 let seModel = null, seValues = {};
 
-function closeEditor() { $('settings-editor-page').hidden = true; seModel = null; }
+function editorNode() {
+    const panel = document.createElement('div');
+    panel.className = 'row-editor';
+    const fields = document.createElement('div');
+    fields.className = 'pair';
+    fields.id = 'se-fields';
+    const bar = document.createElement('div');
+    bar.className = 'editor-bar';
+    const save = document.createElement('button');
+    save.className = 'se-btn'; save.textContent = 'Save'; save.id = 'se-save';
+    const close = document.createElement('button');
+    close.className = 'se-btn'; close.textContent = 'Close'; close.id = 'se-cancel';
+    const msg = document.createElement('span');
+    msg.className = 'stat-sub'; msg.id = 'se-msg';
+    bar.append(save, close, msg);
+    panel.append(fields, bar);
+    save.onclick = saveEditor;
+    close.onclick = () => closeEditor();
+    return panel;
+}
+function closeEditor() {
+    seModel = null;
+    document.querySelectorAll('.row-editor').forEach(n => n.remove());
+    document.querySelectorAll('.urow.expanded').forEach(r => r.classList.remove('expanded'));
+    const fb = $('model-editor-fallback');
+    if (fb) { fb.hidden = true; fb.querySelector('.row-editor')?.remove(); }
+}
 async function openEditor(model) {
+    closeEditor();
     seModel = model;
-    $('se-model').textContent = model;
-    const fields = $('se-fields');
-    fields.innerHTML = '';
+    // Find (or wait for) the model's table row; fall back to a detached panel.
+    let row = [...document.querySelectorAll('#model-admin .urow:not(.head)')]
+        .find(r => r.dataset.mid === model);
+    if (!row) { await renderModelAdmin(); 
+        row = [...document.querySelectorAll('#model-admin .urow:not(.head)')]
+            .find(r => r.dataset.mid === model); }
     try {
         const d = await fetchJson(`${API}/admin/api/models/${encodeURIComponent(model)}/settings`);
         seValues = d.settings || {};
     } catch (_) { seValues = {}; }
+    const panel = editorNode();
+    const fields = panel.querySelector('#se-fields');
     const addRow = (key, kind, a, b, step) => {
         const label = document.createElement('label');
         label.className = 'se-row';
@@ -801,35 +895,41 @@ async function openEditor(model) {
     for (const f of SE_BASIC) addRow(...f);
     for (const [k, opts] of Object.entries(SE_ENUM)) addRow(k, 'select', opts);
     for (const k of SE_FEATURE) if (k in seValues) addRow(k, 'bool');
-    $('se-msg').textContent = '';
-    $('settings-editor-page').hidden = false;
-    $('settings-editor-page').scrollIntoView({ block: 'nearest' });
+    if (row) {
+        // Expand downward: insert below the row, spanning the full table width.
+        row.classList.add('expanded');
+        row.after(panel);
+        panel.scrollIntoView({ block: 'nearest' });
+    } else {
+        $('se-orphan').textContent = `Model ${model} not listed`;
+        $('model-editor-fallback').hidden = false;
+        $('model-editor-fallback').querySelector('.card-body').append(panel);
+    }
 }
 async function saveEditor() {
     if (!seModel) return;
+    const panel = document.querySelector('.row-editor');
+    if (!panel) return;
     const payload = {};
-    for (const input of $('se-fields').querySelectorAll('[data-key]')) {
+    for (const input of panel.querySelectorAll('[data-key]')) {
         const key = input.dataset.key;
         if (input.type === 'checkbox') { payload[key] = input.checked; continue; }
         const v = input.value;
         if (v === '') continue;
         payload[key] = input.type === 'number' ? Number(v) : v;
     }
-    $('se-msg').textContent = 'saving…';
+    panel.querySelector('#se-msg').textContent = 'saving…';
     try {
         await putModelSettings(seModel, payload);
-        $('se-msg').textContent = 'saved ✓ (shadow)';
+        panel.querySelector('#se-msg').textContent = 'saved ✓ (shadow)';
         toast(`Settings saved: ${seModel}`);
         renderModelAdmin();
         setTimeout(closeEditor, 900);
     } catch (err) {
-        $('se-msg').textContent = `error: ${err.message}`;
+        panel.querySelector('#se-msg').textContent = `error: ${err.message}`;
         toast(`Save failed: ${err.message}`);
     }
 }
-$('se-save').onclick = saveEditor;
-$('se-cancel').onclick = closeEditor;
-$('se-close2').onclick = closeEditor;
 
 let adminModels = [];
 async function renderModelAdmin() {
@@ -856,6 +956,7 @@ async function renderModelAdmin() {
     table.append(head);
     for (const m of shown) {
         const row = document.createElement('div'); row.className = 'urow admin';
+        row.dataset.mid = m.id;
         const name = cell((m.pinned ? '📌 ' : '') + m.id);
         name.className = 'uname'; name.title = m.model_path || m.id;
         const state = cell(m.is_loading ? `loading ${m.loading_elapsed_seconds ?? ''}s`
@@ -875,18 +976,18 @@ async function renderModelAdmin() {
         settings.className = 'dim';
         const actions = document.createElement('span');
         actions.className = 'rowacts';
-        const btn = (label, fn, title) => {
+        const btn = (label, fn, title, noRerender) => {
             const b = document.createElement('button');
             b.className = 'se-btn'; b.textContent = label; b.title = title || label;
             b.onclick = async () => {
                 try { await fn(); } catch (err) { toast(`${label} failed: ${err.message}`); }
-                renderModelAdmin();
+                if (!noRerender) renderModelAdmin();
             };
             return b;
         };
         actions.append(btn(m.pinned ? '📌' : '📍', () => postModelAction(m.id, m.pinned ? 'unpin' : 'pin'),
                            m.pinned ? 'Unpin' : 'Pin'));
-        actions.append(btn('⚙', () => openEditor(m.id), 'Edit settings'));
+        actions.append(btn('⚙', () => openEditor(m.id), 'Edit settings', true));
         if (m.loaded) actions.append(btn('unload', () => postModelAction(m.id, 'unload')));
         else actions.append(btn('load', () => postModelAction(m.id, 'load')));
         row.append(name, state, size, settings, actions);
@@ -1098,7 +1199,7 @@ pollUsage(); pollLogs();
 connectEventStream();
 setInterval(pollGatewayInfo, 10000);
 setInterval(() => { if (!document.hidden) pollRequests(); }, 2000);
-setInterval(() => { if (!document.hidden) renderModelAdmin(); }, 8000);
+setInterval(() => { if (!document.hidden && !seModel) renderModelAdmin(); }, 8000);
 setInterval(() => { if (!document.hidden && currentTab() === 'usage') pollUsage(); }, 15000);
 setInterval(() => { if (!document.hidden && currentTab() === 'logs' && logsFollow) pollLogs(); }, 5000);
 })();

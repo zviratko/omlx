@@ -335,3 +335,16 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
     .card { grid-column: span 1 !important; }
     .tabs a { padding: 8px 8px; }
 }
+
+/* ---- in-place model settings expansion ---- */
+.urow.expanded { border-left: 3px solid var(--accent); }
+.row-editor {
+    border: 1px solid var(--line);
+    border-top: 0;
+    background: var(--panel2, var(--panel));
+    padding: 10px 12px;
+    margin-bottom: 4px;
+}
+.row-editor .pair { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px 16px; }
+.row-editor .editor-bar { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
+.urow.expanded + .row-editor { border-top: 1px dashed var(--line); }
