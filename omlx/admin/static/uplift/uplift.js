@@ -40,6 +40,14 @@ function applyTab() {
     if (tab === 'settings') pollGlobalSettings();
 }
 addEventListener('hashchange', applyTab);
+// Keyboard: 1–5 jump to tabs (ignored while typing in inputs).
+document.addEventListener('keydown', e => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const tag = document.activeElement?.tagName;
+    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+    const i = ['1', '2', '3', '4', '5'].indexOf(e.key);
+    if (i >= 0) location.hash = '#' + TABS[i];
+});
 
 /* ---------------- theme & motion ---------------- */
 const THEME_CYCLE = ['auto', 'light', 'dark', 'enhanced'];
@@ -355,7 +363,9 @@ function createCharts() {
     const memSpecs = [line('model memory', 'blue', true, 'y'),
                       line('cache total', 'gold', false, 'y2')];
     for (let i = 0; i < cacheSeriesIds.length; i++) {
-        const s = line('hot:' + cacheSeriesIds[i], ['gold', 'blue', 'dim'][i], false, 'y2');
+        const shortId = cacheSeriesIds[i].length > 14
+            ? cacheSeriesIds[i].slice(0, 13) + '…' : cacheSeriesIds[i];
+        const s = line('hot:' + shortId, ['gold', 'blue', 'dim'][i], false, 'y2');
         s.dash = [4, 4];
         memSpecs.push(s);
     }
