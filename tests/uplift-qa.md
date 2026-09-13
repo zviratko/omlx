@@ -71,3 +71,6 @@ evidence).
   renderUploader postJson renderTasks closeEditor pollGatewayInfo.
 - [hidden] needs companion display:none rule for any class setting display.
 - XSS: error text via textContent helpers only.
+- Push fallback when SSH_AUTH_SOCK forwarding is dead (agent empty):
+  `git push https://x-access-token:$(gh auth token)@github.com/zviratko/omlx.git
+  feat/uplift-dashboard` — one-off URL, do NOT persist token in remote.
