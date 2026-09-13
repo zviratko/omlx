@@ -204,6 +204,15 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
 .hover-readout.idle { opacity: .55; }
 .hover-readout.idle .hr-time::after { content: ' · latest'; font-size: 9px;
     color: var(--dim); letter-spacing: .12em; }
+/* Cursor value bubble: flat solid panel beside the pointer (no shadow,
+   square corners), aligned with the painted crosshair. */
+.u-tip { position: absolute; z-index: 5; pointer-events: none;
+    background: var(--panel, var(--bg)); border: 1px solid var(--accent);
+    padding: 5px 8px; font-family: var(--mono); font-size: 11px; line-height: 1.5;
+    white-space: nowrap; color: var(--ink); }
+.u-tip .ut-time { color: var(--dim); letter-spacing: .08em;
+    border-bottom: 1px solid var(--line); margin-bottom: 3px; padding-bottom: 2px; }
+.u-tip .ut-row b { font-weight: 700; letter-spacing: .04em; }
 .uplot, .u-wrap { font-family: var(--mono) !important; }
 /* uPlot's vendor CSS sets `.u-value {display:none}` and only the live-mode JS
    re-enables it; with live:false our custom cells must opt back in explicitly. */

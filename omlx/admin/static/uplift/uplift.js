@@ -424,16 +424,63 @@ function chartStroke(c, s) {
     try { return typeof c.series[s].stroke === 'string' ? c.series[s].stroke : 'inherit'; }
     catch (_) { return 'inherit'; }
 }
+/* Floating value bubble at the cursor. The crosshair is already painted;
+   the bubble rides beside it and shows the value(s) aligned with it: time
+   plus every series at the nearest collected sample. HTML built with DOM
+   nodes only (no innerHTML) so labels/values from data cannot inject. */
+function tipEl(c) {
+    if (!c._tip) {
+        const d = document.createElement('div');
+        d.className = 'u-tip';
+        d.hidden = true;
+        c.over.append(d);           // .u-over spans the plot area and is positioned
+        c._tip = d;
+    }
+    return c._tip;
+}
+function showTip(c, ev, i) {
+    const tip = tipEl(c);
+    tip.textContent = '';
+    const t = document.createElement('div');
+    t.className = 'ut-time';
+    t.textContent = new Date(c.data[0][i]).toLocaleTimeString('en-GB');
+    tip.append(t);
+    for (let s = 1; s < c.series.length; s++) {
+        const v = c.data[s] ? c.data[s][i] : null;
+        if (v === undefined) continue;
+        const row = document.createElement('div');
+        row.className = 'ut-row';
+        const lab = document.createElement('b');
+        lab.textContent = (c.series[s] && c.series[s].label) || ('s' + s);
+        lab.style.color = chartStroke(c, s);
+        const val = document.createElement('span');
+        val.textContent = (v === null) ? '—' : seriesValue(v);
+        row.append(lab, document.createTextNode(' '), val);
+        tip.append(row);
+    }
+    tip.hidden = false;
+    // Position beside the pointer; flip near plot edges so it stays visible.
+    const r = c.over.getBoundingClientRect();
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    let lx = ev.clientX - r.left + 14;
+    let ly = ev.clientY - r.top + 12;
+    if (lx + tw > r.width - 4) lx = ev.clientX - r.left - tw - 14;
+    if (ly + th > r.height - 4) ly = Math.max(2, ev.clientY - r.top - th - 12);
+    tip.style.left = lx + 'px';
+    tip.style.top = ly + 'px';
+}
 function bindHoverReadout(c, readoutId) {
     if (!c || !c.over) return;
     c.over.addEventListener('mousemove', ev => {
         const i = (c.cursor.idx != null) ? c.cursor.idx : nearestIndexByX(c, ev.clientX);
         hoverTs.set(c, c.data[0][i]);              // pin across poll re-windowing
         updateHover(c, readoutId, i);
+        showTip(c, ev, i);
     });
     c.over.addEventListener('mouseleave', () => {
         hoverTs.set(c, null);
         updateHover(c, readoutId, null);           // back to latest, dimmed
+        if (c._tip) c._tip.hidden = true;
     });
     updateHover(c, readoutId, null);
 }
