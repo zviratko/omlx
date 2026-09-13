@@ -16,10 +16,25 @@
     <div class="logo"><span class="dot" id="status-dot"></span> oMLX <span style="opacity:.45;font-weight:300">Uplift</span></div>
     <nav class="tabs" id="tabs">
         <a href="#status" data-tab="status">Status</a>
-        <a href="#models" data-tab="models">Models</a>
+        <span class="dd" id="dd-models">
+            <button class="dd-btn" data-tab="models" id="dd-models-btn">Models <span class="dd-caret">▾</span></button>
+            <span class="dd-menu" id="dd-models-menu" hidden>
+                <a href="#models" data-sub="manager">Manager</a>
+                <a href="#models" data-sub="downloader">Downloader</a>
+                <a href="#models" data-sub="quantizer">oQ Quantization</a>
+                <a href="#models" data-sub="uploader">oQ Uploader</a>
+            </span>
+        </span>
         <a href="#usage" data-tab="usage">Usage</a>
         <a href="#logs" data-tab="logs">Logs</a>
-        <a href="#settings" data-tab="settings">Settings</a>
+        <span class="dd" id="dd-settings">
+            <button class="dd-btn" data-tab="settings" id="dd-settings-btn">Settings <span class="dd-caret">▾</span></button>
+            <span class="dd-menu" id="dd-settings-menu" hidden>
+                <a href="#settings" data-sub="global">Global Settings</a>
+                <a href="#settings" data-sub="models">Model Settings</a>
+                <a href="#settings" data-sub="integrations">Integration Settings</a>
+            </span>
+        </span>
     </nav>
     <span class="chip" id="chip-uptime">—</span>
     <span class="chip" id="chip-device">—</span>
@@ -124,11 +139,14 @@
         <div class="card-body"><div class="feed" id="feed"><div class="empty">Watching…</div></div></div></section>
 
     <!-- ============ MODELS ============ -->
-    <section class="card wide" data-id="models-admin-page" data-cols="3" data-tab="models" data-full="1">
+    <section class="card wide" data-id="models-admin-page" data-cols="3" data-tab="models" data-sub="manager" data-full="1">
         <h2><button class="collapse" title="Collapse">–</button>Model manager <span class="right" id="models-admin-sub"></span></h2>
         <div class="card-body">
             <div class="filterbar">
                 <input type="search" id="ma-filter" placeholder="filter by name…">
+                <select id="ma-type" title="Filter by model type">
+                    <option value="">all types</option>
+                </select>
                 <label class="row"><input type="checkbox" id="ma-only-loaded"> loaded only</label>
                 <span class="spacer"></span>
                 <span class="stat-sub" id="ma-mem"></span>
@@ -136,9 +154,49 @@
             <div id="model-admin" class="admin-table"></div>
         </div></section>
 
-    <section class="card wide" id="model-editor-fallback" data-id="model-editor-fallback" data-cols="3" data-tab="models" data-full="1" hidden>
+    <section class="card wide" id="model-editor-fallback" data-id="model-editor-fallback" data-cols="3" data-tab="models" data-sub="manager" data-full="1" hidden>
         <h2><button class="collapse" title="Collapse">–</button>Settings</h2>
         <div class="card-body"><div id="se-orphan" class="empty"></div></div></section>
+
+    <section class="card wide" data-id="dl-page" data-cols="3" data-tab="models" data-sub="downloader" data-full="1">
+        <h2><button class="collapse" title="Collapse">–</button>Hugging Face downloader <span class="right" id="dl-sub"></span></h2>
+        <div class="card-body">
+            <div class="filterbar">
+                <input type="search" id="dl-q" placeholder="search models on huggingface.co…">
+                <button class="se-btn" id="dl-go">Search</button>
+                <span class="spacer"></span>
+                <span class="stat-sub">writes run in the shadow sandbox</span>
+            </div>
+            <div id="dl-results" class="admin-table"><div class="empty">Search to list models.</div></div>
+            <h3 style="margin:16px 0 6px">Tasks</h3>
+            <div id="dl-tasks" class="admin-table"><div class="empty">No tasks</div></div>
+        </div></section>
+
+    <section class="card wide" data-id="qz-page" data-cols="3" data-tab="models" data-sub="quantizer" data-full="1">
+        <h2><button class="collapse" title="Collapse">–</button>oQ quantization <span class="right" id="qz-sub"></span></h2>
+        <div class="card-body">
+            <div class="filterbar">
+                <input type="search" id="qz-filter" placeholder="filter local models…">
+                <span class="spacer"></span>
+                <span class="stat-sub">runs quantized in the shadow sandbox</span>
+            </div>
+            <div id="qz-models" class="admin-table"><div class="empty">—</div></div>
+            <h3 style="margin:16px 0 6px">Tasks</h3>
+            <div id="qz-tasks" class="admin-table"><div class="empty">No tasks</div></div>
+        </div></section>
+
+    <section class="card wide" data-id="up-page" data-cols="3" data-tab="models" data-sub="uploader" data-full="1">
+        <h2><button class="collapse" title="Collapse">–</button>oQ uploader <span class="right" id="up-sub"></span></h2>
+        <div class="card-body">
+            <div class="filterbar">
+                <input type="search" id="up-filter" placeholder="filter uploadable models…">
+                <span class="spacer"></span>
+                <span class="stat-sub">uploads run in the shadow sandbox</span>
+            </div>
+            <div id="up-models" class="admin-table"><div class="empty">—</div></div>
+            <h3 style="margin:16px 0 6px">Tasks</h3>
+            <div id="up-tasks" class="admin-table"><div class="empty">No tasks</div></div>
+        </div></section>
 
     <!-- ============ USAGE ============ -->
     <section class="card wide" data-id="usage-page" data-cols="4" data-tab="usage" data-full="1">
@@ -186,9 +244,28 @@
         </div></section>
 
     <!-- ============ SETTINGS ============ -->
-    <section class="card wide" data-id="settings-page" data-cols="3" data-tab="settings" data-full="1">
-        <h2><button class="collapse" title="Collapse">–</button>Server settings <span class="right" id="gs-sub">read-only preview</span></h2>
+    <section class="card wide" data-id="settings-page" data-cols="3" data-tab="settings" data-sub="global" data-full="1">
+        <h2><button class="collapse" title="Collapse">–</button>Global settings <span class="right" id="gs-sub">read-only preview</span></h2>
         <div class="card-body"><div id="gs-body" class="admin-table"><div class="empty">—</div></div></div></section>
+
+    <section class="card wide" data-id="model-settings-page" data-cols="3" data-tab="settings" data-sub="models" data-full="1">
+        <h2><button class="collapse" title="Collapse">–</button>Model settings store <span class="right" id="ms-sub"></span></h2>
+        <div class="card-body">
+            <div class="filterbar">
+                <input type="search" id="ms-filter" placeholder="filter stored ids…">
+                <span class="spacer"></span>
+                <button class="se-btn danger" id="btn-prune">Prune model settings…</button>
+            </div>
+            <div class="se-hint" style="margin-bottom:8px">Stored configuration (model_settings.json in the sandbox).
+                Prune removes entries for models that no longer exist on disk.</div>
+            <div id="ms-body" class="admin-table"><div class="empty">—</div></div>
+            <h3 style="margin:16px 0 6px">Global templates</h3>
+            <div id="ms-templates" class="admin-table"><div class="empty">—</div></div>
+        </div></section>
+
+    <section class="card wide" data-id="integrations-page" data-cols="3" data-tab="settings" data-sub="integrations" data-full="1">
+        <h2><button class="collapse" title="Collapse">–</button>Integration settings <span class="right" id="is-sub"></span></h2>
+        <div class="card-body"><div id="is-body" class="admin-table"><div class="empty">—</div></div></div></section>
 
 </main>
 </div>

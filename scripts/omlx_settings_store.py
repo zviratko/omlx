@@ -725,6 +725,32 @@ class UpliftStore:
             self._save_templates()
             return True
 
+    # ---- prune (orphaned config for models that no longer exist) ----
+    def prune_settings(self, model_ids):
+        """Drop stored settings for the given ids. Returns list of removed ids."""
+        with self._lock:
+            removed = []
+            for mid in model_ids:
+                if mid in self._settings:
+                    del self._settings[mid]
+                    removed.append(mid)
+            if removed:
+                self._save_settings()
+            return removed
+
+    def prune_templates(self, names):
+        """Drop global templates whose slug matches one of the removed ids."""
+        with self._lock:
+            want = set(names)
+            removed = []
+            for name in list(self._templates):
+                if slugify_profile_api_name(name) in want or name in want:
+                    del self._templates[name]
+                    removed.append(name)
+            if removed:
+                self._save_templates()
+            return removed
+
 
 def seed_from_real(real_base, sandbox_base):
     """Copy the real settings trio into the sandbox ONCE if missing.

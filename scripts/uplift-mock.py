@@ -80,6 +80,11 @@ ORIGIN_COUNT = {"real": 0, "sim": 0}
 LOGS_CACHE = {"ts": 0.0, "body": None}
 REAL_IDLE_SECONDS = None         # upstream idle signal for info endpoint
 
+# ---------------------------------------------- shadow tasks (dl/quant/up)
+# id -> {id, kind, name, dest, status, progress, size, started_at, error}
+SHADOW_TASKS = {}
+TASK_DUR = 20.0                  # seconds a simulated download/quant/upload takes
+
 
 def rid():
     return "".join(RNG.choices(string.hexdigits.lower(), k=12))
@@ -601,6 +606,46 @@ class Handler(BaseHTTPRequestHandler):
             self._proxy(p)
         elif p == "/admin/api/logs":
             self._proxy(p + ("?" + u.query if u.query else ""))
+        elif p.startswith("/admin/api/hf/tasks") or p.startswith("/admin/api/ms/tasks") \
+                or p.startswith("/admin/api/oq/tasks") or p.startswith("/admin/api/upload/tasks"):
+            # sub-page task lists: upstream + shadow tasks merged in
+            try:
+                base = upstream_get(p + ("?" + u.query if u.query else ""))
+            except Exception:
+                base = {"tasks": []}
+            kinds = {"hf": ("download",), "ms": ("download",),
+                     "oq": ("quantize",), "upload": ("upload",)}
+            key = p.split("/")[3]     # /admin/api/<kind>/tasks
+            upstream_rows = [t for t in (base.get("tasks") or [])
+                             if t.get("kind", key) in kinds[key]]
+            with LOCK:
+                rows = upstream_rows + [dict(t) for t in SHADOW_TASKS.values()
+                                        if t["kind"] == key]
+            rows = sorted(rows, key=lambda t: t.get("started_at", 0), reverse=True)[:50]
+            self._json({"tasks": rows})
+        elif p.startswith("/admin/api/hf/task/") or p.startswith("/admin/api/oq/task/") \
+                or p.startswith("/admin/api/upload/task/"):
+            tid = urllib.parse.unquote(p.rsplit("/", 1)[-1])
+            with LOCK:
+                t = SHADOW_TASKS.get(tid)
+            if t:
+                self._json({"task": dict(t)})
+            else:
+                self._proxy(p)
+        elif p.startswith("/admin/api/model-settings-index"):
+            # what the prune dialog needs: stored ids that no longer exist on disk
+            known = set(MODELS_BASE) | set(MODELS_OVER)
+            with LOCK:
+                stored = STORE.known_model_ids() if STORE else set()
+                alias_of = {mid: s.get("model_alias")
+                            for mid, s in (STORE._settings.items() if STORE else [])}
+            aliases = {a for a in alias_of.values() if a}
+            orphans = sorted(stored - known - aliases)
+            entries = sorted(
+                ({"id": mid, "alias": alias_of.get(mid)} for mid in stored),
+                key=lambda e: e["id"])
+            self._json({"stored": len(stored), "known": len(known),
+                        "orphans": orphans, "entries": entries})
         else:
             self._proxy(p + ("?" + u.query if u.query else ""))
 
@@ -842,6 +887,47 @@ class Handler(BaseHTTPRequestHandler):
             except store_mod.InvalidProfileNameError as e:
                 return self._json({"detail": str(e)}, 400)
             return self._json({"template": rec})
+        # ---- sub-page writes: downloader / quantizer / uploader (shadow) ----
+        if p in ("/admin/api/hf/download", "/admin/api/ms/download"):
+            body = self._read_body() or {}
+            repo = body.get("repo_id") or body.get("model") or "?"
+            tid = start_shadow_task("hf" if "hf" in p else "ms",
+                                    "downloading", repo,
+                                    dest=f"~/.omlx-models/{repo}")
+            return self._json({"task_id": tid, "status": "downloading", "_shadow": True})
+        if p == "/admin/api/oq/start":
+            body = self._read_body() or {}
+            name = body.get("model_name") or (body.get("model_path") or "?").rsplit("/", 1)[-1]
+            tid = start_shadow_task("oq", "quantizing", name,
+                                    dest=f"~/.omlx-models/{name}-oq")
+            return self._json({"task_id": tid, "status": "quantizing", "_shadow": True})
+        if p == "/admin/api/upload/start":
+            body = self._read_body() or {}
+            name = body.get("model_name") or (body.get("model_path") or "?").rsplit("/", 1)[-1]
+            tid = start_shadow_task("upload", "uploading", name,
+                                    dest=body.get("target_repo") or f"hf:{name}")
+            return self._json({"task_id": tid, "status": "uploading", "_shadow": True})
+        if p.endswith("/cancel") and "/admin/api/" in p:
+            tid = urllib.parse.unquote(p.rsplit("/", 2)[-2])
+            with LOCK:
+                t = SHADOW_TASKS.get(tid)
+                if t:
+                    t["status"] = "cancelled"
+            if t:
+                return self._json({"cancelled": True, "task_id": tid})
+        # ---- prune model settings (removes config for removed models) ----
+        if p == "/admin/api/prune-model-settings":
+            body = self._read_body() or {}
+            ids = [str(x) for x in (body.get("ids") or [])]
+            if not ids:
+                return self._json({"detail": "ids required"}, 400)
+            if STORE is None:
+                return self._json({"detail": "store unavailable"}, 503)
+            with LOCK:
+                removed = STORE.prune_settings(ids)
+                removed_t = STORE.prune_templates(removed)
+            emit({"type": "prune", "removed": removed, "templates": removed_t})
+            return self._json({"removed": removed, "removed_templates": removed_t})
         return self._json({"detail": "write endpoint not provided by gateway", "_intercepted": True}, 404)
 
     def do_DELETE(self):
@@ -861,9 +947,40 @@ class Handler(BaseHTTPRequestHandler):
         return self._json({"detail": "write endpoint not provided by gateway", "_intercepted": True}, 404)
 
 
+def tasks_tick():
+    """Advance shadow download/quantize/upload tasks; complete them at 100%."""
+    now = time.time()
+    done = []
+    with LOCK:
+        for t in SHADOW_TASKS.values():
+            if t["status"] not in ("downloading", "quantizing", "uploading", "queued"):
+                continue
+            elapsed = now - t["started_at"]
+            t["progress"] = min(0.99, elapsed / t.get("duration", TASK_DUR))
+            t["status_next"] = None
+            if elapsed >= t.get("duration", TASK_DUR):
+                t["status"] = "complete"
+                t["progress"] = 1.0
+                done.append(dict(t))
+    for t in done:
+        emit({"type": t["kind"], "id": t["id"], "name": t["name"],
+              "status": "complete"})
+
+
+def start_shadow_task(kind, status, name, dest="", size=0):
+    tid = rid()
+    with LOCK:
+        SHADOW_TASKS[tid] = {"id": tid, "kind": kind, "name": name, "dest": dest,
+                             "status": status, "progress": 0.0, "size": size,
+                             "started_at": time.time(), "error": None}
+    emit({"type": kind, "id": tid, "name": name, "status": status})
+    return tid
+
+
 def observer_loop():
     while True:
         observer_tick()
+        tasks_tick()
         time.sleep(1)
 
 

@@ -321,7 +321,8 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
 .admin-table .urow { display: grid; gap: 10px; padding: 8px 2px;
     border-bottom: 1px solid var(--edge); font: 400 12px/1.4 var(--mono);
     align-items: center; }
-.admin-table .urow.admin { grid-template-columns: minmax(0,4fr) 90px 90px minmax(0,3fr) auto; }
+.admin-table .urow.admin { grid-template-columns: minmax(0,3fr) 110px 84px 90px minmax(0,5fr); }
+.admin-table .urow.usage { grid-template-columns: minmax(0,4fr) minmax(0,2fr) 120px auto; }
 .admin-table .urow.settings { grid-template-columns: minmax(0,2fr) minmax(0,5fr); }
 .admin-table .urow.head { color: var(--dim); border-top: 1px solid var(--ink); }
 .admin-table .urow span:not(:first-child) { text-align: right; min-width: 0;
@@ -334,6 +335,93 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
 .dim { color: var(--dim); }
 .state-ok { color: var(--ink); }
 [data-theme="enhanced"] .state-ok { color: #7dffa0; }
+
+/* ---- Navbar dropdowns (signage style: same strip, caret marks the menu) -- */
+.dd { position: relative; display: inline-flex; }
+.dd-btn {
+    background: none; border: 0; border-right: 1px solid var(--edge); cursor: pointer;
+    color: var(--dim); font: 400 11px/1 var(--mono); text-transform: uppercase;
+    letter-spacing: 0.08em; padding: 9px 14px;
+}
+.dd-btn:hover { color: var(--ink); background: var(--edge); }
+.dd-btn.active { color: var(--bg); background: var(--ink); }
+.dd-caret { font-size: 9px; }
+.dd-menu {
+    position: absolute; top: 100%; left: -1px; z-index: 50; min-width: 200px;
+    background: var(--card); border: 1px solid var(--ink);
+    display: flex; flex-direction: column;
+}
+.dd-menu a {
+    color: var(--ink); font: 400 11px/1 var(--mono); text-transform: uppercase;
+    letter-spacing: 0.08em; text-decoration: none; padding: 10px 14px;
+    border-bottom: 1px solid var(--edge); text-align: left;
+}
+.dd-menu a:last-child { border-bottom: 0; }
+.dd-menu a:hover { background: var(--ink); color: var(--bg); }
+
+/* ---- Sortable table heads ---- */
+.admin-table .urow.head span.sortable { cursor: pointer; }
+.admin-table .urow.head span.sortable:hover { color: var(--ink); }
+
+/* ---- Fixed-size state pill: identical width for IDLE/LOADED/LOADING ---- */
+.admin-table .spill {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 84px; height: 20px; flex: 0 0 auto;
+    font: 400 10px/1 var(--mono); letter-spacing: 0.08em;
+    border: 1px solid var(--edge); color: var(--dim);
+}
+.admin-table .spill.on { border-color: var(--ink); color: var(--ink); }
+.admin-table .spill.load { border-color: var(--accent); color: var(--accent); }
+.admin-table .usize { width: 90px; text-align: right !important; }
+
+/* ---- Right group in model rows: settings chips + actions in a shaded box.
+   Separate zone gets separate space (manual: roles get their own space). -- */
+.admin-table .settings-box {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end;
+    background: var(--edge); padding: 4px 6px; min-width: 0;
+}
+[data-theme="enhanced"] .admin-table .settings-box { background: #141414; }
+.admin-table .schip {
+    font: 400 9px/1 var(--mono); letter-spacing: 0.06em;
+    border: 1px solid var(--dim); color: var(--dim); padding: 3px 5px;
+    white-space: nowrap;
+}
+.admin-table .schip.on { border-color: var(--accent); color: var(--accent); }
+[data-theme="light"] .admin-table .schip.on { border-color: var(--red); color: var(--red); }
+.admin-table .rowacts { display: flex; gap: 4px; justify-content: flex-end; flex-wrap: wrap; }
+.se-btn.act { height: 22px; padding: 0 8px; font-size: 10px; }
+
+/* ---- NASA modal (prune confirmation) ---- */
+.modal-overlay {
+    position: fixed; inset: 0; z-index: 80; background: rgba(0, 0, 0, 0.55);
+    display: flex; align-items: flex-start; justify-content: center; padding: 8vh 16px 16px;
+}
+.modal.nasa {
+    background: var(--card); border: 1px solid var(--ink); color: var(--ink);
+    width: min(640px, 100%); max-height: 80vh; display: flex; flex-direction: column;
+    padding: 20px; gap: 12px;
+}
+.modal.nasa h3 { font: 500 13px/1.2 var(--sans); text-transform: uppercase; letter-spacing: 0.1em; }
+.prune-list { overflow: auto; border-top: 1px solid var(--ink); border-bottom: 1px solid var(--edge); }
+.prune-list label.row {
+    display: flex; align-items: center; gap: 8px; padding: 7px 4px;
+    font: 400 12px/1.3 var(--mono); border-bottom: 1px solid var(--edge); cursor: pointer;
+}
+.prune-list label.row:last-child { border-bottom: 0; }
+.prune-list input[type="checkbox"] { accent-color: var(--ink); }
+.modal.nasa .row.buttons { display: flex; gap: 8px; align-items: center; }
+.modal.nasa .row.buttons > span { flex: 1; }
+.modal.nasa .row.buttons button {
+    background: transparent; border: 1px solid var(--edge); color: var(--ink);
+    border-radius: 0; padding: 8px 14px; font: 400 11px/1 var(--mono);
+    text-transform: uppercase; letter-spacing: 0.08em; cursor: pointer;
+}
+.modal.nasa .row.buttons button:hover { background: var(--ink); color: var(--bg); }
+.modal.nasa .row.buttons button.danger { border-color: var(--red); color: var(--red); }
+[data-theme="enhanced"] .modal.nasa .row.buttons button.danger { color: #ff5f5f; border-color: #ff5f5f; }
+.modal.nasa .row.buttons button.danger:hover { background: var(--red); color: #fff; }
+.se-btn.danger { border-color: var(--red); color: var(--red); }
+[data-theme="enhanced"] .se-btn.danger { color: #ff5f5f; border-color: #ff5f5f; }
 
 /* ---- Full-page logs ---- */
 .logs-page { max-height: calc(100vh - 280px); min-height: 400px; }

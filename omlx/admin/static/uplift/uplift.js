@@ -21,25 +21,101 @@ if (!(layout.percentile in PERCENTILES)) layout.percentile = 'p95';
 
 /* ---------------- tabs (hash routing, like the classic dashboard) --------- */
 const TABS = ['status', 'models', 'usage', 'logs', 'settings'];
+const SUBS = {
+    models: ['manager', 'downloader', 'quantizer', 'uploader'],
+    settings: ['global', 'models', 'integrations'],
+};
+const SUB_LABELS = {
+    manager: 'Manager', downloader: 'Downloader', quantizer: 'oQ Quantization',
+    uploader: 'oQ Uploader', global: 'Global Settings', models: 'Model Settings',
+    integrations: 'Integration Settings',
+};
 function currentTab() {
-    const t = (location.hash || '').replace('#', '');
+    const t = (location.hash || '').replace('#', '').split('/')[0];
     return TABS.includes(t) ? t : 'status';
+}
+function currentSub(tab) {
+    const parts = (location.hash || '').replace('#', '').split('/');
+    const list = SUBS[tab] || [];
+    return list.includes(parts[1]) ? parts[1] : list[0];
 }
 function applyTab() {
     const tab = currentTab();
+    const sub = currentSub(tab);
     document.documentElement.dataset.tab = tab;
-    for (const a of $('tabs').children) a.classList.toggle('active', a.dataset.tab === tab);
+    document.documentElement.dataset.sub = sub;
+    for (const a of $('tabs').querySelectorAll('[data-tab]')) {
+        const hit = a.dataset.tab === tab;
+        a.classList.toggle('active', hit);
+        if (a.classList.contains('dd-btn')) a.textContent = '';
+    }
+    // dropdown button labels get rebuilt (textContent above wiped them)
+    for (const [dd, label] of [['dd-models-btn', 'Models'], ['dd-settings-btn', 'Settings']]) {
+        $(dd).textContent = label + ' ';
+        const caret = document.createElement('span');
+        caret.className = 'dd-caret'; caret.textContent = '▾';
+        $(dd).append(caret);
+    }
     for (const card of cards) {
-        const show = (card.dataset.tab || 'status') === tab;
+        const show = (card.dataset.tab || 'status') === tab &&
+            (!card.dataset.sub || card.dataset.sub === sub);
         card.style.display = show ? '' : 'none';
     }
+    // dropdown open state reset on navigation (dropdown click keeps its menu open)
+    for (const m of ['dd-models-menu', 'dd-settings-menu'])
+        if (ddForceOpen !== m) $(m).hidden = true;
+    ddForceOpen = null;
     requestAnimationFrame(resizeCharts);   // charts may have become visible
     if (tab === 'usage') pollUsage();
     if (tab === 'logs') pollLogs();
-    if (tab === 'models') renderModelAdmin();
-    if (tab === 'settings') pollGlobalSettings();
+    if (tab === 'models') {
+        renderModelAdmin();
+        if (sub === 'downloader') initDownloader();
+        if (sub === 'quantizer') renderQuantizer();
+        if (sub === 'uploader') renderUploader();
+    }
+    if (tab === 'settings') {
+        pollGlobalSettings();
+        if (sub === 'models') renderStoredSettings();
+        if (sub === 'integrations') pollIntegrations();
+    }
 }
 addEventListener('hashchange', applyTab);
+
+/* dropdown menus: click opens, outside click / Escape closes */
+let ddForceOpen = null;
+function bindDropdown(btnId, menuId) {
+    const btn = $(btnId), menu = $(menuId);
+    btn.onclick = e => {
+        e.preventDefault();
+        const open = menu.hidden;
+        for (const m of ['dd-models-menu', 'dd-settings-menu']) $(m).hidden = true;
+        if (currentTab() !== btn.dataset.tab) {
+            ddForceOpen = menuId;              // re-open after the tab switch
+            location.hash = '#' + btn.dataset.tab;
+        }
+        menu.hidden = !open;
+    };
+    for (const a of menu.querySelectorAll('a'))
+        a.addEventListener('click', e => {
+            e.preventDefault();
+            menu.hidden = true;
+            location.hash = '#' + btn.dataset.tab + '/' + a.dataset.sub;
+        });
+}
+bindDropdown('dd-models-btn', 'dd-models-menu');
+bindDropdown('dd-settings-btn', 'dd-settings-menu');
+document.addEventListener('click', e => {
+    for (const [btnId, menuId] of [['dd-models-btn', 'dd-models-menu'],
+                                    ['dd-settings-btn', 'dd-settings-menu']]) {
+        if (!$(menuId).hidden && !$(menuId).contains(e.target) && !$(btnId).contains(e.target))
+            $(menuId).hidden = true;
+    }
+});
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { $('dd-models-menu').hidden = true; $('dd-settings-menu').hidden = true; }
+});
+
 // Keyboard: 1–5 jump to tabs (ignored while typing in inputs).
 document.addEventListener('keydown', e => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -1546,82 +1622,153 @@ async function saveEditor() {
 }
 
 let adminModels = [];
+/* ---------------- model manager table (sorting, filters, row chips) ------ */
+let sortKey = (prefs.tableSort && prefs.tableSort.key) || 'name';
+let sortDir = (prefs.tableSort && prefs.tableSort.dir) || 1;      // 1 asc, -1 desc
+
+function saveTableSort() {
+    prefs.tableSort = { key: sortKey, dir: sortDir };
+    localStorage.setItem('omlx-uplift-prefs-v1', JSON.stringify(prefs));
+}
+
+function stateRank(m) { return m.loaded ? 0 : (m.is_loading ? 1 : 2); }
+function sortModels(rows) {
+    const cmp = {
+        name: (a, b) => a.id.localeCompare(b.id),
+        type: (a, b) => (a.model_type || '').localeCompare(b.model_type || '') || a.id.localeCompare(b.id),
+        state: (a, b) => stateRank(a) - stateRank(b) || a.id.localeCompare(b.id),
+        size: (a, b) => ((a.actual_size || a.estimated_size || 0) - (b.actual_size || b.estimated_size || 0)),
+    }[sortKey] || ((a, b) => a.id.localeCompare(b.id));
+    return rows.sort((a, b) => (cmp(a, b) || 0) * sortDir || a.id.localeCompare(b.id));
+}
+
 async function renderModelAdmin(force) {
     let models;
     try { models = (await fetchJson(`${API}/admin/api/models`)).models; }
     catch (_) { $('model-admin').innerHTML = '<div class="empty">API unreachable</div>'; return; }
     adminModels = models;
     if (seModel && !force) return;   // editor open: don't re-render rows over a live form
-    const filter = ($('ma-filter').value || '').toLowerCase();
+    const filter = ($('ma-filter').value || '').toLowerCase().trim();
+    const typeSel = $('ma-type');
+    const type = typeSel.value || '';
     const onlyLoaded = $('ma-only-loaded').checked;
-    const shown = models.filter(m =>
-        (!filter || m.id.toLowerCase().includes(filter)) &&
+    let shown = models.filter(m =>
+        (!filter || m.id.toLowerCase().includes(filter) ||
+         (m.display_name || '').toLowerCase().includes(filter) ||
+         (m.settings && m.settings.model_alias || '').toLowerCase().includes(filter)) &&
+        (!type || (m.model_type || '') === type) &&
         (!onlyLoaded || m.loaded || m.is_loading));
+    shown = sortModels(shown);
     const loadedN = models.filter(m => m.loaded).length;
-    $('models-admin-sub').textContent = `${loadedN}/${models.length} loaded`;
+    $('models-admin-sub').textContent = `${loadedN}/${models.length} loaded \u00b7 ${shown.length} shown`;
     const memUsed = stats ? stats.memUsed : null;
     $('ma-mem').textContent = memUsed !== null
         ? `memory ${C.fmtBytes(memUsed)} / ${C.fmtBytes(stats.memMax)}` : '';
+    if (typeSel.dataset.built !== '1') {
+        const types = [...new Set(models.map(m => m.model_type).filter(Boolean))].sort();
+        for (const t of types) {
+            const o = document.createElement('option');
+            o.value = t; o.textContent = t;
+            typeSel.append(o);
+        }
+        typeSel.dataset.built = '1';
+    }
 
     const table = $('model-admin');
     table.innerHTML = '';
     if (!shown.length) { table.innerHTML = '<div class="empty">No match</div>'; return; }
     const head = document.createElement('div'); head.className = 'urow head admin';
-    for (const h of ['model', 'state', 'size', 'settings', '']) head.append(cell(h));
+    for (const [label, key] of [['model', 'name'], ['type', 'type'], ['state', 'state'],
+                                 ['size', 'size'], ['', null]]) {
+        const c = cell(label + (sortKey === key ? (sortDir === 1 ? ' \u25b2' : ' \u25bc') : ''));
+        if (key) {
+            c.classList.add('sortable');
+            c.onclick = () => {
+                if (sortKey === key) sortDir = -sortDir;
+                else { sortKey = key; sortDir = key === 'size' ? -1 : 1; }
+                saveTableSort();
+                renderModelAdmin(true);
+            };
+        }
+        head.append(c);
+    }
     table.append(head);
     for (const m of shown) {
         const row = document.createElement('div'); row.className = 'urow admin';
         row.dataset.mid = m.id;
-        const name = cell((m.pinned ? '📌 ' : '') + m.id);
+        const name = cell(m.id);
         name.className = 'uname'; name.title = m.model_path || m.id;
-        const state = cell(m.is_loading ? `loading ${m.loading_elapsed_seconds ?? ''}s`
-                        : m.loaded ? 'loaded' : 'unloaded');
-        state.className = m.loaded ? 'state-ok' : (m.is_loading ? 't2' : 'dim');
+        if (m.pinned) name.prepend(cell('PIN \u00b7 '));
+        const typeC = cell(m.model_type || '\u2014'); typeC.className = 'dim';
+        // State: fixed-size text pill, uniform width across the three states
+        const state = document.createElement('span');
+        state.className = 'spill ' + (m.loaded ? 'on' : (m.is_loading ? 'load' : 'off'));
+        state.textContent = m.is_loading ? 'LOADING' : (m.loaded ? 'LOADED' : 'IDLE');
         const size = cell(m.loaded ? (m.actual_size_formatted || C.fmtBytes(m.actual_size || m.estimated_size))
                         : C.fmtBytes(m.estimated_size));
+        size.className = 'usize';
+        // right group: settings chips + actions, separate shaded box
+        const box = document.createElement('span');
+        box.className = 'settings-box';
         const s = m.settings || {};
         const bits = [];
-        if (s.temperature !== null && s.temperature !== undefined) bits.push(`T${s.temperature}`);
-        if (s.max_tokens) bits.push(s.max_tokens);
-        if (s.dflash_enabled) bits.push('dflash');
-        if (s.mtp_enabled) bits.push('mtp');
-        if (s.turboquant_kv_enabled) bits.push('tq4');
-        if (s.reasoning_effort && s.reasoning_effort !== 'auto') bits.push('R:' + s.reasoning_effort);
-        const settings = cell(bits.join(' · ') || '—');
-        settings.className = 'dim';
+        if (s.temperature !== null && s.temperature !== undefined) bits.push(['TEMP ' + s.temperature, '']);
+        if (s.max_tokens) bits.push(['MAX ' + s.max_tokens, '']);
+        if (s.dflash_enabled) bits.push(['DFLASH', 'on']);
+        if (s.mtp_enabled) bits.push(['MTP', 'on']);
+        if (s.turboquant_kv_enabled) bits.push(['TQ', 'on']);
+        if (s.reasoning_effort && s.reasoning_effort !== 'auto') bits.push(['R:' + s.reasoning_effort, '']);
+        if (m.is_favorite) bits.push(['FAV', 'on']);
+        if (m.is_default) bits.push(['DEFAULT', 'on']);
+        if (m.is_hidden) bits.push(['HIDDEN', '']);
+        for (const [txt, cls] of bits) {
+            const chip = document.createElement('span');
+            chip.className = 'schip ' + cls; chip.textContent = txt;
+            box.append(chip);
+        }
         const actions = document.createElement('span');
         actions.className = 'rowacts';
         const btn = (label, fn, title, noRerender) => {
             const b = document.createElement('button');
-            b.className = 'se-btn'; b.textContent = label; b.title = title || label;
+            b.className = 'se-btn act'; b.textContent = label; b.title = title || label;
             b.onclick = async () => {
                 try { await fn(); } catch (err) { toast(`${label} failed: ${err.message}`); }
-                if (!noRerender) renderModelAdmin();
+                if (!noRerender) renderModelAdmin(true);
             };
             return b;
         };
-        actions.append(btn(m.pinned ? '📌' : '📍', () => postModelAction(m.id, m.pinned ? 'unpin' : 'pin'),
-                           m.pinned ? 'Unpin' : 'Pin'));
-        // Favorite / hide / default toggles: same PUT {field: value} the classic rows use.
-        actions.append(btn(m.is_favorite ? '★' : '☆',
+        actions.append(btn(m.pinned ? 'unpin' : 'pin',
+            () => postModelAction(m.id, m.pinned ? 'unpin' : 'pin'),
+            m.pinned ? 'Unpin from top' : 'Pin to top'));
+        actions.append(btn(m.is_favorite ? 'unfav' : 'fav',
             () => putModelSettings(m.id, { is_favorite: !m.is_favorite }),
             m.is_favorite ? 'Unfavorite' : 'Favorite'));
-        actions.append(btn(m.is_hidden ? '🙈' : '👁',
+        actions.append(btn(m.is_hidden ? 'show' : 'hide',
             () => putModelSettings(m.id, { is_hidden: !m.is_hidden }),
-            m.is_hidden ? 'Unhide' : 'Hide'));
-        if (m.is_default) actions.append(cell('·def·').cloneNode(true));
-        else actions.append(btn('def', () => putModelSettings(m.id, { is_default: true }),
-                                'Make default model'));
-        actions.append(btn('⚙', () => openEditor(m.id), 'Edit settings', true));
+            m.is_hidden ? 'Unhide' : 'Hide from pickers'));
+        if (!m.is_default) actions.append(btn('def', () => putModelSettings(m.id, { is_default: true }),
+                                             'Make default model'));
+        actions.append(btn('edit', () => openEditor(m.id), 'Edit settings', true));
         if (m.loaded) actions.append(btn('unload', () => postModelAction(m.id, 'unload')));
         else actions.append(btn('load', () => postModelAction(m.id, 'load')));
-        row.append(name, state, size, settings, actions);
+        box.append(actions);
+        row.append(name, typeC, state, size, box);
         table.append(row);
     }
 }
 function cell(text) { const s = document.createElement('span'); s.textContent = text; return s; }
-$('ma-filter').oninput = () => renderModelAdmin();
-$('ma-only-loaded').onchange = () => renderModelAdmin();
+function emptyMsg(host, msg) {   // error text goes through textContent, never innerHTML
+    host.textContent = '';
+    const d = document.createElement('div'); d.className = 'empty';
+    d.textContent = msg; host.append(d);
+}
+$('ma-filter').oninput = () => {
+    // the filter felt dead while the editor was open: close the editor on filter
+    if (seModel) closeEditor();
+    renderModelAdmin(true);
+};
+$('ma-type').onchange = () => { if (seModel) closeEditor(); renderModelAdmin(true); };
+$('ma-only-loaded').onchange = () => { if (seModel) closeEditor(); renderModelAdmin(true); };
 
 /* ---------------- usage (Usage tab) ---------------- */
 function createUsageChart() {
@@ -1795,8 +1942,273 @@ async function pollGlobalSettings() {
             body.append(row);
         }
     } catch (err) {
-        $('gs-body').innerHTML = `<div class="empty">global-settings not served by gateway yet (${err.message})</div>`;
+        emptyMsg($('gs-body'), 'global-settings not served by gateway yet (' + err.message + ')');
     }
+}
+
+/* ---------------- models sub-pages: downloader / quantizer / uploader ---- */
+async function postJson(url, body) {
+    const r = await fetch(url, { method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body || {}) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || r.status + ' ' + r.statusText);
+    return d;
+}
+function taskRow(t) {
+    const row = document.createElement('div'); row.className = 'urow usage';
+    const st = (t.status || 'unknown').toUpperCase();
+    const pct = Math.round((t.progress ?? 0) * 100);
+    row.append(cell(t.name || t.repo_id || t.model || '—'),
+               cell(t.dest || t.target_repo || ''),
+               cell(st + (t.status === 'downloading' || t.status === 'quantizing' || t.status === 'uploading'
+                   ? ` ${pct}%` : '')),
+               cell(t.error || (t.size_formatted || C.fmtBytes(t.size || 0))));
+    return row;
+}
+function renderTasks(hostId, kind) {
+    fetchJson(`${API}/admin/api/${kind}/tasks`).then(d => {
+        const host = $(hostId);
+        host.innerHTML = '';
+        const tasks = d.tasks || [];
+        if (!tasks.length) { host.innerHTML = '<div class="empty">No tasks</div>'; return; }
+        let active = false;
+        for (const t of tasks) {
+            const r = taskRow(t);
+            if (['downloading', 'quantizing', 'uploading', 'queued'].includes(t.status)) {
+                active = true;
+                const x = cell('cancel');
+                x.className = 'sortable';
+                x.onclick = () => postJson(`${API}/admin/api/${kind}/cancel/${t.id}`, {})
+                    .then(() => renderTasks(hostId, kind)).catch(e => toast('cancel: ' + e.message));
+                r.append(x);
+            }
+            host.append(r);
+        }
+        if (active) {   // gentle live progress while an entry is still running
+            setTimeout(() => {
+                const card = host.closest('section');
+                if (card && card.style.display !== 'none' && !document.hidden)
+                    renderTasks(hostId, kind);
+            }, 2000);
+        }
+    }).catch(e => emptyMsg($(hostId), e.message));
+}
+
+let dlInit = false;
+function initDownloader() {
+    if (!dlInit) {
+        dlInit = true;
+        const go = () => {
+            const q = $('dl-q').value.trim();
+            if (!q) return;
+            $('dl-sub').textContent = 'searching…';
+            fetchJson(`${API}/admin/api/hf/search?q=${encodeURIComponent(q)}&limit=30`).then(d => {
+                $('dl-sub').textContent = `${(d.models || []).length} results`;
+                const host = $('dl-results'); host.innerHTML = '';
+                if (!d.models || !d.models.length) { host.innerHTML = '<div class="empty">No results</div>'; return; }
+                for (const m of d.models) {
+                    const row = document.createElement('div'); row.className = 'urow usage';
+                    const name = cell(m.repo_id); name.className = 'uname';
+                    row.append(name, cell(m.downloads != null ? `${m.downloads} dl` : ''),
+                               cell(m.size_formatted || ''));
+                    const act = document.createElement('span'); act.className = 'rowacts';
+                    const b = document.createElement('button');
+                    b.className = 'se-btn act'; b.textContent = 'download';
+                    b.onclick = () => postJson(`${API}/admin/api/hf/download`,
+                        { repo_id: m.repo_id }).then(r => {
+                            toast('download queued (shadow): ' + (r.task_id || r.id || ''));
+                            renderTasks('dl-tasks', 'hf');
+                        }).catch(e => toast('download: ' + e.message));
+                    act.append(b); row.append(act);
+                    host.append(row);
+                }
+            }).catch(e => { $('dl-sub').textContent = e.message; });
+        };
+        $('dl-go').onclick = go;
+        $('dl-q').addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
+    }
+    renderTasks('dl-tasks', 'hf');
+}
+
+function renderQuantizer() {
+    const f = ($('qz-filter').value || '').toLowerCase();
+    fetchJson(`${API}/admin/api/oq/models`).then(d => {
+        const host = $('qz-models'); host.innerHTML = '';
+        const models = (d.models || []).filter(m => !f || m.name.toLowerCase().includes(f));
+        $('qz-sub').textContent = `${models.length} local models`;
+        if (!models.length) { host.innerHTML = '<div class="empty">No match</div>'; return; }
+        for (const m of models) {
+            const row = document.createElement('div'); row.className = 'urow usage';
+            const name = cell(m.name); name.className = 'uname';
+            row.append(name, cell(m.model_type || ''), cell(m.size_formatted || C.fmtBytes(m.size || 0)));
+            const act = document.createElement('span'); act.className = 'rowacts';
+            const b = document.createElement('button');
+            b.className = 'se-btn act'; b.textContent = 'quantize';
+            b.title = 'Run oQ quantization (shadow)';
+            b.onclick = () => postJson(`${API}/admin/api/oq/start`,
+                { model_path: m.path, model_name: m.name }).then(r => {
+                    toast('quantize queued (shadow): ' + (r.task_id || r.id || ''));
+                    renderTasks('qz-tasks', 'oq');
+                }).catch(e => toast('quantize: ' + e.message));
+            act.append(b); row.append(act);
+            host.append(row);
+        }
+    }).catch(e => { emptyMsg($('qz-models'), e.message); });
+    renderTasks('qz-tasks', 'oq');
+}
+$('qz-filter').oninput = () => renderQuantizer();
+
+function renderUploader() {
+    const f = ($('up-filter').value || '').toLowerCase();
+    fetchJson(`${API}/admin/api/oq/models`).then(d => {
+        const host = $('up-models'); host.innerHTML = '';
+        const models = (d.models || []).filter(m => !f || m.name.toLowerCase().includes(f));
+        $('up-sub').textContent = `${models.length} uploadable models`;
+        if (!models.length) { host.innerHTML = '<div class="empty">No match</div>'; return; }
+        for (const m of models) {
+            const row = document.createElement('div'); row.className = 'urow usage';
+            const name = cell(m.name); name.className = 'uname';
+            row.append(name, cell(m.model_type || ''), cell(m.size_formatted || C.fmtBytes(m.size || 0)));
+            const act = document.createElement('span'); act.className = 'rowacts';
+            const b = document.createElement('button');
+            b.className = 'se-btn act'; b.textContent = 'upload';
+            b.title = 'Upload to Hugging Face (shadow — needs a token in the classic UI to really run)';
+            b.onclick = () => postJson(`${API}/admin/api/upload/start`,
+                { model_path: m.path, model_name: m.name }).then(r => {
+                    toast('upload queued (shadow): ' + (r.task_id || r.id || ''));
+                    renderTasks('up-tasks', 'upload');
+                }).catch(e => toast('upload: ' + e.message));
+            act.append(b); row.append(act);
+            host.append(row);
+        }
+    }).catch(e => { emptyMsg($('up-models'), e.message); });
+    renderTasks('up-tasks', 'upload');
+}
+$('up-filter').oninput = () => renderUploader();
+
+/* ---------------- settings sub-pages: stored model settings + prune ----- */
+let storedIndex = null;
+async function renderStoredSettings() {
+    let idx, templates = [];
+    try {
+        idx = await fetchJson(`${API}/admin/api/model-settings-index`);
+        try { templates = (await fetchJson(`${API}/admin/api/profile-templates`)).templates; } catch (_) {}
+    } catch (err) { emptyMsg($('ms-body'), err.message); return; }
+    storedIndex = idx;
+    const known = new Set(adminModels.map(m => m.id));
+    const orphan = new Set(idx.orphans || []);
+    const f = ($('ms-filter').value || '').toLowerCase();
+    $('ms-sub').textContent = `${idx.stored} stored · ${idx.orphans.length} orphaned`;
+    const host = $('ms-body'); host.innerHTML = '';
+    const rows = (idx.entries || []).filter(e => !f || e.id.toLowerCase().includes(f));
+    for (const e of rows) {
+        const row = document.createElement('div'); row.className = 'urow usage';
+        const name = cell(e.id); name.className = 'uname';
+        row.append(name, cell(e.alias || ''),
+                   cell(orphan.has(e.id) ? 'ORPHANED' : (known.has(e.id) ? 'KNOWN' : 'EXTERNAL')));
+        host.append(row);
+    }
+    if (!rows.length) host.innerHTML = '<div class="empty">No match</div>';
+    const th = $('ms-templates'); th.innerHTML = '';
+    if (!templates.length) th.innerHTML = '<div class="empty">No global templates</div>';
+    for (const t of templates) {
+        const row = document.createElement('div'); row.className = 'urow usage';
+        const name = cell(t.display_name || t.name); name.className = 'uname';
+        row.append(name, cell(t.description || ''), cell((t.updated_at || '').slice(0, 10)));
+        th.append(row);
+    }
+}
+$('ms-filter').oninput = () => renderStoredSettings();
+
+async function openPruneDialog() {
+    let orphans = [];
+    try {
+        const idx = await fetchJson(`${API}/admin/api/model-settings-index`);
+        orphans = idx.orphans || [];
+    } catch (err) { toast('prune check failed: ' + err.message); return; }
+    if (!orphans.length) { toast('Nothing to prune — every stored id maps to a model on disk.'); return; }
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    const box = document.createElement('div');
+    box.className = 'modal nasa';
+    const h = document.createElement('h3');
+    h.textContent = `Prune model settings (${orphans.length})`;
+    const sub = document.createElement('div');
+    sub.className = 'se-hint';
+    sub.textContent = 'Stored configuration for models that no longer exist on disk. '
+        + 'Removed entries are deleted from the sandbox model_settings.json.';
+    const list = document.createElement('div');
+    list.className = 'prune-list';
+    const checks = orphans.map(id => {
+        const lbl = document.createElement('label');
+        lbl.className = 'row';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.checked = true; cb.value = id;
+        lbl.append(cb, cell(id));
+        list.append(lbl);
+        return cb;
+    });
+    const bar = document.createElement('div');
+    bar.className = 'row buttons';
+    const all = document.createElement('button');
+    all.textContent = 'Select all';
+    all.onclick = () => checks.forEach(c => c.checked = true);
+    const none = document.createElement('button');
+    none.textContent = 'Select none';
+    none.onclick = () => checks.forEach(c => c.checked = false);
+    const cancel = document.createElement('button');
+    cancel.textContent = 'Cancel';
+    cancel.onclick = () => overlay.remove();
+    const doIt = document.createElement('button');
+    doIt.className = 'danger';
+    doIt.textContent = 'Prune selected';
+    doIt.onclick = async () => {
+        const ids = checks.filter(c => c.checked).map(c => c.value);
+        if (!ids.length) { toast('Nothing selected'); return; }
+        try {
+            const r = await postJson(`${API}/admin/api/prune-model-settings`, { ids });
+            toast(`Pruned ${r.removed.length} setting record(s)` +
+                (r.removed_templates && r.removed_templates.length
+                    ? `, ${r.removed_templates.length} template(s)` : ''));
+            overlay.remove();
+            renderStoredSettings();
+            renderModelAdmin(true);
+        } catch (err) { toast('prune failed: ' + err.message); }
+    };
+    bar.append(all, none, document.createElement('span'), cancel, doIt);
+    box.append(h, sub, list, bar);
+    overlay.append(box);
+    overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+    document.addEventListener('keydown', function esc(e) {
+        if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', esc); }
+    });
+    document.body.append(overlay);
+}
+$('btn-prune').onclick = openPruneDialog;
+
+function pollIntegrations() {
+    fetchJson(`${API}/admin/api/global-settings`).then(d => {
+        const body = $('is-body'); body.innerHTML = '';
+        const secs = [];
+        const walk = (obj, prefix) => {
+            for (const [k, v] of Object.entries(obj || {})) {
+                if (v && typeof v === 'object' && !Array.isArray(v)) walk(v, prefix ? prefix + '.' + k : k);
+                else secs.push([prefix ? prefix + '.' + k : k, Array.isArray(v) ? v.join(', ') : String(v)]);
+            }
+        };
+        walk(d.integrations || {}, '');
+        walk(d.claude_code || {}, 'claude_code.');
+        walk(d.mcp || {}, 'mcp.');
+        $('is-sub').textContent = `${secs.length} keys · read-only via gateway`;
+        if (!secs.length) { body.innerHTML = '<div class="empty">No integration settings exposed</div>'; return; }
+        for (const [k, v] of secs) {
+            const row = document.createElement('div'); row.className = 'urow settings';
+            const kc = cell(k); kc.className = 'uname';
+            const vc = cell(v.length > 120 ? v.slice(0, 117) + '…' : v); vc.className = 'dim';
+            row.append(kc, vc); body.append(row);
+        }
+    }).catch(e => { emptyMsg($('is-body'), e.message); });
 }
 
 /* ---------------- boot ---------------- */
