@@ -22,13 +22,13 @@ if (!(layout.percentile in PERCENTILES)) layout.percentile = 'p95';
 /* ---------------- tabs (hash routing, like the classic dashboard) --------- */
 const TABS = ['status', 'models', 'usage', 'logs', 'settings'];
 const SUBS = {
-    models: ['manager', 'downloader', 'quantizer', 'uploader'],
-    settings: ['global', 'models', 'integrations'],
+    models: ['manager', 'downloader', 'quantizer', 'uploader', 'helper', 'settings'],
+    settings: ['global'],
 };
 const SUB_LABELS = {
     manager: 'Manager', downloader: 'Downloader', quantizer: 'oQ Quantization',
-    uploader: 'oQ Uploader', global: 'Global Settings', models: 'Model Settings',
-    integrations: 'Integration Settings',
+    uploader: 'oQ Uploader', helper: 'Helper Models', settings: 'Settings',
+    global: 'Server Settings',
 };
 function currentTab() {
     const t = (location.hash || '').replace('#', '').split('/')[0];
@@ -49,9 +49,10 @@ function applyTab() {
         a.classList.toggle('active', hit);
         if (a.classList.contains('dd-btn')) a.textContent = '';
     }
-    // dropdown button labels get rebuilt (textContent above wiped them)
-    for (const [dd, label] of [['dd-models-btn', 'Models'], ['dd-settings-btn', 'Settings']]) {
-        $(dd).textContent = label + ' ';
+    // dropdown button label gets rebuilt (textContent above wiped it)
+    {
+        const dd = 'dd-models-btn';
+        $(dd).textContent = 'Models ';
         const caret = document.createElement('span');
         caret.className = 'dd-caret'; caret.textContent = '▾';
         $(dd).append(caret);
@@ -62,8 +63,7 @@ function applyTab() {
         card.style.display = show ? '' : 'none';
     }
     // dropdown open state reset on navigation (dropdown click keeps its menu open)
-    for (const m of ['dd-models-menu', 'dd-settings-menu'])
-        if (ddForceOpen !== m) $(m).hidden = true;
+    if (ddForceOpen !== 'dd-models-menu') $('dd-models-menu').hidden = true;
     ddForceOpen = null;
     requestAnimationFrame(resizeCharts);   // charts may have become visible
     if (tab === 'usage') pollUsage();
@@ -73,23 +73,17 @@ function applyTab() {
         if (sub === 'downloader') initDownloader();
         if (sub === 'quantizer') renderQuantizer();
         if (sub === 'uploader') renderUploader();
+        if (sub === 'helper') renderHelperModels();
+        if (sub === 'settings') renderStoredSettings();
     }
-    if (tab === 'settings') {
-        pollGlobalSettings();
-        if (sub === 'models') renderStoredSettings();
-        if (sub === 'integrations') pollIntegrations();
-    }
+    if (tab === 'settings') pollGlobalSettings();
 }
 addEventListener('hashchange', applyTab);
 
 /* dropdown menus: hover opens, click toggles, outside click / Escape closes */
 let ddForceOpen = null;
 const ddTimers = {};
-function ddOpen(menuId, open) {
-    for (const m of ['dd-models-menu', 'dd-settings-menu'])
-        if (m !== menuId) $(m).hidden = true;
-    $(menuId).hidden = !open;
-}
+function ddOpen(menuId, open) { $(menuId).hidden = !open; }
 function bindDropdown(btnId, menuId) {
     const btn = $(btnId), menu = $(menuId);
     const wrap = btn.closest('.dd');
@@ -120,16 +114,13 @@ function bindDropdown(btnId, menuId) {
         });
 }
 bindDropdown('dd-models-btn', 'dd-models-menu');
-bindDropdown('dd-settings-btn', 'dd-settings-menu');
 document.addEventListener('click', e => {
-    for (const [btnId, menuId] of [['dd-models-btn', 'dd-models-menu'],
-                                    ['dd-settings-btn', 'dd-settings-menu']]) {
-        if (!$(menuId).hidden && !$(menuId).contains(e.target) && !$(btnId).contains(e.target))
-            $(menuId).hidden = true;
-    }
+    const menu = $('dd-models-menu');
+    if (!menu.hidden && !menu.contains(e.target) && !$('dd-models-btn').contains(e.target))
+        menu.hidden = true;
 });
 document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') { $('dd-models-menu').hidden = true; $('dd-settings-menu').hidden = true; }
+    if (e.key === 'Escape') $('dd-models-menu').hidden = true;
 });
 
 // Keyboard: 1–5 jump to tabs (ignored while typing in inputs).
@@ -1931,37 +1922,60 @@ $('logs-dl').onclick = () => {
 };
 
 /* ---------------- settings (Settings tab: read-only server preview) ------ */
+/* Server settings: read-only, split into the same sections as the
+   classic Settings page (Server / Model / Resource Management / Cache /
+   Generation Defaults / MCP / Usage & Network / Auth / Interface), with
+   the same key grouping the template uses. Integrations live on the
+   Helper Models page instead (MarkItDown box). */
+const GS_SECTIONS = [
+    ['Server', d => ({ host: d.server?.host, port: d.server?.port,
+        log_level: d.server?.log_level, sse_keepalive_mode: d.server?.sse_keepalive_mode,
+        burst_decode_mode: d.server?.burst_decode_mode,
+        server_aliases: (d.server?.server_aliases || []).join(', '),
+        base_path: d.base_path })],
+    ['Model', d => ({ model_dirs: (d.model?.model_dirs || []).join(', '),
+        model_fallback: d.model?.model_fallback,
+        hide_helper_models: d.model?.hide_helper_models,
+        hf_cache_enabled: d.huggingface?.hf_cache_enabled,
+        hf_cache_path: d.huggingface?.hf_cache_path })],
+    ['Resource Management', d => Object.assign(
+        { idle_timeout_seconds: d.idle_timeout?.idle_timeout_seconds },
+        d.scheduler || {}, d.memory || {})],
+    ['Cache', d => Object.assign({}, d.cache || {})],
+    ['Generation Defaults', d => Object.assign({}, d.sampling || {})],
+    ['MCP', d => Object.assign({}, d.mcp || {})],
+    ['Usage & Network', d => Object.assign({ usage_history: d.usage?.usage_history },
+        d.network || {})],
+    ['Auth', d => Object.assign({}, d.auth || {})],
+    ['Interface', d => Object.assign({}, d.ui || {})],
+];
+
 async function pollGlobalSettings() {
-    try {
-        const d = await fetchJson(`${API}/admin/api/global-settings`);
-        const body = $('gs-body');
-        body.innerHTML = '';
-        const flat = [];
-        const walk = (obj, prefix) => {
-            for (const [k, v] of Object.entries(obj || {})) {
-                if (v && typeof v === 'object' && !Array.isArray(v)) walk(v, prefix ? prefix + '.' + k : k);
-                else flat.push([prefix ? prefix + '.' + k : k, Array.isArray(v) ? v.join(', ') : String(v)]);
-            }
-        };
-        walk(d.settings || d, '');
-        $('gs-sub').textContent = `${flat.length} keys · read-only via gateway`;
-        if (!flat.length) { body.innerHTML = '<div class="empty">No settings exposed by this API</div>'; return; }
-        const head = document.createElement('div'); head.className = 'urow head settings';
-        head.append(cell('key'), cell('value'));
-        body.append(head);
-        for (const [k, v] of flat.slice(0, 400)) {
+    let d;
+    try { d = await fetchJson(`${API}/admin/api/global-settings`); }
+    catch (err) { emptyMsg($('gs-body'), 'global-settings not served by gateway (' + err.message + ')'); return; }
+    const body = $('gs-body');
+    body.textContent = '';
+    let n = 0;
+    for (const [title, pick] of GS_SECTIONS) {
+        const rows = Object.entries(pick(d) || {}).filter(([, v]) => v !== undefined);
+        if (!rows.length) continue;
+        const h = document.createElement('div');
+        h.className = 'gs-title'; h.textContent = title;
+        body.append(h);
+        for (const [k, v] of rows) {
+            n++;
             const row = document.createElement('div'); row.className = 'urow settings';
             const kc = cell(k); kc.className = 'uname';
-            const vc = cell(v.length > 120 ? v.slice(0, 117) + '…' : v);
+            const sv = Array.isArray(v) ? v.join(', ') : v === null ? '—' : String(v);
+            const vc = cell(sv.length > 120 ? sv.slice(0, 117) + '…' : sv);
             vc.className = 'dim';
             row.append(kc, vc);
             body.append(row);
         }
-    } catch (err) {
-        emptyMsg($('gs-body'), 'global-settings not served by gateway yet (' + err.message + ')');
     }
+    $('gs-sub').textContent = `${n} keys · read-only via gateway`;
 }
-
 /* ---------------- models sub-pages: downloader / quantizer / uploader ---- */
 async function postJson(url, body) {
     const r = await fetch(url, { method: 'POST',
@@ -2423,14 +2437,14 @@ async function renderStoredSettings() {
     const known = new Set(adminModels.map(m => m.id));
     const orphan = new Set(idx.orphans || []);
     const f = ($('ms-filter').value || '').toLowerCase();
-    $('ms-sub').textContent = `${idx.stored} stored · ${idx.orphans.length} orphaned`;
+    $('ms-sub').textContent = `${idx.stored} stored · ${idx.orphans.length} missing`;
     const host = $('ms-body'); host.innerHTML = '';
     const rows = (idx.entries || []).filter(e => !f || e.id.toLowerCase().includes(f));
     for (const e of rows) {
         const row = document.createElement('div'); row.className = 'urow usage';
         const name = cell(e.id); name.className = 'uname';
         row.append(name, cell(e.alias || ''),
-                   cell(orphan.has(e.id) ? 'ORPHANED' : (known.has(e.id) ? 'KNOWN' : 'EXTERNAL')));
+                   cell(orphan.has(e.id) ? 'MISSING' : (known.has(e.id) ? 'PRESENT' : 'EXTERNAL')));
         host.append(row);
     }
     if (!rows.length) host.innerHTML = '<div class="empty">No match</div>';
@@ -2511,28 +2525,79 @@ async function openPruneDialog() {
 }
 $('btn-prune').onclick = openPruneDialog;
 
-function pollIntegrations() {
-    fetchJson(`${API}/admin/api/global-settings`).then(d => {
-        const body = $('is-body'); body.innerHTML = '';
-        const secs = [];
-        const walk = (obj, prefix) => {
-            for (const [k, v] of Object.entries(obj || {})) {
-                if (v && typeof v === 'object' && !Array.isArray(v)) walk(v, prefix ? prefix + '.' + k : k);
-                else secs.push([prefix ? prefix + '.' + k : k, Array.isArray(v) ? v.join(', ') : String(v)]);
-            }
+
+/* ---------------- models sub-page: helper models + MarkItDown box -------- */
+async function renderHelperModels() {
+    let models;
+    try { models = (await fetchJson(`${API}/admin/api/models`)).models; }
+    catch (e) { emptyMsg($('hm-list'), e.message); return; }
+    const mk = models.filter(m => m.engine_type === 'markitdown' || m.model_type === 'markitdown');
+    const helpers = models.filter(m => !mk.includes(m) && (m.is_helper ||
+        /dflash|assistant/i.test(m.id)));
+    $('hm-sub').textContent = `${helpers.length} helpers · ${mk.length} markitdown`;
+
+    // MarkItDown: special box at the top (separate role gets separate space)
+    const box = $('hm-markitdown');
+    box.textContent = '';
+    let integ = {};
+    try { integ = (await fetchJson(`${API}/admin/api/global-settings`)).integrations || {}; } catch (_) {}
+    for (const m of mk) {
+        const card = document.createElement('div');
+        card.className = 'mk-box';
+        const title = document.createElement('div');
+        title.className = 'mk-title';
+        title.textContent = 'MarkItDown document converter';
+        const state = document.createElement('span');
+        state.className = 'spill ' + (m.loaded ? 'on' : 'off');
+        state.textContent = m.loaded ? 'LOADED' : 'IDLE';
+        const meta = cell(`${m.engine_type} · ${m.actual_size_formatted || C.fmtBytes(m.actual_size || 0)}`);
+        meta.className = 'dim';
+        const head = document.createElement('div');
+        head.className = 'mk-head';
+        head.append(title, state, meta);
+        card.append(head);
+        const cfg = document.createElement('div');
+        cfg.className = 'mk-cfg dim';
+        const bits = [];
+        if (integ.markitdown_enabled !== undefined)
+            bits.push('enabled: ' + integ.markitdown_enabled);
+        if (integ.markitdown_expose_model !== undefined)
+            bits.push('exposed as model: ' + integ.markitdown_expose_model);
+        if (integ.markitdown_max_file_size_mb !== undefined)
+            bits.push('max file: ' + integ.markitdown_max_file_size_mb + ' MB');
+        if (integ.markitdown_max_files_per_request !== undefined)
+            bits.push('max files/request: ' + integ.markitdown_max_files_per_request);
+        if (integ.markitdown_pdf_processing_engine)
+            bits.push('pdf engine: ' + integ.markitdown_pdf_processing_engine);
+        cfg.textContent = bits.join('  \u00b7  ') || 'integration settings unavailable';
+        card.append(cfg);
+        box.append(card);
+    }
+
+    const host = $('hm-list');
+    host.textContent = '';
+    if (!helpers.length) { host.innerHTML = '<div class="empty">No helper models</div>'; return; }
+    for (const m of helpers) {
+        const row = document.createElement('div'); row.className = 'urow usage';
+        const name = cell(m.id); name.className = 'uname';
+        name.title = m.model_path || m.id;
+        const kind = /dflash/i.test(m.id) ? 'DFLASH DRAFTER'
+            : /assistant/i.test(m.id) ? 'ASSISTANT (MTP)' : 'HELPER';
+        const state = document.createElement('span');
+        state.className = 'spill ' + (m.loaded ? 'on' : (m.is_loading ? 'load' : 'off'));
+        state.textContent = m.is_loading ? 'LOADING' : (m.loaded ? 'LOADED' : 'IDLE');
+        row.append(name, cell(m.model_type || ''), cell(kind),
+                   cell(m.actual_size_formatted || C.fmtBytes(m.actual_size || m.estimated_size || 0)), state);
+        const act = document.createElement('span'); act.className = 'rowacts';
+        const b = document.createElement('button');
+        b.className = 'se-btn act'; b.textContent = m.loaded ? 'unload' : 'load';
+        b.onclick = async () => {
+            try { await postModelAction(m.id, m.loaded ? 'unload' : 'load'); renderHelperModels(); }
+            catch (err) { toast('load failed: ' + err.message); }
         };
-        walk(d.integrations || {}, '');
-        walk(d.claude_code || {}, 'claude_code.');
-        walk(d.mcp || {}, 'mcp.');
-        $('is-sub').textContent = `${secs.length} keys · read-only via gateway`;
-        if (!secs.length) { body.innerHTML = '<div class="empty">No integration settings exposed</div>'; return; }
-        for (const [k, v] of secs) {
-            const row = document.createElement('div'); row.className = 'urow settings';
-            const kc = cell(k); kc.className = 'uname';
-            const vc = cell(v.length > 120 ? v.slice(0, 117) + '…' : v); vc.className = 'dim';
-            row.append(kc, vc); body.append(row);
-        }
-    }).catch(e => { emptyMsg($('is-body'), e.message); });
+        act.append(b); row.append(act);
+        host.append(row);
+    }
 }
 
 /* ---------------- boot ---------------- */

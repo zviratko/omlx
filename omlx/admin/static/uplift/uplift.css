@@ -463,6 +463,22 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
     background: transparent; border: 1px solid var(--edge); color: var(--ink);
     border-radius: 0; height: 32px; padding: 0 8px; font: 400 12px/1 var(--mono); }
 
+/* ---- Server settings section titles (classic page grouping) ------------- */
+.gs-title {
+    font: 500 11px/1 var(--sans); text-transform: uppercase; letter-spacing: 0.12em;
+    color: var(--ink); border-top: 1px solid var(--ink);
+    padding: 14px 0 6px; margin-top: 8px;
+}
+.admin-table .gs-title:first-child { margin-top: 0; }
+
+/* ---- MarkItDown special box (its own zone above the helper list) --------- */
+.mk-box { border: 1px solid var(--ink); padding: 14px; display: flex;
+    flex-direction: column; gap: 8px; }
+.mk-head { display: flex; align-items: center; gap: 12px; }
+.mk-title { font: 500 12px/1 var(--sans); text-transform: uppercase;
+    letter-spacing: 0.1em; flex: 1; }
+.mk-cfg { font: 400 11px/1.5 var(--mono); }
+
 /* ---- Full-page logs ---- */
 .logs-page { max-height: calc(100vh - 280px); min-height: 400px; }
 

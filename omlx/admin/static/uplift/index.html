@@ -23,18 +23,13 @@
                 <a href="#models" data-sub="downloader">Downloader</a>
                 <a href="#models" data-sub="quantizer">oQ Quantization</a>
                 <a href="#models" data-sub="uploader">oQ Uploader</a>
+                <a href="#models" data-sub="helper">Helper Models</a>
+                <a href="#models" data-sub="settings">Settings</a>
             </span>
         </span>
         <a href="#usage" data-tab="usage">Usage</a>
         <a href="#logs" data-tab="logs">Logs</a>
-        <span class="dd" id="dd-settings">
-            <button class="dd-btn" data-tab="settings" id="dd-settings-btn">Settings <span class="dd-caret">▾</span></button>
-            <span class="dd-menu" id="dd-settings-menu" hidden>
-                <a href="#settings" data-sub="global">Global Settings</a>
-                <a href="#settings" data-sub="models">Model Settings</a>
-                <a href="#settings" data-sub="integrations">Integration Settings</a>
-            </span>
-        </span>
+        <a href="#settings" data-tab="settings">Server Settings</a>
     </nav>
     <span class="chip" id="chip-uptime">—</span>
     <span class="chip" id="chip-device">—</span>
@@ -238,11 +233,19 @@
         </div></section>
 
     <!-- ============ SETTINGS ============ -->
-    <section class="card wide" data-id="settings-page" data-cols="3" data-tab="settings" data-sub="global" data-full="1">
-        <h2><button class="collapse" title="Collapse">–</button>Global settings <span class="right" id="gs-sub">read-only preview</span></h2>
+    <section class="card wide" data-id="settings-page" data-cols="3" data-tab="settings" data-full="1">
+        <h2><button class="collapse" title="Collapse">–</button>Server settings <span class="right" id="gs-sub">read-only preview</span></h2>
         <div class="card-body"><div id="gs-body" class="admin-table"><div class="empty">—</div></div></div></section>
 
-    <section class="card wide" data-id="model-settings-page" data-cols="3" data-tab="settings" data-sub="models" data-full="1">
+    <section class="card wide" data-id="helper-page" data-cols="3" data-tab="models" data-sub="helper" data-full="1">
+        <h2><button class="collapse" title="Collapse">–</button>Helper models <span class="right" id="hm-sub"></span></h2>
+        <div class="card-body">
+            <div id="hm-markitdown"></div>
+            <h3 style="margin:16px 0 6px">Drafters &amp; assistants (DFlash, VLM/assistant MTP)</h3>
+            <div id="hm-list" class="admin-table"><div class="empty">—</div></div>
+        </div></section>
+
+    <section class="card wide" data-id="model-settings-page" data-cols="3" data-tab="models" data-sub="settings" data-full="1">
         <h2><button class="collapse" title="Collapse">–</button>Model settings store <span class="right" id="ms-sub"></span></h2>
         <div class="card-body">
             <div class="filterbar">
@@ -256,10 +259,6 @@
             <h3 style="margin:16px 0 6px">Global templates</h3>
             <div id="ms-templates" class="admin-table"><div class="empty">—</div></div>
         </div></section>
-
-    <section class="card wide" data-id="integrations-page" data-cols="3" data-tab="settings" data-sub="integrations" data-full="1">
-        <h2><button class="collapse" title="Collapse">–</button>Integration settings <span class="right" id="is-sub"></span></h2>
-        <div class="card-body"><div id="is-body" class="admin-table"><div class="empty">—</div></div></div></section>
 
 </main>
 </div>
