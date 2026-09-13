@@ -44,6 +44,13 @@ function normalize(raw) {
         pressure: PRESSURES.includes(p.pressure_level) ? p.pressure_level : null,
         cacheBytes: num(c.total_size_bytes), cacheMaxBytes: num(c.disk_max_bytes),
         cachePercent: clampRatio(num(c.total_size_bytes), num(c.disk_max_bytes)),
+        // Per-model runtime cache rows (SSD cache + hot cache sizes).
+        cacheModels: (Array.isArray(c.models) ? c.models : []).map(cm => ({
+            id: String(cm.id || '?'),
+            totalBytes: num(cm.total_size_bytes),
+            hotBytes: num(cm.hot_cache_size_bytes),
+            hotMaxBytes: num(cm.hot_cache_max_bytes),
+        })),
         models: (Array.isArray(a.models) ? a.models : []).map(m => ({
             id: String(m.id || 'Unnamed model'),
             size: num(m.actual_size),

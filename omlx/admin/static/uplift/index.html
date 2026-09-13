@@ -14,8 +14,16 @@
 
 <header class="top">
     <div class="logo"><span class="dot" id="status-dot"></span> oMLX <span style="opacity:.45;font-weight:300">Uplift</span></div>
+    <nav class="tabs" id="tabs">
+        <a href="#status" data-tab="status">Status</a>
+        <a href="#models" data-tab="models">Models</a>
+        <a href="#usage" data-tab="usage">Usage</a>
+        <a href="#logs" data-tab="logs">Logs</a>
+        <a href="#settings" data-tab="settings">Settings</a>
+    </nav>
     <span class="chip" id="chip-uptime">—</span>
     <span class="chip" id="chip-device">—</span>
+    <span class="chip" id="chip-gateway" title="Mock gateway status">—</span>
     <span class="spacer"></span>
     <button class="icon-btn" id="btn-motion" title="Toggle animations">✦</button>
     <button class="icon-btn" id="btn-theme" title="Cycle theme: auto / day / night / enhanced">◐</button>
@@ -43,26 +51,27 @@
 
 <main id="grid">
 
-    <section class="card" data-id="gen" data-cols="1">
+    <!-- ============ STATUS ============ -->
+    <section class="card" data-id="gen" data-cols="1" data-tab="status">
         <h2><button class="collapse" title="Collapse">–</button>Generation<span class="right"></span></h2>
         <div class="card-body">
             <div class="stat-value" id="v-gentps">—</div><div class="stat-label">tokens / s</div>
         </div></section>
 
-    <section class="card" data-id="prefill" data-cols="1">
+    <section class="card" data-id="prefill" data-cols="1" data-tab="status">
         <h2><button class="collapse" title="Collapse">–</button>Prefill<span class="right"></span></h2>
         <div class="card-body">
             <div class="stat-value t2" id="v-prefilltps">—</div><div class="stat-label">tokens / s</div>
         </div></section>
 
-    <section class="card" data-id="requests" data-cols="1">
+    <section class="card" data-id="requests" data-cols="1" data-tab="status">
         <h2><button class="collapse" title="Collapse">–</button>Requests<span class="right"></span></h2>
         <div class="card-body">
             <div class="stat-value" id="v-requests">—</div>
             <div class="stat-label">served · <span id="v-active2">—</span> active · <span id="v-waiting2">—</span> waiting</div>
         </div></section>
 
-    <section class="card" data-id="tokens" data-cols="1">
+    <section class="card" data-id="tokens" data-cols="1" data-tab="status">
         <h2><button class="collapse" title="Collapse">–</button>Tokens<span class="right"></span></h2>
         <div class="card-body">
             <div class="stat-value t2" id="v-tokens">—</div>
@@ -70,15 +79,15 @@
             <div class="stat-sub" id="v-tokens-sub" style="margin-top:6px"></div>
         </div></section>
 
-    <section class="card" data-id="chart-tps" data-cols="2">
+    <section class="card" data-id="chart-tps" data-cols="2" data-tab="status">
         <h2><button class="collapse" title="Collapse">–</button>Throughput <span class="right" id="chart-tps-window"></span></h2>
         <div class="card-body"><div class="chart-box" id="chart-tps"></div></div></section>
 
-    <section class="card" data-id="chart-mem" data-cols="2">
-        <h2><button class="collapse" title="Collapse">–</button>Memory pressure <span class="right" id="mem-label"></span></h2>
+    <section class="card" data-id="chart-mem" data-cols="2" data-tab="status">
+        <h2><button class="collapse" title="Collapse">–</button>Memory &amp; cache <span class="right" id="mem-label"></span></h2>
         <div class="card-body"><div class="chart-box" id="chart-mem"></div></div></section>
 
-    <section class="card" data-id="reqstats" data-cols="2">
+    <section class="card" data-id="reqstats" data-cols="2" data-tab="status">
         <h2><button class="collapse" title="Collapse">–</button>Request sizes
             <span class="right"><select id="opt-percentile" title="Percentile"></select></span></h2>
         <div class="card-body">
@@ -93,31 +102,7 @@
             <div class="stat-sub" id="reqstats-note" style="margin-top:10px"></div>
         </div></section>
 
-    <section class="card" data-id="feed" data-cols="1">
-        <h2><button class="collapse" title="Collapse">–</button>Events</h2>
-        <div class="card-body"><div class="feed" id="feed"><div class="empty">Watching…</div></div></div></section>
-
-    <section class="card" data-id="reqfeed" data-cols="2">
-        <h2><button class="collapse" title="Collapse">–</button>Requests <span class="right" id="reqfeed-sub"></span></h2>
-        <div class="card-body"><div id="reqfeed"><div class="empty">No requests yet</div></div></div></section>
-
-    <section class="card" data-id="models-admin" data-cols="2">
-        <h2><button class="collapse" title="Collapse">–</button>Models <span class="right" id="models-count"></span></h2>
-        <div class="card-body">
-            <div id="model-list"><div class="empty">No models loaded</div></div>
-            <div id="model-admin" class="usage-table"></div>
-            <div id="settings-editor" hidden>
-                <h2 style="margin-top:14px">Settings — <span id="se-model"></span></h2>
-                <div id="se-fields" class="pair"></div>
-                <div style="display:flex;gap:8px;margin-top:12px">
-                    <button class="se-btn" id="se-save">Save</button>
-                    <button class="se-btn" id="se-cancel">Cancel</button>
-                    <span id="se-msg" class="stat-sub" style="align-self:center"></span>
-                </div>
-            </div>
-        </div></section>
-
-    <section class="card" data-id="cache" data-cols="1">
+    <section class="card" data-id="cache" data-cols="1" data-tab="status">
         <h2><button class="collapse" title="Collapse">–</button>Cache</h2>
         <div class="card-body">
             <div class="stat-value" id="v-cacheeff" style="font-size:26px">—</div>
@@ -126,26 +111,92 @@
             <div class="stat-sub" id="cache-sub" style="margin-top:8px"></div>
         </div></section>
 
-    <section class="card" data-id="live" data-cols="1">
+    <section class="card" data-id="live" data-cols="1" data-tab="status">
         <h2><button class="collapse" title="Collapse">–</button>In-flight <span class="right" id="live-count"></span></h2>
         <div class="card-body"><div id="live-list"><div class="empty">Idle</div></div></div></section>
 
-    <section class="card" data-id="usage" data-cols="2">
-        <h2><button class="collapse" title="Collapse">–</button>Usage
-            <span class="right"><select id="opt-usage-range" title="Range"></select> <span id="usage-sub"></span></span></h2>
-        <div class="card-body">
-            <div class="heat" id="heat"></div>
-            <div class="heat-legend"><span>00:00</span><span style="flex:1"></span><span>23:00</span></div>
-            <div id="usage-models" class="usage-table"></div>
-        </div></section>
+    <section class="card" data-id="reqfeed" data-cols="1" data-tab="status">
+        <h2><button class="collapse" title="Collapse">–</button>Request feed <span class="right" id="reqfeed-sub"></span></h2>
+        <div class="card-body"><div id="reqfeed"><div class="empty">No requests yet</div></div></div></section>
 
-    <section class="card" data-id="feed" data-cols="1">
+    <section class="card" data-id="feed" data-cols="1" data-tab="status">
         <h2><button class="collapse" title="Collapse">–</button>Events</h2>
         <div class="card-body"><div class="feed" id="feed"><div class="empty">Watching…</div></div></div></section>
 
-    <section class="card" data-id="logs" data-cols="2">
+    <!-- ============ MODELS ============ -->
+    <section class="card wide" data-id="models-admin-page" data-cols="3" data-tab="models" data-full="1">
+        <h2><button class="collapse" title="Collapse">–</button>Model manager <span class="right" id="models-admin-sub"></span></h2>
+        <div class="card-body">
+            <div class="filterbar">
+                <input type="search" id="ma-filter" placeholder="filter by name…">
+                <label class="row"><input type="checkbox" id="ma-only-loaded"> loaded only</label>
+                <span class="spacer"></span>
+                <span class="stat-sub" id="ma-mem"></span>
+            </div>
+            <div id="model-admin" class="admin-table"></div>
+        </div></section>
+
+    <section class="card wide" id="settings-editor-page" data-id="settings-editor-page" data-cols="3" data-tab="models" data-full="1" hidden>
+        <h2><button class="collapse" title="Collapse">–</button>Settings — <span id="se-model"></span>
+            <span class="right"><button class="se-btn" id="se-close2">✕ close</button></span></h2>
+        <div class="card-body">
+            <div id="se-fields" class="pair"></div>
+            <div style="display:flex;gap:8px;margin-top:12px">
+                <button class="se-btn" id="se-save">Save</button>
+                <button class="se-btn" id="se-cancel">Cancel</button>
+                <span id="se-msg" class="stat-sub" style="align-self:center"></span>
+            </div>
+        </div></section>
+
+    <!-- ============ USAGE ============ -->
+    <section class="card wide" data-id="usage-page" data-cols="4" data-tab="usage" data-full="1">
+        <h2><button class="collapse" title="Collapse">–</button>Usage
+            <span class="right"><select id="opt-usage-range" title="Range"></select> <span id="usage-sub"></span></span></h2>
+        <div class="card-body">
+            <div class="pair" id="usage-tiles">
+                <div><div class="stat-value" id="v-u-req" style="font-size:22px">—</div><div class="stat-label">requests</div></div>
+                <div><div class="stat-value" id="v-u-tok" style="font-size:22px">—</div><div class="stat-label">total tokens</div></div>
+                <div><div class="stat-value" id="v-u-prompt" style="font-size:22px">—</div><div class="stat-label">prompt tokens</div></div>
+                <div><div class="stat-value" id="v-u-compl" style="font-size:22px">—</div><div class="stat-label">completion tokens</div></div>
+            </div>
+            <h3 style="margin:16px 0 6px">Hourly tokens</h3>
+            <div class="chart-box" id="chart-usage" style="height:200px"></div>
+            <h3 style="margin:16px 0 6px">Heatmap</h3>
+            <div class="heat" id="heat"></div>
+            <div class="heat-legend"><span>00:00</span><span style="flex:1"></span><span>23:00</span></div>
+            <h3 style="margin:16px 0 6px">Per model</h3>
+            <div id="usage-models" class="admin-table"></div>
+        </div></section>
+
+    <!-- ============ LOGS ============ -->
+    <section class="card wide" data-id="logs-page" data-cols="4" data-tab="logs" data-full="1">
         <h2><button class="collapse" title="Collapse">–</button>Logs <span class="right" id="logs-sub"></span></h2>
-        <div class="card-body"><pre class="logs" id="logs">—</pre></div></section>
+        <div class="card-body">
+            <div class="filterbar">
+                <select id="logs-file"></select>
+                <select id="logs-level">
+                    <option value="">all levels</option>
+                    <option value="TRACE">TRACE</option>
+                    <option value="DEBUG">DEBUG</option>
+                    <option value="INFO">INFO</option>
+                    <option value="WARNING">WARNING</option>
+                    <option value="ERROR">ERROR</option>
+                </select>
+                <input type="search" id="logs-grep" placeholder="grep…">
+                <select id="logs-lines">
+                    <option>100</option><option selected>300</option><option>1000</option>
+                </select>
+                <label class="row"><input type="checkbox" id="logs-follow" checked> follow</label>
+                <span class="spacer"></span>
+                <button class="se-btn" id="logs-dl">download</button>
+            </div>
+            <pre class="logs logs-page" id="logs">—</pre>
+        </div></section>
+
+    <!-- ============ SETTINGS ============ -->
+    <section class="card wide" data-id="settings-page" data-cols="3" data-tab="settings" data-full="1">
+        <h2><button class="collapse" title="Collapse">–</button>Server settings <span class="right" id="gs-sub">read-only preview</span></h2>
+        <div class="card-body"><div id="gs-body" class="admin-table"><div class="empty">—</div></div></div></section>
 
 </main>
 </div>

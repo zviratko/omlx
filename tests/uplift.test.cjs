@@ -184,3 +184,13 @@ test('normalize passes through server request_stats when present', () => {
     const plain = snap(raw());
     assert.strictEqual(plain.requestStats, null);   // real backend: absent
 });
+
+test('normalize extracts per-model runtime cache rows', () => {
+    const s = snap(raw({ runtime_cache: { models: [
+        { id: 'm1', total_size_bytes: 5e9, hot_cache_size_bytes: 3e9, hot_cache_max_bytes: 10e9 },
+        { id: 'm2' },
+    ] } }));
+    assert.equal(s.cacheModels.length, 2);
+    assert.equal(s.cacheModels[0].hotBytes, 3e9);
+    assert.equal(s.cacheModels[1].hotBytes, null);
+});

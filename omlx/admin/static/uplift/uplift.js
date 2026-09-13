@@ -1,21 +1,45 @@
-/* Uplift UI controller. Read-only: polls admin APIs, animates, never writes config. */
+/* Uplift UI controller. Reads via the mock gateway (default :11437), which
+   proxies real oMLX and intercepts writes into a shadow layer. ?api= overrides. */
 (function () {
 'use strict';
 const C = window.UpliftCore;
 const $ = id => document.getElementById(id);
 
-/* API base: same origin when hosted by omlx itself, else the local helper
-   (page served on :11436 during testing; override with ?api=). */
-const API = new URLSearchParams(location.search).get('api') ||
-    (location.port === '11435' || location.port === '' ? '' : 'http://127.0.0.1:11435');
+/* API base: the gateway is the single source for the UI. It reads real oMLX
+   and layers simulated data. Override with ?api= (e.g. =http://127.0.0.1:11435
+   to bypass, or empty when served by oMLX itself in future hosting). */
+const qp = new URLSearchParams(location.search);
+const API = qp.has('api') ? qp.get('api') : 'http://127.0.0.1:11437';
 
 const prefs = C.loadPrefs(localStorage);
 const layout = C.loadLayout(localStorage);
 const tracker = C.createRequestTracker(2000);
 let stats = null, prevStats = null, failCount = 0, timer = null;
-let usageRange = 'today', usageTimer = null, logsTimer = null;
+let usageRange = qp.get('range') || 'today';
 const PERCENTILES = { p50: 50, p90: 90, p95: 95, p99: 99 };
 if (!(layout.percentile in PERCENTILES)) layout.percentile = 'p95';
+
+/* ---------------- tabs (hash routing, like the classic dashboard) --------- */
+const TABS = ['status', 'models', 'usage', 'logs', 'settings'];
+function currentTab() {
+    const t = (location.hash || '').replace('#', '');
+    return TABS.includes(t) ? t : 'status';
+}
+function applyTab() {
+    const tab = currentTab();
+    document.documentElement.dataset.tab = tab;
+    for (const a of $('tabs').children) a.classList.toggle('active', a.dataset.tab === tab);
+    for (const card of cards) {
+        const show = (card.dataset.tab || 'status') === tab;
+        card.style.display = show ? '' : 'none';
+    }
+    requestAnimationFrame(resizeCharts);   // charts may have become visible
+    if (tab === 'usage') pollUsage();
+    if (tab === 'logs') pollLogs();
+    if (tab === 'models') renderModelAdmin();
+    if (tab === 'settings') pollGlobalSettings();
+}
+addEventListener('hashchange', applyTab);
 
 /* ---------------- theme & motion ---------------- */
 const THEME_CYCLE = ['auto', 'light', 'dark', 'enhanced'];
@@ -43,7 +67,7 @@ $('btn-motion').onclick = () => {
     C.savePrefs(localStorage, prefs); applyPrefs();
 };
 
-/* ---------------- layout engine (popover + collapse + columns + DnD) ---------------- */
+/* ---------------- layout engine (popover + collapse + columns + DnD) ------ */
 const cards = [...document.querySelectorAll('.card')];
 const DEFAULT_ORDER = cards.map(c => c.dataset.id);   // markup document order = truth
 
@@ -52,6 +76,7 @@ function applyOrder() {
     const known = new Set(DEFAULT_ORDER);
     const ordered = layout.order.filter(id => known.has(id));
     const rest = DEFAULT_ORDER.filter(id => !ordered.includes(id));
+    // Sort within tab groups so cross-tab drags cannot interleave tabs.
     for (const id of [...ordered, ...rest]) {
         const card = grid.querySelector(`.card[data-id="${id}"]`);
         if (card) grid.append(card);
@@ -61,38 +86,35 @@ function readOrder() {
     layout.order = [...$('grid').querySelectorAll('.card')].map(c => c.dataset.id);
 }
 for (const card of cards) {
-    // Grip handle for dragging.
     const grip = document.createElement('button');
     grip.className = 'grip'; grip.title = 'Drag to move'; grip.textContent = '⠿';
     card.querySelector('h2').prepend(grip);
     card.querySelector('.collapse').after(grip);   // order: collapse, grip, title
 }
 
-/* Pointer-Events drag (NOT HTML5 DnD: unreliable in Safari/WebKit).
-   Window-level move/up listeners survive DOM rearrangement; the source slot
-   stays occupied by a marker; the node moves once on pointerup. */
+/* Pointer-Events drag (NOT HTML5 DnD: unreliable in Safari/WebKit). */
 (function enableDrag() {
     const DRAG_THRESHOLD = 4;
-    let drag = null;   // {card, marker, offsetX, offsetY, startX, startY, active}
+    let drag = null;
     const cleanup = () => {
         if (!drag) return;
         drag.card.classList.remove('dragging');
         drag.card.style.cssText = '';
+        drag.card.style.display = '';           // reflow safety after move
         drag.marker?.remove();
         document.body.classList.remove('dragging-in-progress');
         drag = null;
     };
-
     document.addEventListener('pointerdown', e => {
         const grip = e.target.closest('.grip');
         if (!grip || e.button !== 0) return;
         const card = grip.closest('.card');
         const rect = card.getBoundingClientRect();
         drag = { card, marker: null, offsetX: e.clientX - rect.left, offsetY: e.clientY - rect.top,
-                 startX: e.clientX, startY: e.clientY, width: rect.width, height: rect.height, active: false };
+                 startX: e.clientX, startY: e.clientY, width: rect.width, height: rect.height,
+                 tab: card.dataset.tab || 'status', active: false };
         e.preventDefault();
     });
-
     window.addEventListener('pointermove', e => {
         if (!drag) return;
         if (!drag.active) {
@@ -104,35 +126,35 @@ for (const card of cards) {
             drag.marker.className = 'drop-marker';
             drag.card.after(drag.marker);
             drag.card.classList.add('dragging');
+            drag.card.style.position = 'fixed';
             drag.card.style.width = drag.width + 'px';
             drag.card.style.height = drag.height + 'px';
+            drag.card.style.zIndex = 50;
         }
         drag.card.style.left = (e.clientX - drag.offsetX) + 'px';
         drag.card.style.top = (e.clientY - drag.offsetY) + 'px';
-        // Insertion point: before the first card whose center is below/right of
-        // the pointer; append at end when past all of them.
         const grid = $('grid');
         let target = null;
         for (const other of grid.querySelectorAll('.card:not(.dragging)')) {
+            if ((other.dataset.tab || 'status') !== drag.tab) continue;  // same tab only
+            if (other.style.display === 'none') continue;
             const r = other.getBoundingClientRect();
             if (e.clientY < r.top + r.height / 2 ||
                 (e.clientY < r.bottom && e.clientX < r.left + r.width / 2)) {
                 target = other; break;
             }
         }
-        grid.insertBefore(drag.marker, target);   // target null => append
-        // Edge auto-scroll.
+        grid.insertBefore(drag.marker, target);
         const edge = 60;
         if (e.clientY < edge) window.scrollBy(0, -12);
         else if (e.clientY > innerHeight - edge) window.scrollBy(0, 12);
     }, true);
-
-    const finish = e => {
+    const finish = () => {
         if (!drag) return;
         if (drag.active && drag.marker) {
             drag.card.classList.remove('dragging');
             drag.card.style.cssText = '';
-            drag.marker.replaceWith(drag.card);   // land where the marker sits
+            drag.marker.replaceWith(drag.card);
             readOrder();
             C.saveLayout(localStorage, layout);
         }
@@ -159,12 +181,11 @@ function applyLayout() {
     for (const card of cards) {
         const id = card.dataset.id;
         const want = Number(card.dataset.cols) || 1;
-        card.style.setProperty('--span', C.clampSpan(want, layout.cols));
+        card.style.setProperty('--span', card.dataset.full ? layout.cols : C.clampSpan(want, layout.cols));
         const collapsed = layout.collapsed[id] === true;
         card.classList.toggle('is-collapsed', collapsed);
         card.querySelector('.collapse').textContent = collapsed ? '+' : '–';
     }
-    // Collapsed cards hide their charts; uPlot needs a resize when they return.
     requestAnimationFrame(resizeCharts);
     C.saveLayout(localStorage, layout);
 }
@@ -182,7 +203,7 @@ $('opt-window').onchange = e => { layout.chartWindowSec = Number(e.target.value)
 fillSelect($('opt-interval'), C.LAYOUT_INTERVALS.map(ms => [ms, `${ms / 1000} s`]), layout.intervalMs);
 $('opt-interval').onchange = e => { layout.intervalMs = Number(e.target.value); C.saveLayout(localStorage, layout); restartPolling(); };
 $('opt-hide-debug').checked = layout.logsHideDebug;
-$('opt-hide-debug').onchange = e => { layout.logsHideDebug = e.target.checked; C.saveLayout(localStorage, layout); pollLogs(); };
+$('opt-hide-debug').onchange = e => { layout.logsHideDebug = e.target.checked; C.saveLayout(localStorage, layout); };
 $('btn-layout-reset').onclick = () => {
     Object.assign(layout, C.LAYOUT_DEFAULTS, { collapsed: {} });
     applyLayout();
@@ -202,7 +223,7 @@ document.addEventListener('click', e => {
         $('layout-pop').hidden = true;
 });
 
-/* ---------------- animated counters (lightweight rAF tween) ---------------- */
+/* ---------------- animated counters (lightweight rAF tween) --------------- */
 const counters = {};
 function counter(elId, format) {
     counters[elId] = { el: $(elId), format, value: null, raf: 0 };
@@ -235,12 +256,17 @@ counter('v-compl-avg',  v => C.fmtCompact(v));
 counter('v-compl-pct',  v => C.fmtCompact(v));
 counter('v-ttft',       v => C.fmtNumber(v));
 counter('v-errrate',    v => v.toFixed(2) + '%');
+counter('v-u-req',      v => C.fmtNumber(v));
+counter('v-u-tok',      v => C.fmtCompact(v));
+counter('v-u-prompt',   v => C.fmtCompact(v));
+counter('v-u-compl',    v => C.fmtCompact(v));
 
 /* ---------------- charts ---------------- */
-const axisFont = '10px ui-monospace, SFMono-Regular, Menlo, monospace'; // uPlot 1.6.32: plain string only
-const tpsData = [[], [], []];   // time, gen, prefill
-const memData = [[], []];       // time, percent
-const MAX_POINTS = 4000;        // covers 1h at 1s polls plus usage headroom
+const axisFont = '10px ui-monospace, SFMono-Regular, Menlo, monospace';
+const tpsData = [[], [], []];        // time, generation tok/s, prefill tok/s
+const memData = [[], [], [], [], [], []];  // time, memory %, cache GB, hot1, hot2, hot3
+const MAX_POINTS = 4000;
+let cacheSeriesIds = [];             // top-3 models currently drawn on mem chart
 
 function chartColors() {
     const cs = getComputedStyle(document.documentElement);
@@ -258,39 +284,42 @@ function windowedData(data) {
 function seriesValue(v) {
     return v === null || v === undefined ? '—' : C.fmtCompact(v);
 }
-function line(label, colorVar, fill) {
+function line(label, colorVar, fill, scale) {
     const col = chartColors()[colorVar];
-    return { label, stroke: col, width: 2, fill: fill ? col + '22' : undefined,
+    return { label, scale: scale || 'y', stroke: col, width: 2,
+             fill: fill ? col + '22' : undefined,
              points: { show: false }, value: seriesValue };
 }
-function baseOpts(yLabel, specs, legendHook) {
+function xAxis(col) {
+    return { stroke: col.dim, width: 1, size: 42, font: axisFont,
+             values: (s, t) => t.map(ts => new Date(ts).toLocaleTimeString('en-GB',
+                 { hour: '2-digit', minute: '2-digit', ...(layout.chartWindowSec < 900 ? { second: '2-digit' } : {}) })) };
+}
+function yAxis(col, opts) {
+    // size includes tick labels AND the rotated axis label; 40 was too tight
+    // for the right axes and the label overlapped the ticks.
+    return Object.assign({ stroke: col.dim, size: 40, font: axisFont, grid: true, gap: 6 }, opts || {});
+}
+function baseOpts(specs, axes, legendHook) {
     const col = chartColors();
     return {
         width: 0, height: 240, padding: [6, 8, 0, 0],
         cursor: { drag: { x: false, y: false }, points: { show: true, size: 6, fill: col.dim } },
-        // Values always visible: latest when idle, hovered point on mouse-over.
         legend: { show: true, top: true, live: false, labels: { fontSize: '10px' } },
-        scales: { x: { time: true }, y: { auto: true } },
-        axes: [
-            { stroke: col.dim, width: 1, size: 42, font: axisFont,
-              values: (s, t) => t.map(ts => new Date(ts).toLocaleTimeString('en-GB',
-                  { hour: '2-digit', minute: '2-digit', ...(layout.chartWindowSec < 900 ? { second: '2-digit' } : {}) })) },
-            { stroke: col.dim, size: 40, font: axisFont, grid: true, label: yLabel },
-        ],
-        // hooks must be present at construction for the cursor subscription to register.
+        scales: Object.assign({ x: { time: true }, y: { auto: true } }, axes.scales || {}),
+        axes: [xAxis(col), ...axes.yAxes],
         hooks: legendHook ? { cursor: { subscribe: [legendHook] } } : undefined,
-        series: [{}, ...specs.map(s => line(s[0], s[1], s[2]))],
+        series: [{}, ...specs],
     };
 }
 /* Legend value updater: latest sample when idle, hovered sample on mouse-over.
-   With live:false uPlot renders no value cells, so we append our own to each
-   series row and fill them. Reads c.data — the windowed slice uPlot currently
-   displays — so indices always match c.cursor.idx. */
+   With live:false uPlot renders no value cells (vendor CSS hides them), so we
+   append our own to each series row and fill them. Reads c.data — the windowed
+   slice currently displayed — so indices always match c.cursor.idx. */
 function legendUpdater() {
     return c => {
         const rows = [...c.root.querySelectorAll('.u-legend .u-series')];
         if (!rows.length) return;
-        // Row 0 is series 0; uPlot also prepends a cursor row when live — handle both.
         const hasTimeRow = rows[0] && rows[0].querySelector('.u-label')?.textContent === 'Time';
         const seriesRows = hasTimeRow ? rows.slice(1) : rows;
         const idx = c.cursor.idx;
@@ -303,41 +332,59 @@ function legendUpdater() {
                 cell.className = 'u-value';
                 row.append(cell);
             }
-            const col = c.data[sIdx + 1];
-            const v = col && col.length ? col[i] : null;
+            const colData = c.data[sIdx + 1];
+            const v = colData && colData.length ? colData[i] : null;
             cell.textContent = (v === null || v === undefined) ? '—' : seriesValue(v);
         });
     };
 }
-let tpsChart = null, memChart = null;
+let tpsChart = null, memChart = null, usageChart = null;
 function createCharts() {
-    if (tpsChart) { tpsChart.destroy(); memChart.destroy(); }
-    tpsChart = new uPlot(
-        baseOpts('tok/s', [['generation', 'blue', true], ['prefill', 'gold', false]], legendUpdater()),
-        windowedData(tpsData), $('chart-tps'));
-    const memOpts = baseOpts('memory %', [['used', 'blue', true]], legendUpdater());
+    if (tpsChart) { tpsChart.destroy(); memChart.destroy(); tpsChart = memChart = null; }
+    const col = chartColors();
+    // Dual Y: left = generation tok/s, right = prefill tok/s (prefill >> gen).
+    const tpsOpts = baseOpts(
+        [line('generation', 'blue', true, 'y'), line('prefill', 'gold', false, 'y2')],
+        { scales: { y2: { auto: true } },
+          yAxes: [Object.assign(yAxis(col, { grid: false, label: 'gen tok/s', stroke: col.blue }), { scale: 'y' }),
+                  Object.assign(yAxis(col, { side: 1, grid: false, label: 'prefill tok/s', stroke: col.gold, size: 58 }), { scale: 'y2' })] },
+        legendUpdater());
+    // y2 axis sits on the right; uPlot axis 'side': 1=right of grid, 3=left.
+    tpsChart = new uPlot(tpsOpts, windowedData(tpsData), $('chart-tps'));
+    // Memory % left; runtime cache GB (total + top-3 models' hot cache) right.
+    const memSpecs = [line('model memory', 'blue', true, 'y'),
+                      line('cache total', 'gold', false, 'y2')];
+    for (let i = 0; i < cacheSeriesIds.length; i++) {
+        const s = line('hot:' + cacheSeriesIds[i], ['gold', 'blue', 'dim'][i], false, 'y2');
+        s.dash = [4, 4];
+        memSpecs.push(s);
+    }
+    const memOpts = baseOpts(memSpecs,
+        { scales: { y2: { auto: true } },
+          yAxes: [Object.assign(yAxis(col, { label: 'memory %', stroke: col.blue }), { scale: 'y' }),
+                  Object.assign(yAxis(col, { side: 1, grid: false, label: 'cache GB', stroke: col.gold, size: 58 }), { scale: 'y2' })] },
+        legendUpdater());
     memOpts.scales.y = { range: [0, 100] };
     memChart = new uPlot(memOpts, windowedData(memData), $('chart-mem'));
-    resizeCharts();   // fresh uPlots start at width 0; size them to their boxes
+    resizeCharts();
     redrawCharts();
 }
 function redrawCharts() {
     if (!tpsChart) return;
-    // resetScale=true (default): frozen auto-scales from the empty first draw
-    // would otherwise pin the y-range at 0..1 forever and render blank charts.
     tpsChart.setData(windowedData(tpsData));
     memChart.setData(windowedData(memData));
-    // setData does not fire the cursor hook: refresh legends explicitly.
     legendUpdater()(tpsChart); legendUpdater()(memChart);
     const shown = windowedData(tpsData)[0].length;
     $('chart-tps-window').textContent = shown > 1 ? `${layout.chartWindowSec >= 3600 ? '1h' : layout.chartWindowSec / 60 + 'm'} window` : '';
 }
-function rerenderChartsTheme() { createCharts(); }
+function rerenderChartsTheme() { createCharts(); if (usageChart) createUsageChart(); }
 function resizeCharts() {
     if (!tpsChart) return;
     const w1 = $('chart-tps').clientWidth, w2 = $('chart-mem').clientWidth;
     if (w1 > 0) tpsChart.setSize({ width: w1, height: 240 });
     if (w2 > 0) memChart.setSize({ width: w2, height: 240 });
+    const w3 = $('chart-usage')?.clientWidth;
+    if (usageChart && w3 > 0) usageChart.setSize({ width: w3, height: 200 });
 }
 new ResizeObserver(resizeCharts).observe($('grid'));
 
@@ -365,8 +412,8 @@ function toast(text, ms) {
     setTimeout(() => t.remove(), ms || 3200);
 }
 function flashCard(id, tone) {
-    const el = $(id); if (!el || motionOff()) return;
-    const card = el.closest('.card'); if (!card) return;
+    const el = $(id); if (!el) return;
+    const card = el.closest('.card'); if (!card || motionOff()) return;
     card.classList.add(`flash-${tone}`);
     setTimeout(() => card.classList.remove(`flash-${tone}`), 1200);
 }
@@ -410,39 +457,31 @@ function render(s) {
         : '';
     $('mem-label').textContent = s.memPercent !== null ? `${s.memPercent.toFixed(1)}% ${s.pressure || ''}` : '';
 
-    renderModels(s);
     renderLive(s);
     renderRequestStats(s);
 
     // Chart buffers (window pruning happens at draw time).
     tpsData[0].push(s.time); tpsData[1].push(s.genTps); tpsData[2].push(s.prefillTps);
     while (tpsData[0].length > MAX_POINTS) { tpsData[0].shift(); tpsData[1].shift(); tpsData[2].shift(); }
+    const cacheGB = s.cacheBytes === null ? null : +(s.cacheBytes / 1e9).toFixed(3);
+    // Per-model hot cache (GB): keep a stable top-3 set; rebuild chart on change.
+    const hotSorted = (s.cacheModels || []).slice()
+        .sort((a, b) => (b.hotBytes || 0) - (a.hotBytes || 0)).slice(0, 3);
+    const hotIds = hotSorted.map(m => m.id);
+    if (hotIds.join('|') !== cacheSeriesIds.join('|')) {
+        cacheSeriesIds = hotIds;
+        // Reset per-model columns so old series values do not mislabel.
+        for (let ci = 3; ci < memData.length; ci++) memData[ci] = memData[0].map(() => null);
+        createCharts();
+    }
     memData[0].push(s.time); memData[1].push(s.memPercent === null ? null : +s.memPercent.toFixed(2));
-    while (memData[0].length > MAX_POINTS) { memData[0].shift(); memData[1].shift(); }
+    memData[2].push(cacheGB);
+    for (let i = 0; i < 3; i++) {
+        const m = hotSorted[i];
+        memData[3 + i].push(m && m.hotBytes !== null ? +(m.hotBytes / 1e9).toFixed(3) : null);
+    }
+    while (memData[0].length > MAX_POINTS) for (const col of memData) col.shift();
     redrawCharts();
-}
-
-function renderModels(s) {
-    const list = $('model-list');
-    $('models-count').textContent = s.models.length ? `${s.models.length} loaded` : '';
-    if (!s.models.length) {
-        if (!list.querySelector('.empty')) list.innerHTML = '<div class="empty">No models loaded</div>';
-        return;
-    }
-    list.innerHTML = '';
-    for (const m of s.models) {
-        const row = document.createElement('div'); row.className = 'model-row';
-        const badge = document.createElement('span');
-        badge.className = `badge ${m.state}`; badge.textContent = m.state;
-        const name = document.createElement('span');
-        name.className = 'model-name'; name.title = m.id; name.textContent = (m.pinned ? '📌 ' : '') + m.id;
-        const meta = document.createElement('span');
-        meta.className = 'model-meta';
-        meta.textContent = [m.sizeText, m.active ? `${m.active}a` : '', m.waiting ? `${m.waiting}w` : '']
-            .filter(Boolean).join(' · ');
-        row.append(badge, name, meta);
-        list.append(row);
-    }
 }
 
 function renderLive(s) {
@@ -476,14 +515,15 @@ function renderLive(s) {
     }
 }
 
-/* Request sizes: prefer server-side full-population stats (mock endpoint or
-   future real backend); fall back to client-side session tracker when absent. */
+/* Request sizes: prefer server-side full-population stats (gateway overlay);
+   fall back to client-side session tracker when absent. */
+let usageAvg = null;
 function renderRequestStats(s) {
     fillSelectOnce();
     const p = PERCENTILES[layout.percentile];
     const server = s && s.requestStats ? s.requestStats : null;
     const pick = (blk, key) => blk && blk[key] !== undefined && blk[key] !== null ? blk[key] : null;
-    const pKey = { p50: 'p50', p90: 'p90', p95: 'p95', p99: 'p99' }[layout.percentile];
+    const pKey = layout.percentile;
 
     if (server) {
         const pt = server.prompt_tokens || {}, ct = server.completion_tokens || {};
@@ -496,10 +536,11 @@ function renderRequestStats(s) {
         const n = (pt.n || 0), errs = server.errors_total || 0;
         setCounter('v-errrate', (n + errs) > 0 ? errs / (n + errs) * 100 : null);
         $('reqstats-note').textContent =
-            `server full-population stats · ${n} samples` + (server.source ? ` (${server.source})` : '');
+            `server stats · ${n} samples` +
+            (server.observed_real !== undefined ? ` (${server.observed_real} real, ${server.simulated} simulated)` : '') +
+            (server.source ? ` · ${server.source}` : '');
         return;
     }
-    // Client-side fallback (session samples only).
     const promptSamples = tracker.samples.prompt, complSamples = tracker.samples.completion;
     setCounter('v-prompt-avg', usageAvg ? usageAvg.prompt : (C.mean(promptSamples) ?? null));
     setCounter('v-compl-avg', usageAvg ? usageAvg.completion : (C.mean(complSamples) ?? null));
@@ -519,7 +560,7 @@ function fillSelectOnce() {
     if (fillSelectDone) return;
     fillSelectDone = true;
     fillSelect($('opt-percentile'), Object.keys(PERCENTILES).map(k => [k, k.toUpperCase()]), layout.percentile);
-    $('opt-percentile').onchange = e => { layout.percentile = e.target.value; C.saveLayout(localStorage, layout); renderRequestStats(); };
+    $('opt-percentile').onchange = e => { layout.percentile = e.target.value; C.saveLayout(localStorage, layout); renderRequestStats(stats); };
 }
 
 /* ---------------- polling ---------------- */
@@ -528,7 +569,6 @@ async function fetchJson(url, opts) {
     if (!res.ok) throw new Error(`${url} -> ${res.status}`);
     return res.json();
 }
-/* Write helpers: mock backend (and future real backend) endpoints. */
 async function putModelSettings(model, settings) {
     const res = await fetch(`${API}/admin/api/models/${encodeURIComponent(model)}/settings`,
         { method: 'PUT', headers: { 'Content-Type': 'application/json' },
@@ -544,7 +584,6 @@ async function postModelAction(model, action) {
     if (!res.ok) throw new Error(body.detail || res.status);
     return body;
 }
-const canWrite = () => true;   // writes are attempted; failures surface in the UI toast
 async function pollStats() {
     if (document.hidden) return;
     try {
@@ -562,7 +601,7 @@ async function pollStats() {
     } catch (err) {
         if (++failCount >= 2) {
             document.body.classList.add('stale');
-            $('banner-text').textContent = `Cannot reach oMLX at ${API || location.origin}: ${err.message}`;
+            $('banner-text').textContent = `Cannot reach API at ${API || location.origin}: ${err.message}`;
             $('banner').classList.add('show');
         }
     }
@@ -573,10 +612,24 @@ function restartPolling() {
     timer = setInterval(pollStats, layout.intervalMs);
 }
 
-/* ---------------- request lifecycle feed (mock / future backend) ---------------- */
-const REQ_STATES = ['queued', 'prefilling', 'generating', 'complete', 'error'];
+/* ---------------- gateway status chip ---------------- */
+async function pollGatewayInfo() {
+    const chip = $('chip-gateway');
+    if (API !== 'http://127.0.0.1:11437') { chip.textContent = 'direct'; chip.title = 'API ' + (API || location.origin); return; }
+    try {
+        const d = await fetchJson(`${API}/admin/api/mock/info`);
+        chip.textContent = d.ok
+            ? `gw↑ok · r${d.observed_real}/s${d.simulated}`
+            : 'gw↑down';
+        chip.classList.toggle('state-ok', !!d.ok);
+        chip.title = `gateway → ${d.upstream}: ${d.ok ? 'reachable' : (d.last_error || 'unreachable')}\n` +
+                     `shadow overrides: ${Object.keys(d.overrides || {}).length} · sim ${d.sim_rate}/s`;
+    } catch (_) { chip.textContent = 'gw?'; chip.classList.remove('state-ok'); }
+}
+
+/* ---------------- request lifecycle feed ---------------- */
 const MAX_REQFEED = 30;
-let reqFeedRows = new Map();   // id -> {state, model, prompt, completion, tps, error, ts}
+let reqFeedRows = new Map();
 let sseSource = null;
 
 function renderReqFeed() {
@@ -594,13 +647,15 @@ function renderReqFeed() {
         const badge = document.createElement('span');
         badge.className = `badge ${r.state.charAt(0).toUpperCase() + r.state.slice(1)}`;
         badge.textContent = r.state;
+        if (r.origin === 'real') { badge.title = 'real traffic'; }
         const name = document.createElement('span');
         name.className = 'model-name';
-        name.textContent = r.error ? `${r.id} — ${r.error}` : r.id;
+        name.textContent = r.error ? `${r.id} — ${r.error}` : (r.origin === 'real' ? '◆ ' : '') + r.id;
         name.title = `${r.model} · ${r.id}`;
         const meta = document.createElement('span');
         meta.className = 'model-meta';
-        const bits = [`in ${C.fmtCompact(r.prompt)}`];
+        const bits = [];
+        if (r.prompt) bits.push(`in ${C.fmtCompact(r.prompt)}`);
         if (r.completion) bits.push(`out ${C.fmtCompact(r.completion)}`);
         if (r.tps) bits.push(`${r.tps.toFixed(0)} t/s`);
         meta.textContent = bits.join(' · ');
@@ -611,10 +666,8 @@ function renderReqFeed() {
 function upsertReq(id, patch) {
     const prev = reqFeedRows.get(id) || { prompt: 0, completion: 0 };
     reqFeedRows.set(id, Object.assign({}, prev, patch, { ts: Date.now() }));
-    // Keep the newest MAX_REQFEED * 3 records, then trim finished ones first.
     if (reqFeedRows.size > MAX_REQFEED * 3) {
-        const sorted = [...reqFeedRows.entries()]
-            .sort((a, b) => (b[1].ts || 0) - (a[1].ts || 0));
+        const sorted = [...reqFeedRows.entries()].sort((a, b) => (b[1].ts || 0) - (a[1].ts || 0));
         for (const [id2, r] of sorted.slice(MAX_REQFEED)) {
             if (['complete', 'error'].includes(r.state)) reqFeedRows.delete(id2);
         }
@@ -623,16 +676,20 @@ function upsertReq(id, patch) {
 }
 function pushServerEvent(ev) {
     if (ev.type === 'request') {
-        upsertReq(ev.id, { state: ev.state, model: ev.model });
-        pushFeed([{ kind: 'requests', text: `${ev.id.slice(0, 6)} → ${ev.state}` }]);
+        upsertReq(ev.id, { state: ev.state, model: ev.model, origin: ev.origin });
+        pushFeed([{ kind: 'requests', text: `${ev.origin === 'real' ? '◆ ' : ''}${ev.id.slice(0, 6)} → ${ev.state}` }]);
         if (ev.state === 'error') flashCard('v-errrate', 'bad');
         if (ev.state === 'complete') flashCard('v-requests', 'ok');
     } else if (ev.type === 'model-load') {
         pushFeed([{ kind: 'model-add', model: ev.id, text: `${ev.id} load requested` }]);
     } else if (ev.type === 'model-unload') {
         pushFeed([{ kind: 'model-remove', model: ev.id, text: `${ev.id} unload` }]);
+    } else if (ev.type === 'model-ready') {
+        pushFeed([{ kind: 'model-add', model: ev.id, text: `${ev.id} ready` }]);
     } else if (ev.type === 'settings') {
         pushFeed([{ kind: 'requests', text: `${ev.id}: settings ${ev.changed.join(', ')}` }]);
+    } else if (ev.type === 'mock-reset') {
+        pushFeed([{ kind: 'requests', text: 'gateway shadow state reset' }]);
     }
 }
 function connectEventStream() {
@@ -640,7 +697,7 @@ function connectEventStream() {
     try {
         sseSource = new EventSource(`${API}/admin/api/requests/stream`);
         sseSource.onmessage = e => { try { pushServerEvent(JSON.parse(e.data)); } catch (_) {} };
-        sseSource.onerror = () => { /* keep EventSource's own retry */ };
+        sseSource.onerror = () => { /* EventSource retries on its own */ };
     } catch (_) { sseSource = null; }
 }
 async function pollRequests() {
@@ -648,21 +705,27 @@ async function pollRequests() {
     try {
         const d = await fetchJson(`${API}/admin/api/requests?limit=30`);
         for (const r of d.requests)
-            upsertReq(r.id, { state: r.state, model: r.model, prompt: r.prompt_tokens,
-                              completion: r.completion_tokens, tps: r.tps, error: r.error });
-    } catch (_) { /* endpoint absent on real backend; feed stays as-is */ }
+            upsertReq(r.id, { state: r.state, model: r.model, origin: r.origin,
+                              prompt: r.prompt_tokens, completion: r.completion_tokens,
+                              tps: r.tps, error: r.error });
+    } catch (_) { /* gateway offline; feed keeps last state */ }
 }
 
-/* ---------------- model admin (settings editor, load/unload) ---------------- */
-const SE_FIELDS = [
+/* ---------------- model manager (Models tab) ---------------- */
+const SE_BASIC = [
     ['temperature', 'num', 0, 2, 0.05],
     ['top_p', 'num', 0, 1, 0.05],
-    ['max_tokens', 'num', 1, 32768, 1],
+    ['max_tokens', 'num', 1, 262144, 1],
     ['ttl_seconds', 'num', 30, 86400, 30],
-    ['reasoning_effort', 'select', ['auto', 'none', 'low', 'medium', 'high']],
 ];
+const SE_ENUM = { reasoning_effort: ['auto', 'none', 'low', 'medium', 'high', 'xhigh', 'max'] };
+const SE_FEATURE = ['dflash_enabled', 'mtp_enabled', 'turboquant_kv_enabled',
+                    'specprefill_enabled', 'qwen35_ane_prefill_enabled',
+                    'moe_expert_offload_enabled', 'guided_grammar_enabled',
+                    'trust_remote_code', 'is_favorite', 'is_hidden'];
 let seModel = null, seValues = {};
-function closeEditor() { $('settings-editor').hidden = true; seModel = null; }
+
+function closeEditor() { $('settings-editor-page').hidden = true; seModel = null; }
 async function openEditor(model) {
     seModel = model;
     $('se-model').textContent = model;
@@ -672,7 +735,7 @@ async function openEditor(model) {
         const d = await fetchJson(`${API}/admin/api/models/${encodeURIComponent(model)}/settings`);
         seValues = d.settings || {};
     } catch (_) { seValues = {}; }
-    for (const [key, kind, a, b, step] of SE_FIELDS) {
+    const addRow = (key, kind, a, b, step) => {
         const label = document.createElement('label');
         label.className = 'se-row';
         const name = document.createElement('span');
@@ -686,32 +749,44 @@ async function openEditor(model) {
                 if (seValues[key] === opt) o.selected = true;
                 input.append(o);
             }
+        } else if (kind === 'bool') {
+            input = document.createElement('input');
+            input.type = 'checkbox';
+            input.checked = seValues[key] === true;
         } else {
             input = document.createElement('input');
             input.type = 'number';
             input.min = a; input.max = b; input.step = step;
-            input.value = seValues[key] ?? '';
+            const cur = seValues[key];
+            input.value = (cur === null || cur === undefined) ? '' : cur;
         }
         input.dataset.key = key;
         label.append(name, input);
         fields.append(label);
-    }
+    };
+    for (const f of SE_BASIC) addRow(...f);
+    for (const [k, opts] of Object.entries(SE_ENUM)) addRow(k, 'select', opts);
+    for (const k of SE_FEATURE) if (k in seValues) addRow(k, 'bool');
     $('se-msg').textContent = '';
-    $('settings-editor').hidden = false;
+    $('settings-editor-page').hidden = false;
+    $('settings-editor-page').scrollIntoView({ block: 'nearest' });
 }
 async function saveEditor() {
     if (!seModel) return;
     const payload = {};
     for (const input of $('se-fields').querySelectorAll('[data-key]')) {
+        const key = input.dataset.key;
+        if (input.type === 'checkbox') { payload[key] = input.checked; continue; }
         const v = input.value;
         if (v === '') continue;
-        payload[input.dataset.key] = input.type === 'number' ? Number(v) : v;
+        payload[key] = input.type === 'number' ? Number(v) : v;
     }
     $('se-msg').textContent = 'saving…';
     try {
         await putModelSettings(seModel, payload);
-        $('se-msg').textContent = 'saved ✓';
+        $('se-msg').textContent = 'saved ✓ (shadow)';
         toast(`Settings saved: ${seModel}`);
+        renderModelAdmin();
         setTimeout(closeEditor, 900);
     } catch (err) {
         $('se-msg').textContent = `error: ${err.message}`;
@@ -720,30 +795,52 @@ async function saveEditor() {
 }
 $('se-save').onclick = saveEditor;
 $('se-cancel').onclick = closeEditor;
+$('se-close2').onclick = closeEditor;
 
+let adminModels = [];
 async function renderModelAdmin() {
     let models;
     try { models = (await fetchJson(`${API}/admin/api/models`)).models; }
-    catch (_) { $('model-admin').innerHTML = ''; return; }
+    catch (_) { $('model-admin').innerHTML = '<div class="empty">API unreachable</div>'; return; }
+    adminModels = models;
+    const filter = ($('ma-filter').value || '').toLowerCase();
+    const onlyLoaded = $('ma-only-loaded').checked;
+    const shown = models.filter(m =>
+        (!filter || m.id.toLowerCase().includes(filter)) &&
+        (!onlyLoaded || m.loaded || m.is_loading));
+    const loadedN = models.filter(m => m.loaded).length;
+    $('models-admin-sub').textContent = `${loadedN}/${models.length} loaded`;
+    const memUsed = stats ? stats.memUsed : null;
+    $('ma-mem').textContent = memUsed !== null
+        ? `memory ${C.fmtBytes(memUsed)} / ${C.fmtBytes(stats.memMax)}` : '';
+
     const table = $('model-admin');
     table.innerHTML = '';
-    if (!models.length) return;
-    const head = document.createElement('div'); head.className = 'urow head';
-    for (const h of ['model', 'state', 'settings', '']) {
-        const s = document.createElement('span'); s.textContent = h; head.append(s);
-    }
+    if (!shown.length) { table.innerHTML = '<div class="empty">No match</div>'; return; }
+    const head = document.createElement('div'); head.className = 'urow head admin';
+    for (const h of ['model', 'state', 'size', 'settings', '']) head.append(cell(h));
     table.append(head);
-    for (const m of models) {
-        const row = document.createElement('div'); row.className = 'urow';
-        const name = document.createElement('span');
-        name.className = 'uname'; name.textContent = (m.pinned ? '📌 ' : '') + m.id; name.title = m.id;
-        const state = document.createElement('span');
-        state.textContent = m.loading ? 'loading' : m.loaded ? 'loaded' : 'unloaded';
-        const settings = document.createElement('span');
+    for (const m of shown) {
+        const row = document.createElement('div'); row.className = 'urow admin';
+        const name = cell((m.pinned ? '📌 ' : '') + m.id);
+        name.className = 'uname'; name.title = m.model_path || m.id;
+        const state = cell(m.is_loading ? `loading ${m.loading_elapsed_seconds ?? ''}s`
+                        : m.loaded ? 'loaded' : 'unloaded');
+        state.className = m.loaded ? 'state-ok' : (m.is_loading ? 't2' : 'dim');
+        const size = cell(m.loaded ? (m.actual_size_formatted || C.fmtBytes(m.actual_size || m.estimated_size))
+                        : C.fmtBytes(m.estimated_size));
         const s = m.settings || {};
-        settings.textContent = `T${s.temperature ?? '—'} · ${s.max_tokens ?? '—'}`;
+        const bits = [];
+        if (s.temperature !== null && s.temperature !== undefined) bits.push(`T${s.temperature}`);
+        if (s.max_tokens) bits.push(s.max_tokens);
+        if (s.dflash_enabled) bits.push('dflash');
+        if (s.mtp_enabled) bits.push('mtp');
+        if (s.turboquant_kv_enabled) bits.push('tq4');
+        if (s.reasoning_effort && s.reasoning_effort !== 'auto') bits.push('R:' + s.reasoning_effort);
+        const settings = cell(bits.join(' · ') || '—');
+        settings.className = 'dim';
         const actions = document.createElement('span');
-        actions.style.display = 'flex'; actions.style.gap = '4px'; actions.style.justifyContent = 'flex-end';
+        actions.className = 'rowacts';
         const btn = (label, fn, title) => {
             const b = document.createElement('button');
             b.className = 'se-btn'; b.textContent = label; b.title = title || label;
@@ -753,26 +850,53 @@ async function renderModelAdmin() {
             };
             return b;
         };
+        actions.append(btn(m.pinned ? '📌' : '📍', () => postModelAction(m.id, m.pinned ? 'unpin' : 'pin'),
+                           m.pinned ? 'Unpin' : 'Pin'));
         actions.append(btn('⚙', () => openEditor(m.id), 'Edit settings'));
         if (m.loaded) actions.append(btn('unload', () => postModelAction(m.id, 'unload')));
         else actions.append(btn('load', () => postModelAction(m.id, 'load')));
-        row.append(name, state, settings, actions);
+        row.append(name, state, size, settings, actions);
         table.append(row);
     }
 }
-renderModelAdmin();
-setInterval(() => { if (!document.hidden) renderModelAdmin(); }, 15000);
-connectEventStream();
-setInterval(() => { if (!document.hidden) pollRequests(); }, 2000);
+function cell(text) { const s = document.createElement('span'); s.textContent = text; return s; }
+$('ma-filter').oninput = () => renderModelAdmin();
+$('ma-only-loaded').onchange = () => renderModelAdmin();
 
-/* ---------------- usage (heat strip + per-model table) ---------------- */
-let usageAvg = null;
+/* ---------------- usage (Usage tab) ---------------- */
+function createUsageChart() {
+    const el = $('chart-usage');
+    if (!el) return;
+    if (usageChart) usageChart.destroy();
+    const col = chartColors();
+    usageChart = new uPlot({
+        width: el.clientWidth || 600, height: 200,
+        scales: { x: { time: true }, y: { auto: true } },
+        axes: [{ stroke: col.dim, size: 36, font: axisFont,
+                 values: (s, t) => t.map(ts => new Date(ts).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })) },
+               yAxis(col, { grid: true })],
+        series: [{ label: 'tokens' }, line('tokens', 'blue', true)],
+        cursor: { drag: { x: false, y: false } },
+        legend: { show: false },
+    }, [[], []], el);
+}
 async function pollUsage() {
     if (document.hidden) return;
     try {
         const u = await fetchJson(`${API}/admin/api/usage?range=${usageRange}`);
+        const tot = u.totals || {};
+        setCounter('v-u-req', tot.requests ?? null);
+        setCounter('v-u-tok', tot.total_tokens ?? null);
+        setCounter('v-u-prompt', tot.prompt_tokens ?? null);
+        setCounter('v-u-compl', tot.completion_tokens ?? null);
+        usageAvg = tot.requests > 0
+            ? { prompt: tot.prompt_tokens / tot.requests, completion: tot.completion_tokens / tot.requests }
+            : null;
+        usageRange = u.range || usageRange;
+
+        // Heatmap (last day row of the range, or yesterday when range=yesterday).
         const hm = u.heatmap || [];
-        const day = hm[usageRange === 'yesterday' ? 0 : hm.length - 1];
+        const day = hm[hm.length - 1];
         const hours = day ? day.tokens : new Array(24).fill(0);
         const max = Math.max(1, ...hours);
         const heat = $('heat');
@@ -780,68 +904,130 @@ async function pollUsage() {
             heat.innerHTML = '';
             for (let i = 0; i < 24; i++) heat.append(document.createElement('i'));
         }
-        [...heat.children].forEach((cell, i) => {
+        [...heat.children].forEach((c, i) => {
             const v = hours[i] || 0;
             const a = v > 0 ? 0.15 + 0.85 * Math.sqrt(v / max) : 0;
-            cell.style.background = v > 0 ? `color-mix(in oklab, var(--heat) ${Math.round(a * 100)}%, transparent)` : '';
-            cell.title = `${String(i).padStart(2, '0')}:00 — ${C.fmtCompact(v)} tokens`;
+            c.style.background = v > 0 ? `color-mix(in oklab, var(--heat) ${Math.round(a * 100)}%, transparent)` : '';
+            c.title = `${String(i).padStart(2, '0')}:00 — ${C.fmtCompact(v)} tokens`;
         });
-        const tot = u.totals || {};
         $('usage-sub').textContent = tot.requests !== undefined
-            ? `${C.fmtNumber(tot.requests)} req · ${C.fmtCompact(tot.total_tokens)} tok` : '';
-        usageAvg = tot.requests > 0
-            ? { prompt: tot.prompt_tokens / tot.requests, completion: tot.completion_tokens / tot.requests }
-            : null;
+            ? `${C.fmtNumber(tot.requests)} req · ${C.fmtCompact(tot.total_tokens)} tok · cached ${C.fmtCompact(tot.cached_tokens)}` : '';
 
-        // Per-model mini table (top 6 by tokens).
+        // Hourly tokens chart (from heatmap if daily granularity, else from models).
+        if (!usageChart) createUsageChart();
+        if (usageChart && hours.length === 24) {
+            const base = new Date(); base.setHours(0, 0, 0, 0);
+            const ts = hours.map((_, i) => base.getTime() + i * 3600e3);
+            usageChart.setData([ts, hours.slice()]);
+        }
+
+        // Per-model table (all, sorted by tokens).
         const table = $('usage-models');
         table.innerHTML = '';
         const models = (u.models || []).slice()
-            .sort((a, b) => (b.prompt_tokens + b.completion_tokens) - (a.prompt_tokens + a.completion_tokens))
-            .slice(0, 6);
+            .sort((a, b) => (b.prompt_tokens + b.completion_tokens) - (a.prompt_tokens + a.completion_tokens));
         if (models.length) {
-            const head = document.createElement('div'); head.className = 'urow head';
-            for (const h of ['model', 'req', 'tokens', 'avg t/req']) {
-                const s = document.createElement('span'); s.textContent = h; head.append(s);
-            }
+            const head = document.createElement('div'); head.className = 'urow head admin';
+            for (const h of ['model', 'req', 'prompt', 'completion', 'cached', 'avg t/req']) head.append(cell(h));
             table.append(head);
             for (const m of models) {
-                const row = document.createElement('div'); row.className = 'urow';
-                const name = document.createElement('span');
-                name.className = 'uname'; name.textContent = m.model_id; name.title = m.model_id;
-                const req = document.createElement('span'); req.textContent = C.fmtNumber(m.requests);
-                const tok = document.createElement('span'); tok.textContent = C.fmtCompact(m.prompt_tokens + m.completion_tokens);
-                const avg = document.createElement('span');
-                avg.textContent = m.requests ? C.fmtCompact((m.prompt_tokens + m.completion_tokens) / m.requests) : '—';
-                row.append(name, req, tok, avg);
+                const row = document.createElement('div'); row.className = 'urow admin';
+                const name = cell(m.model_id); name.className = 'uname'; name.title = m.model_id;
+                row.append(name, cell(C.fmtNumber(m.requests)), cell(C.fmtCompact(m.prompt_tokens)),
+                           cell(C.fmtCompact(m.completion_tokens)), cell(C.fmtCompact(m.cached_tokens)),
+                           cell(m.requests ? C.fmtCompact((m.prompt_tokens + m.completion_tokens) / m.requests) : '—'));
                 table.append(row);
             }
         }
-        renderRequestStats();
-    } catch (_) { /* usage tab may be disabled; keep last data */ }
+        if (currentTab() === 'status') renderRequestStats(stats);
+    } catch (_) { /* usage may be disabled; keep last data */ }
 }
 fillSelect($('opt-usage-range'), [['today', 'today'], ['yesterday', 'yesterday'], ['7d', '7 days'], ['30d', '30 days'], ['90d', '90 days']], usageRange);
 $('opt-usage-range').onchange = e => { usageRange = e.target.value; pollUsage(); };
 
-/* ---------------- logs (read-only tail) ---------------- */
+/* ---------------- logs (Logs tab) ---------------- */
+let logsFilesLoaded = false, logsFollow = true;
 async function pollLogs() {
-    if (document.hidden) return;
+    if (document.hidden && !logsFollow) return;
     try {
-        const d = await fetchJson(`${API}/admin/api/logs?lines=200`);
-        let lines = String(d.logs || '').split('\n').filter(Boolean);
-        const shownTotal = lines.length;
-        if (layout.logsHideDebug) lines = lines.filter(l => !/ - DEBUG - /.test(l));
-        const pre = $('logs');
-        pre.innerHTML = '';
-        for (const line of lines.slice(-150)) {
-            const span = document.createElement('span');
-            const level = / - (ERROR|WARNING) - /.exec(line);
-            if (level) span.className = `lv-${level[1]}`;
-            span.textContent = line + '\n';
-            pre.append(span);
+        const lines = Number($('logs-lines').value || 300);
+        const file = $('logs-file').value;
+        let url = `${API}/admin/api/logs?lines=${lines}`;
+        if (file) url += `&file=${encodeURIComponent(file)}`;
+        const d = await fetchJson(url);
+        if (!logsFilesLoaded && Array.isArray(d.available_files)) {
+            fillSelect($('logs-file'), d.available_files.map(f => [f, f]), d.log_file || d.available_files[0]);
+            logsFilesLoaded = true;
         }
-        $('logs-sub').textContent = `${lines.length}${layout.logsHideDebug ? `/${shownTotal}` : ''} lines`;
-    } catch (_) { /* logs endpoint requires admin session; silent when absent */ }
+        let rows = String(d.logs || '').split('\n').filter(Boolean);
+        const level = $('logs-level').value;
+        const grep = ($('logs-grep').value || '').toLowerCase();
+        rows = rows.filter(l => {
+            if (level && !l.includes(` - ${level} - `)) return false;
+            if (!level && layout.logsHideDebug && / - (DEBUG|TRACE) - /.test(l)) return false;
+            if (grep && !l.toLowerCase().includes(grep)) return false;
+            return true;
+        });
+        const pre = $('logs');
+        const atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 40;
+        pre.innerHTML = '';
+        const frag = document.createDocumentFragment();
+        for (const line of rows.slice(-800)) {
+            const span = document.createElement('span');
+            const lv = / - (ERROR|WARNING|TRACE|DEBUG) - /.exec(line);
+            if (lv) span.className = `lv-${lv[1]}`;
+            span.textContent = line + '\n';
+            frag.append(span);
+        }
+        pre.append(frag);
+        if (logsFollow || atBottom) pre.scrollTop = pre.scrollHeight;
+        $('logs-sub').textContent = `${rows.length} lines${d.log_file ? ' · ' + d.log_file : ''}`;
+    } catch (_) { /* keep tail */ }
+}
+$('logs-level').onchange = () => pollLogs();
+$('logs-lines').onchange = () => pollLogs();
+$('logs-file').onchange = () => pollLogs();
+$('logs-grep').oninput = C.debounce ? C.debounce(pollLogs, 300) : (() => { let t; return () => { clearTimeout(t); t = setTimeout(pollLogs, 300); }; })();
+$('logs-follow').onchange = e => { logsFollow = e.target.checked; };
+$('logs-dl').onclick = () => {
+    const blob = new Blob([$('logs').textContent], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `uplift-logs-${new Date().toISOString().replace(/[:.]/g, '-')}.log`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+};
+
+/* ---------------- settings (Settings tab: read-only server preview) ------ */
+async function pollGlobalSettings() {
+    try {
+        const d = await fetchJson(`${API}/admin/api/global-settings`);
+        const body = $('gs-body');
+        body.innerHTML = '';
+        const flat = [];
+        const walk = (obj, prefix) => {
+            for (const [k, v] of Object.entries(obj || {})) {
+                if (v && typeof v === 'object' && !Array.isArray(v)) walk(v, prefix ? prefix + '.' + k : k);
+                else flat.push([prefix ? prefix + '.' + k : k, Array.isArray(v) ? v.join(', ') : String(v)]);
+            }
+        };
+        walk(d.settings || d, '');
+        $('gs-sub').textContent = `${flat.length} keys · read-only via gateway`;
+        if (!flat.length) { body.innerHTML = '<div class="empty">No settings exposed by this API</div>'; return; }
+        const head = document.createElement('div'); head.className = 'urow head settings';
+        head.append(cell('key'), cell('value'));
+        body.append(head);
+        for (const [k, v] of flat.slice(0, 400)) {
+            const row = document.createElement('div'); row.className = 'urow settings';
+            const kc = cell(k); kc.className = 'uname';
+            const vc = cell(v.length > 120 ? v.slice(0, 117) + '…' : v);
+            vc.className = 'dim';
+            row.append(kc, vc);
+            body.append(row);
+        }
+    } catch (err) {
+        $('gs-body').innerHTML = `<div class="empty">global-settings not served by gateway yet (${err.message})</div>`;
+    }
 }
 
 /* ---------------- boot ---------------- */
@@ -852,7 +1038,10 @@ fetchJson(`${API}/admin/api/device-info`).then(d => {
 
 document.addEventListener('visibilitychange', () => {
     if (document.hidden) return;
-    pollStats(); pollUsage(); pollLogs(); resizeCharts();
+    pollStats(); pollGatewayInfo();
+    if (currentTab() === 'usage') pollUsage();
+    if (currentTab() === 'logs') pollLogs();
+    resizeCharts();
 });
 
 applyPrefs();
@@ -860,8 +1049,14 @@ applyOrder();
 applyLayout();
 createCharts();
 resizeCharts();
+applyTab();
 restartPolling();
+pollGatewayInfo();
 pollUsage(); pollLogs();
-usageTimer = setInterval(pollUsage, 15000);
-logsTimer = setInterval(pollLogs, 12000);
+connectEventStream();
+setInterval(pollGatewayInfo, 10000);
+setInterval(() => { if (!document.hidden) pollRequests(); }, 2000);
+setInterval(() => { if (!document.hidden) renderModelAdmin(); }, 8000);
+setInterval(() => { if (!document.hidden && currentTab() === 'usage') pollUsage(); }, 15000);
+setInterval(() => { if (!document.hidden && currentTab() === 'logs' && logsFollow) pollLogs(); }, 5000);
 })();

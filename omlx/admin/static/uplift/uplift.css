@@ -280,8 +280,54 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
 .banner.show { display: flex; }
 .stale .stat-value { opacity: .4; }
 
+/* ---- Tabs (top nav, hairline underline = active, NASA control-strip) ---- */
+.tabs { display: flex; gap: 2px; border: 1px solid var(--edge); }
+.tabs a {
+    color: var(--dim); font: 400 11px/1 var(--mono); text-transform: uppercase;
+    letter-spacing: 0.08em; text-decoration: none; padding: 9px 14px;
+    border-right: 1px solid var(--edge);
+}
+.tabs a:last-child { border-right: 0; }
+.tabs a:hover { color: var(--ink); background: var(--edge); }
+.tabs a.active { color: var(--bg); background: var(--ink); }
+
+/* ---- Filter bars (models/logs pages) ---- */
+.filterbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    margin-bottom: 12px; }
+.filterbar .spacer { flex: 1; }
+.filterbar input[type="search"] {
+    background: transparent; border: 1px solid var(--edge); color: var(--ink);
+    border-radius: 0; height: 32px; padding: 0 10px; font: 400 12px/1 var(--mono);
+    min-width: 200px;
+}
+.filterbar input[type="search"]:focus { outline: 1px solid var(--ink); }
+.filterbar label.row { display: inline-flex; align-items: center; gap: 6px;
+    color: var(--dim); font: 300 12px/1 var(--sans); }
+
+/* ---- Admin tables (models / usage / settings pages) ---- */
+.admin-table .urow { display: grid; gap: 10px; padding: 8px 2px;
+    border-bottom: 1px solid var(--edge); font: 400 12px/1.4 var(--mono);
+    align-items: center; }
+.admin-table .urow.admin { grid-template-columns: minmax(0,4fr) 90px 90px minmax(0,3fr) auto; }
+.admin-table .urow.settings { grid-template-columns: minmax(0,2fr) minmax(0,5fr); }
+.admin-table .urow.head { color: var(--dim); border-top: 1px solid var(--ink); }
+.admin-table .urow span:not(:first-child) { text-align: right; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.admin-table .urow.head span { text-align: right; }
+.admin-table .urow.head span:first-child { text-align: left; }
+.admin-table .uname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left !important; }
+.admin-table .rowacts { display: flex; gap: 4px; justify-content: flex-end; }
+.t2 { color: var(--accent) !important; -webkit-text-fill-color: currentColor; }
+.dim { color: var(--dim); }
+.state-ok { color: var(--ink); }
+[data-theme="enhanced"] .state-ok { color: #7dffa0; }
+
+/* ---- Full-page logs ---- */
+.logs-page { max-height: calc(100vh - 280px); min-height: 400px; }
+
 /* Narrow screens: single column regardless of layout setting */
 @media (max-width: 640px) {
     main { grid-template-columns: 1fr; }
     .card { grid-column: span 1 !important; }
+    .tabs a { padding: 8px 8px; }
 }
