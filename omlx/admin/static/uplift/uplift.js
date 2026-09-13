@@ -368,6 +368,20 @@ function legendUpdater() {
         });
     };
 }
+/* The vendored uPlot build does not dispatch hooks.cursor.subscribe (no
+   'subscribe' in the bundle) — a legend updater wired via hooks only ran on
+   redraw, so hover never updated it. Bind the updater directly to the
+   cursor overlay instead; uPlot's own mousemove handler is registered first
+   (during init), so cursor.idx is already fresh when our listener runs. */
+function bindCursorUpdater(c) {
+    if (!c || !c.over) return;
+    c.over.addEventListener('mousemove', () => legendUpdater()(c));
+    c.over.addEventListener('mouseleave', () => {
+        hoverTs.set(c, null);
+        if (c.data[0].length) c.setCursor({ idx: c.data[0].length - 1 }, false);
+        legendUpdater()(c);
+    });
+}
 let tpsChart = null, memChart = null, usageChart = null;
 function createCharts() {
     if (tpsChart) { tpsChart.destroy(); memChart.destroy(); tpsChart = memChart = null; }
@@ -399,6 +413,7 @@ function createCharts() {
         legendUpdater());
     memOpts.scales.y = { range: [0, 100] };
     memChart = new uPlot(memOpts, windowedData(memData), $('chart-mem'));
+    bindCursorUpdater(tpsChart); bindCursorUpdater(memChart);
     resizeCharts();
     redrawCharts();
 }
