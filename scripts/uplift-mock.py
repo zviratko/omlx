@@ -906,6 +906,13 @@ class Handler(BaseHTTPRequestHandler):
             tid = start_shadow_task("oq", "quantizing", f"{name} → oQ{lvl}",
                                     dest=f"~/.omlx-models/{name}-oQ{lvl}")
             return self._json({"task_id": tid, "status": "quantizing", "_shadow": True})
+        if p == "/admin/api/upload/validate-token":
+            # Shadow: NEVER forward a UI-entered token to the real server.
+            body = self._read_body() or {}
+            t = (body.get("hf_token") or "").strip()
+            if not t or not t.startswith("hf_") or len(t) < 8:
+                return self._json({"detail": "Invalid token. Ensure it has write access."}, 401)
+            return self._json({"username": "shadow-user", "orgs": [], "_shadow": True})
         if p == "/admin/api/upload/start":
             body = self._read_body() or {}
             if not body.get("model_path"):
