@@ -22,12 +22,12 @@ if (!(layout.percentile in PERCENTILES)) layout.percentile = 'p95';
 /* ---------------- tabs (hash routing, like the classic dashboard) --------- */
 const TABS = ['status', 'models', 'usage', 'logs', 'settings'];
 const SUBS = {
-    models: ['manager', 'downloader', 'quantizer', 'uploader', 'helper', 'settings'],
+    models: ['settings', 'helper', 'manager', 'downloader', 'uploader', 'quantizer'],
     settings: ['global'],
 };
 const SUB_LABELS = {
-    manager: 'Manager', downloader: 'Downloader', quantizer: 'oQ Quantization',
-    uploader: 'oQ Uploader', helper: 'Helper Models', settings: 'Settings',
+    manager: 'Manager', downloader: 'Downloader', quantizer: 'oQ(e) Quantization',
+    uploader: 'Uploader', helper: 'Helper Models', settings: 'Model Settings',
     global: 'Server Settings',
 };
 function currentTab() {
@@ -2536,43 +2536,245 @@ async function renderHelperModels() {
         /dflash|assistant/i.test(m.id)));
     $('hm-sub').textContent = `${helpers.length} helpers · ${mk.length} markitdown`;
 
-    // MarkItDown: special box at the top (separate role gets separate space)
+    // Integrations, same fields / labels / conditionals as the classic
+    // Settings -> Integrations tab. MarkItDown gets the special box at the
+    // top (separate role gets separate space), then Web Search, then the
+    // helper model list.
     const box = $('hm-markitdown');
     box.textContent = '';
     let integ = {};
-    try { integ = (await fetchJson(`${API}/admin/api/global-settings`)).integrations || {}; } catch (_) {}
+    let modelList = [];
+    try {
+        integ = (await fetchJson(`${API}/admin/api/global-settings`)).integrations || {};
+    } catch (_) {}
+    modelList = models;
+
+    // save exactly like classic saveIntegrationSettings(): flat body of
+    // integrations_* keys POSTed to global-settings
+    async function saveIntegration(overrides) {
+        Object.assign(integ, overrides || {});
+        const body = {};
+        for (const [k, v] of Object.entries(integ)) body['integrations_' + k] = v;
+        try {
+            await fetch(`${API}/admin/api/global-settings`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            toast('Integration settings saved');
+            return true;
+        } catch (err) { toast('save failed: ' + err.message); return false; }
+    }
+    function integField(label, hint, control) {
+        const f = document.createElement('label');
+        f.className = 'field';
+        const lab = document.createElement('span');
+        lab.textContent = label;
+        f.append(lab, control);
+        if (hint) {
+            const h = document.createElement('small');
+            h.className = 'fhint dim'; h.textContent = hint;
+            f.append(h);
+        }
+        return f;
+    }
+    function integSelect(opts, val, onchange) {
+        const sel = document.createElement('select');
+        for (const [v, t] of opts) {
+            const o = document.createElement('option');
+            o.value = v; o.textContent = t;
+            sel.append(o);
+        }
+        sel.value = val;
+        sel.onchange = () => onchange(sel.value);
+        return sel;
+    }
+    function integNumber(key, min, max) {
+        const inp = document.createElement('input');
+        inp.type = 'number'; inp.min = min; inp.max = max;
+        inp.value = integ[key] ?? '';
+        inp.onchange = async () => {
+            const v = Number(inp.value);
+            if (await saveIntegration({ [key]: v })) renderHelperModels();
+        };
+        return inp;
+    }
+
+    /* ---- MarkItDown box ---- */
+    const mkCard = document.createElement('div');
+    mkCard.className = 'mk-box';
+    const head = document.createElement('div');
+    head.className = 'mk-head';
+    const title = document.createElement('div');
+    title.className = 'mk-title';
+    title.textContent = 'MarkItDown';
+    head.append(title);
     for (const m of mk) {
-        const card = document.createElement('div');
-        card.className = 'mk-box';
-        const title = document.createElement('div');
-        title.className = 'mk-title';
-        title.textContent = 'MarkItDown document converter';
         const state = document.createElement('span');
         state.className = 'spill ' + (m.loaded ? 'on' : 'off');
         state.textContent = m.loaded ? 'LOADED' : 'IDLE';
-        const meta = cell(`${m.engine_type} · ${m.actual_size_formatted || C.fmtBytes(m.actual_size || 0)}`);
-        meta.className = 'dim';
-        const head = document.createElement('div');
-        head.className = 'mk-head';
-        head.append(title, state, meta);
-        card.append(head);
-        const cfg = document.createElement('div');
-        cfg.className = 'mk-cfg dim';
-        const bits = [];
-        if (integ.markitdown_enabled !== undefined)
-            bits.push('enabled: ' + integ.markitdown_enabled);
-        if (integ.markitdown_expose_model !== undefined)
-            bits.push('exposed as model: ' + integ.markitdown_expose_model);
-        if (integ.markitdown_max_file_size_mb !== undefined)
-            bits.push('max file: ' + integ.markitdown_max_file_size_mb + ' MB');
-        if (integ.markitdown_max_files_per_request !== undefined)
-            bits.push('max files/request: ' + integ.markitdown_max_files_per_request);
-        if (integ.markitdown_pdf_processing_engine)
-            bits.push('pdf engine: ' + integ.markitdown_pdf_processing_engine);
-        cfg.textContent = bits.join('  \u00b7  ') || 'integration settings unavailable';
-        card.append(cfg);
-        box.append(card);
+        head.append(state);
     }
+    mkCard.append(head);
+    const desc = document.createElement('div');
+    desc.className = 'dim';
+    desc.textContent = 'Preprocess supported file attachments before LLM requests.';
+    mkCard.append(desc);
+
+    const enabledInp = document.createElement('input');
+    enabledInp.type = 'checkbox';
+    enabledInp.checked = !!integ.markitdown_enabled;
+    enabledInp.onchange = async () => {
+        if (await saveIntegration({ markitdown_enabled: enabledInp.checked })) renderHelperModels();
+    };
+    mkCard.append(integField('Enable MarkItDown',
+        'Preprocess supported file attachments before LLM requests.', enabledInp));
+
+    const exposeInp = document.createElement('input');
+    exposeInp.type = 'checkbox';
+    exposeInp.checked = !!integ.markitdown_expose_model;
+    exposeInp.disabled = !integ.markitdown_enabled;
+    exposeInp.onchange = async () => {
+        if (await saveIntegration({ markitdown_expose_model: exposeInp.checked })) renderHelperModels();
+    };
+    mkCard.append(integField('Show as model',
+        'Expose MarkItDown in model lists for direct Markdown conversion requests.', exposeInp));
+
+    mkCard.append(integField('Max file size (MB)',
+        'Reject larger document attachments before conversion.',
+        integNumber('markitdown_max_file_size_mb', 1, 1024)));
+    mkCard.append(integField('Max files per request',
+        'Limit document attachments converted in one request.',
+        integNumber('markitdown_max_files_per_request', 1, 50)));
+
+    // pdf engine: MarkItDown + OCR-capable models (classic: config_model_type contains 'ocr')
+    const pdfOpts = [['markitdown', 'MarkItDown']];
+    for (const m of modelList)
+        if (String(m.config_model_type || '').toLowerCase().includes('ocr'))
+            pdfOpts.push([m.id, m.id]);
+    const pdfSel = integSelect(pdfOpts, integ.markitdown_pdf_processing_engine || 'markitdown',
+        async v => { if (await saveIntegration({ markitdown_pdf_processing_engine: v })) renderHelperModels(); });
+    const pdfField = integField('PDF processing engine',
+        'Process PDF requests by MarkItDown itself or by an OCR engine.', pdfSel);
+    if (integ.markitdown_pdf_processing_engine === 'markitdown') {
+        const warn = document.createElement('small');
+        warn.className = 'fhint warn';
+        warn.textContent = 'Scanned or image-only PDFs will fail when MarkItDown is selected, '
+            + 'and PDFs with tables may not be processed correctly.';
+        pdfField.append(warn);
+    }
+    mkCard.append(pdfField);
+    box.append(mkCard);
+
+    /* ---- Web Search ---- */
+    const wsCard = document.createElement('div');
+    wsCard.className = 'mk-box';
+    const wsHead = document.createElement('div');
+    wsHead.className = 'mk-head';
+    const wsTitle = document.createElement('div');
+    wsTitle.className = 'mk-title';
+    wsTitle.textContent = 'Web Search';
+    wsHead.append(wsTitle);
+    wsCard.append(wsHead);
+
+    const provSel = integSelect([
+        ['ddgs', 'DDGS Total'], ['ddgs_custom', 'DDGS Custom'],
+        ['duckduckgo', 'DuckDuckGo'], ['brave', 'Brave Search'],
+        ['searxng', 'SearXNG'],
+    ], integ.web_search_provider || 'ddgs', async v => {
+        if (await saveIntegration({ web_search_provider: v })) renderHelperModels();
+    });
+    wsCard.append(integField('Search provider',
+        'Backend used by the chat web search tool. DDGS Total queries every available engine and needs no key.',
+        provSel));
+
+    if (integ.web_search_provider === 'ddgs_custom') {
+        const be = document.createElement('input');
+        be.type = 'text';
+        be.placeholder = 'e.g. duckduckgo,brave,mojeek';
+        be.value = integ.web_search_ddgs_backends || '';
+        be.onchange = async () => {
+            if (await saveIntegration({ web_search_ddgs_backends: be.value })) renderHelperModels();
+        };
+        wsCard.append(integField('Search engines',
+            'Comma-separated engines to query. All of these work without an API key.', be));
+    }
+    if (integ.web_search_provider === 'brave') {
+        const key = document.createElement('input');
+        key.type = 'password';
+        key.placeholder = 'BSA…';
+        key.value = integ.web_search_brave_api_key || '';
+        key.onchange = async () => {
+            if (await saveIntegration({ web_search_brave_api_key: key.value })) renderHelperModels();
+        };
+        wsCard.append(integField('Brave API key',
+            'Subscription token from the Brave Search API dashboard. Stored locally, never echoed.', key));
+    }
+    if (integ.web_search_provider === 'searxng') {
+        const url = document.createElement('input');
+        url.type = 'text';
+        url.placeholder = 'http://127.0.0.1:8080';
+        url.value = integ.web_search_searxng_url || '';
+        url.onchange = async () => {
+            if (await saveIntegration({ web_search_searxng_url: url.value })) renderHelperModels();
+        };
+        wsCard.append(integField('SearXNG instance URL',
+            'Base URL of a SearXNG instance with the JSON output format enabled.', url));
+    }
+
+    wsCard.append(integField('Results per search',
+        'How many sources one web_search call returns (1-10).',
+        integNumber('web_search_max_results', 1, 10)));
+
+    const modeSel = integSelect([
+        ['snippet', 'Snippets only'], ['full', 'Full page content'],
+    ], integ.web_search_content_mode || 'snippet', async v => {
+        if (await saveIntegration({ web_search_content_mode: v })) renderHelperModels();
+    });
+    wsCard.append(integField('Result content',
+        'Snippets keep the prompt small. Full page content fetches and inlines each result page.',
+        modeSel));
+
+    if (integ.web_search_content_mode === 'full') {
+        const tr = document.createElement('input');
+        tr.type = 'checkbox';
+        tr.checked = !!integ.web_search_content_truncate;
+        tr.onchange = async () => {
+            if (await saveIntegration({ web_search_content_truncate: tr.checked })) renderHelperModels();
+        };
+        wsCard.append(integField('Truncate page content',
+            'Cut each fetched page at the limit below. Turning this off can flood the model context.', tr));
+        if (integ.web_search_content_truncate) {
+            wsCard.append(integField('Content limit (chars)',
+                'Maximum characters kept per fetched page.',
+                integNumber('web_search_content_max_chars', 500, 200000)));
+        }
+    }
+
+    // Test search: classic uses the real API; through the gateway it hits the real backend read-only.
+    const testRow = document.createElement('div');
+    testRow.className = 'row buttons';
+    const testBtn = document.createElement('button');
+    testBtn.className = 'se-btn';
+    testBtn.textContent = 'Test search';
+    const testOut = cell('');
+    testOut.className = 'dim';
+    testBtn.onclick = async () => {
+        testBtn.disabled = true; testBtn.textContent = 'Testing…';
+        try {
+            const r = await fetchJson(`${API}/admin/api/web-search/test`, { method: 'POST' });
+            testOut.textContent = r.ok
+                ? `Search OK: ${(r.results || []).length} results`
+                : ('Search test failed: ' + ((r.error && r.error.message) || 'unknown'));
+        } catch (err) {
+            testOut.textContent = 'Search test failed: ' + err.message;
+        }
+        testBtn.disabled = false; testBtn.textContent = 'Test search';
+    };
+    testRow.append(testBtn, testOut);
+    wsCard.append(testRow);
+    box.append(wsCard);
+
+    $('hm-sub').textContent = `${helpers.length} helpers · integrations editable (shadow)`;
 
     const host = $('hm-list');
     host.textContent = '';

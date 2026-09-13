@@ -56,6 +56,8 @@ ARGS = None                      # parsed CLI (set in main)
 UPSTREAM = "http://127.0.0.1:11435"
 UP_STATUS = {"ok": False, "last_error": None, "last_ok_ts": None, "polls": 0}
 STORE = None                     # sandboxed settings/profile/template store (UpliftStore)
+GS_SHADOW_PATH = None            # sandbox file holding integrations_* overrides
+GS_SHADOW = {}                   # shadow integration settings (never touches real oMLX)
 
 # ------------------------------------------------------------------ shadow
 # model_id -> full upstream /admin/api/models entry (schema) under MODELS_BASE;
@@ -105,6 +107,15 @@ def emit(ev):
 # ------------------------------------------------------------ http helpers
 def upstream_get(path, timeout=4):
     req = urllib.request.Request(UPSTREAM + path, headers={"Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read())
+
+
+def upstream_post(path, payload, timeout=15):
+    req = urllib.request.Request(
+        UPSTREAM + path, data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        method="POST")
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read())
 
@@ -579,6 +590,15 @@ class Handler(BaseHTTPRequestHandler):
                                           for k, v in MODELS_OVER.items()},
                             "models_base": len(MODELS_BASE),
                             "uptime_seconds": round(time.time() - START, 1)})
+        elif p == "/admin/api/global-settings":
+            try:
+                data = upstream_get(p)
+            except Exception as e:  # noqa: BLE001
+                return self._json({"detail": f"upstream unreachable: {e}",
+                                   "_gateway_offline": True}, 502)
+            if GS_SHADOW:
+                data["integrations"] = {**data.get("integrations", {}), **GS_SHADOW}
+            self._json(data)
         elif p == "/admin/api/models" or p.startswith("/admin/api/models?"):
             self._proxy(p + ("?" + u.query if u.query else ""))
         elif p.startswith("/admin/api/models/") and p.endswith("/settings"):
@@ -780,6 +800,37 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         p = urlparse(self.path).path
         parts = p.split("/")
+        if p == "/admin/api/global-settings":
+            # classic saveIntegrationSettings() sends flat integrations_* keys;
+            # capture them into the shadow overlay, never touch real oMLX.
+            body = self._read_body() or {}
+            changed = {k[len("integrations_"):]: v
+                       for k, v in body.items() if k.startswith("integrations_")}
+            with LOCK:
+                GS_SHADOW.update(changed)
+                try:
+                    with open(GS_SHADOW_PATH, "w") as f:
+                        json.dump(GS_SHADOW, f, indent=2)
+                except OSError:
+                    pass
+            return self._json({"ok": True, "updated": sorted(changed),
+                               "_shadow": True})
+        if p == "/admin/api/web-search/test":
+            body = self._read_body() or {}
+            # fill missing fields from the shadow overlay so the test uses
+            # exactly what the sandbox form shows
+            eff = {**GS_SHADOW}
+            body.setdefault("provider", eff.get("web_search_provider"))
+            body.setdefault("brave_api_key",
+                            eff.get("web_search_brave_api_key", ""))
+            body.setdefault("searxng_url", eff.get("web_search_searxng_url", ""))
+            body.setdefault("ddgs_backends",
+                            eff.get("web_search_ddgs_backends", ""))
+            body.setdefault("max_results", eff.get("web_search_max_results"))
+            try:
+                self._json(upstream_post(p, body))
+            except Exception as e:  # noqa: BLE001
+                self._json({"ok": False, "error": {"message": str(e)}})
         if p.startswith("/admin/api/mock/reset"):
             with LOCK:
                 MODELS_OVER.clear()
@@ -1009,6 +1060,7 @@ def main():
     ap.add_argument("--upstream", default="http://127.0.0.1:11435")
     ap.add_argument("--sim", type=float, default=0.5,
                     help="synthetic requests per second (0 = observe real only)")
+    global GS_SHADOW_PATH
     ap.add_argument("--base", default=os.path.expanduser("~/hermes/TMP/omlx-uplift-data"),
                     help="sandbox dir for model_settings.json / model_profiles.json / "
                          "global_templates.json (NEVER ~/.omlx)")
@@ -1022,6 +1074,14 @@ def main():
         if copied:
             print(f"seeded sandbox from {real_base}: {', '.join(copied)}")
     STORE = store_mod.UpliftStore(ARGS.base)
+    GS_SHADOW_PATH = os.path.join(ARGS.base, "integrations_shadow.json")
+    if os.path.exists(GS_SHADOW_PATH):
+        try:
+            with open(GS_SHADOW_PATH) as f:
+                GS_SHADOW.update(json.load(f))
+            print(f"integrations shadow: {len(GS_SHADOW)} overrides loaded")
+        except (OSError, json.JSONDecodeError):
+            pass
     print(f"settings store: sandbox {ARGS.base} "
           f"({len(STORE.known_model_ids())} records, "
           f"{len(STORE.list_templates())} templates)")
