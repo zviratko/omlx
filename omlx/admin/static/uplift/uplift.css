@@ -463,21 +463,54 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
     background: transparent; border: 1px solid var(--edge); color: var(--ink);
     border-radius: 0; height: 32px; padding: 0 8px; font: 400 12px/1 var(--mono); }
 
-/* ---- Server settings section titles (classic page grouping) ------------- */
+/* ---- Server settings: editable form mirroring the classic layout ------- */
 .gs-title {
     font: 500 11px/1 var(--sans); text-transform: uppercase; letter-spacing: 0.12em;
     color: var(--ink); border-top: 1px solid var(--ink);
     padding: 14px 0 6px; margin-top: 8px;
 }
 .admin-table .gs-title:first-child { margin-top: 0; }
+.urow.settings { display: grid; grid-template-columns: minmax(220px, 1fr) 300px;
+    gap: 16px; align-items: start; padding: 9px 2px;
+    border-bottom: 1px dotted var(--rule); }
+.urow.settings .gctl { display: flex; justify-content: flex-end; }
+.urow.settings input, .urow.settings select {
+    font: 400 11px/1.4 var(--mono); color: var(--ink);
+    background: transparent; border: 1px solid var(--rule);
+    padding: 5px 7px; min-width: 170px; border-radius: 0; }
+.urow.settings input:focus, .urow.settings select:focus { border-color: var(--ink); outline: none; }
+.urow.settings input[type=checkbox] { min-width: 0; width: 15px; height: 15px;
+    accent-color: var(--ink); cursor: pointer; }
+.urow.settings .grange { display: flex; align-items: center; gap: 10px; }
+.urow.settings .gval { font: 400 11px var(--mono); min-width: 34px; text-align: right; }
+.gs-dirs { display: flex; flex-direction: column; gap: 6px; width: 300px; }
+.gs-dir { display: flex; gap: 6px; }
+.gs-dir input { flex: 1; }
+.warn-line { color: var(--accent); font-size: 11px; }
+
+/* MISSING state = caution amber (the one sanctioned secondary, same
+   value as .spill.load), PRESENT = normal, EXTERNAL = dim */
+.admin-table .spill.miss { border-color: var(--accent); color: var(--accent); }
 
 /* ---- MarkItDown special box (its own zone above the helper list) --------- */
 .mk-box { border: 1px solid var(--ink); padding: 14px; display: flex;
-    flex-direction: column; gap: 8px; }
-.mk-head { display: flex; align-items: center; gap: 12px; }
+    flex-direction: column; gap: 12px; margin-bottom: 14px; }
+.mk-head { display: flex; align-items: center; gap: 12px;
+    border-bottom: 1px solid var(--rule); padding-bottom: 8px; }
 .mk-title { font: 500 12px/1 var(--sans); text-transform: uppercase;
     letter-spacing: 0.1em; flex: 1; }
 .mk-cfg { font: 400 11px/1.5 var(--mono); }
+/* integration fields: even grid, aligned controls */
+.mk-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 12px 18px; }
+.mk-fields .field { display: flex; flex-direction: column; gap: 4px; }
+.mk-fields .field input[type="text"], .mk-fields .field input[type="number"],
+.mk-fields .field input[type="password"], .mk-fields .field input[type="url"],
+.mk-fields .field select { width: 100%; box-sizing: border-box; }
+.mk-fields .field input[type="checkbox"] { accent-color: var(--ink); width: 16px;
+    align-self: flex-start; margin: 2px 0; }
+.mk-row { display: flex; align-items: center; gap: 12px;
+    border-top: 1px solid var(--rule); padding-top: 10px; }
 
 /* ---- Full-page logs ---- */
 .logs-page { max-height: calc(100vh - 280px); min-height: 400px; }

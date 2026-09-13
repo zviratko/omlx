@@ -1922,61 +1922,484 @@ $('logs-dl').onclick = () => {
 };
 
 /* ---------------- settings (Settings tab: read-only server preview) ------ */
-/* Server settings: read-only, split into the same sections as the
-   classic Settings page (Server / Model / Resource Management / Cache /
-   Generation Defaults / MCP / Usage & Network / Auth / Interface), with
-   the same key grouping the template uses. Integrations live on the
-   Helper Models page instead (MarkItDown box). */
-const GS_SECTIONS = [
-    ['Server', d => ({ host: d.server?.host, port: d.server?.port,
-        log_level: d.server?.log_level, sse_keepalive_mode: d.server?.sse_keepalive_mode,
-        burst_decode_mode: d.server?.burst_decode_mode,
-        server_aliases: (d.server?.server_aliases || []).join(', '),
-        base_path: d.base_path })],
-    ['Model', d => ({ model_dirs: (d.model?.model_dirs || []).join(', '),
-        model_fallback: d.model?.model_fallback,
-        hide_helper_models: d.model?.hide_helper_models,
-        hf_cache_enabled: d.huggingface?.hf_cache_enabled,
-        hf_cache_path: d.huggingface?.hf_cache_path })],
-    ['Resource Management', d => Object.assign(
-        { idle_timeout_seconds: d.idle_timeout?.idle_timeout_seconds },
-        d.scheduler || {}, d.memory || {})],
-    ['Cache', d => Object.assign({}, d.cache || {})],
-    ['Generation Defaults', d => Object.assign({}, d.sampling || {})],
-    ['MCP', d => Object.assign({}, d.mcp || {})],
-    ['Usage & Network', d => Object.assign({ usage_history: d.usage?.usage_history },
-        d.network || {})],
-    ['Auth', d => Object.assign({}, d.auth || {})],
-    ['Interface', d => Object.assign({}, d.ui || {})],
-];
+/* ---- Server settings: editable form mirroring the classic Settings page.
+   Same 11 sections, same fields, labels, hints, restart badges and
+   conditional visibility (i18n strings copied from the original catalog).
+   Saves replicate classic saveGlobalSettings(): full flat payload POSTed to
+   global-settings — the gateway shadows it, real oMLX is never modified. */
+const GS_LABELS = {
+    lang: { en: 'English', zh: '中文（简体）', 'zh-TW': '中文（繁體）', ko: '한국어',
+            ja: '日本語', ru: 'Русский', es: 'Español', fr: 'Français',
+            'pt-BR': 'Português (Brasil)' },
+    auth: { api_key: 'API Key',
+        api_key_hint: 'Clients must send this key in the Authorization header.',
+        api_key_placeholder: 'Enter new API key',
+        base_path: 'Base Path',
+        base_path_hint: 'URL prefix when served behind a reverse proxy (e.g. /omlx).',
+        skip: 'Skip API key verification',
+        skip_hint: 'Disable authentication for local development.',
+        skip_warning: 'Anyone on the network can call this server.' },
+    server: { host: 'Host', host_placeholder: '127.0.0.1',
+        port: 'Port', log_level: 'Log level',
+        levels: [['error','Error'],['warning','Warning'],['info','Info'],
+                 ['debug','Debug'],['trace','Trace']] },
+    model: { dirs: 'Model Directories', ph_primary: '/path/to/models',
+        ph_additional: 'Additional directory…',
+        fallback: 'Model Fallback', fallback_desc: 'Alias to use when the requested model is unavailable.',
+        hide_helper: 'Hide helper models', hide_helper_desc: 'Keep drafters and assistants out of model lists.',
+        hf_cache: 'Hugging Face cache', hf_cache_desc: 'Reuse downloaded models from the local HF cache.',
+        idle: 'Idle Timeout', idle_desc: 'Unload a model after it has been unused for this long.',
+        idle_opts: [['','Never'],['900','15 minutes'],['1800','30 minutes'],
+                    ['3600','1 hour'],['7200','2 hours'],['28800','8 hours'],
+                    ['86400','24 hours']] },
+    res: { max_conc: 'Max Concurrent Requests',
+        max_conc_hint: 'Requests admitted at once; others queue.',
+        batch: 'Embedding Batch Size',
+        batch_hint: 'Texts encoded per embedding forward pass.',
+        chunked: 'Chunked Prefill', chunked_desc: 'Split long prompts to interleave with decode.',
+        fairness: 'Decode Fairness', fairness_desc: 'Round-robin decode slots across requests.',
+        prio: 'Prefill Priority', prio_speed: 'Speed', prio_context: 'Max Context',
+        guard: 'Prefill Memory Guard',
+        guard_desc: 'Refuse prefill when free memory is below the guard.',
+        tier: 'Memory Guard Tier',
+        tiers: [['safe','Safe'],['balanced','Balanced'],['aggressive','Aggressive'],
+                ['custom','Custom']],
+        custom: 'Custom Ceiling (GB)',
+        custom_ph: 'e.g. 48',
+        cold: 'Cold Cache Limit',
+        cold_desc: 'Cap on non-hot KV cache blocks.',
+        hot: 'Hot Cache Limit' },
+    cache: { enabled: 'KV Cache', enabled_hint: 'Keep KV blocks between requests.',
+        hot_only: 'Hot Cache Only',
+        hot_only_hint: 'Never spill cached KV to SSD.',
+        ssd_dir: 'SSD Cache Directory' },
+    gen: { max_ctx: 'Max Context Window',
+        max_ctx_hint: 'Largest context a request may claim.',
+        max_policy: 'Max Context Policy',
+        max_policy_hint: 'Override applied to model default (blank = model decides).',
+        max_tokens: 'Max Tokens',
+        temperature: 'Temperature', temperature_hint: 'Sampling randomness (0 = greedy).',
+        top_p: 'Top-P (Nucleus)', top_p_hint: 'Cumulative probability mass kept.',
+        top_k: 'Top-K', top_k_hint: '0 disables top-K.',
+        rep_pen: 'Repetition Penalty', rep_pen_hint: 'Penalty for reusing recent tokens (1 = off).' },
+    mcp: { path: 'MCP Config Path',
+        ph: '~/.mcp.json',
+        expose: 'Expose MCP Tools',
+        expose_hint: 'Serve built-in tools over Model Context Protocol.' },
+    usage: { history: 'Usage History',
+        history_hint: 'Record per-model token usage for the Usage tab.' },
+    net: { http_proxy: 'HTTP Proxy', proxy_hint: 'Example: http://proxy.company.com:8080',
+        https_proxy: 'HTTPS Proxy',
+        no_proxy: 'No Proxy', no_proxy_hint: 'Comma-separated hosts to bypass proxy',
+        ca_bundle: 'CA Bundle',
+        ca_hint: 'Path to PEM file for corporate TLS interception' },
+    adv: { distributed: 'Distributed Inference',
+        distributed_enabled: 'Enable distributed inference',
+        distributed_hint: 'Split layers across multiple machines (experimental).',
+        perf: 'Performance', streaming: 'Streaming', uploads: 'Uploads',
+        burst: 'Burst Decode',
+        burst_hint: 'Speculative decode aggressiveness for burst throughput.',
+        burst_opts: [['off','Off'],['light','Light'],['balanced','Balanced'],
+                     ['aggressive','Aggressive']],
+        sse: 'SSE Keepalive Mode',
+        sse_hint: 'How keepalives are emitted on streaming responses.',
+        sse_opts: [['chunk','Chunk'],['comment','Comment'],['off','Off']],
+        mid_sys: 'Preserve Mid-System Cache',
+        mid_sys_hint: 'Keep cached KV for system prompts placed mid-conversation.',
+        audio: 'Maximum Audio Upload Size (MB)',
+        audio_hint: 'Reject audio attachments above this size.',
+        ane: 'ANE Compile Cache',
+        ane_hint: 'Cache CoreML compiled graphs on the Neural Engine.',
+        wt: 'Hot Cache Write-Through',
+        wt_hint: 'Write hot blocks to SSD immediately.',
+        blocks: 'Initial Cache Blocks',
+        blocks_hint: 'KV blocks allocated at startup.',
+        gdn_store: 'GDN Snapshot Storage',
+        gdn_store_hint: 'Where Gated-DeltaNet state snapshots go.',
+        gdn_store_opts: [['auto','Auto'],['ssd_sidecar','SSD Sidecar'],
+                         ['embedded','Embedded']],
+        gdn_pend: 'GDN Pending Write Limit',
+        gdn_pend_hint: 'Max queued SSD writes before backpressure.',
+        gdn_prec: 'GDN Sidecar State Precision',
+        gdn_prec_hint: 'Quantisation of sidecar-held recurrent state.',
+        gdn_prec_opts: [['fp32','FP32'],['rht_int16','RHT INT16'],['bf16','BF16'],
+                        ['int8','INT8'],['rht_int8','RHT INT8']],
+        gdn_prec_warning: 'INT8/RHT INT8 state precision may degrade long-context quality.' },
+    badge: 'RESTART REQUIRED',
+    restart_notice: 'Host and port changes take effect after a restart.',
+};
+
+// shadow key -> nested [section, field] map (mirrors GlobalSettingsRequest)
+const GS_MAP = {
+    host: ['server','host'], port: ['server','port'],
+    log_level: ['server','log_level'],
+    sse_keepalive_mode: ['server','sse_keepalive_mode'],
+    burst_decode_mode: ['server','burst_decode_mode'],
+    preserve_mid_system_cache: ['server','preserve_mid_system_cache'],
+    distributed_inference_enabled: ['server','distributed_inference_enabled'],
+    max_audio_upload_size: ['server','max_audio_upload_size'],
+    model_dirs: ['model','model_dirs'], model_fallback: ['model','model_fallback'],
+    hide_helper_models: ['model','hide_helper_models'],
+    idle_timeout_seconds: ['idle_timeout','idle_timeout_seconds'],
+    hf_cache_enabled: ['huggingface','hf_cache_enabled'],
+    memory_prefill_memory_guard: ['memory','prefill_memory_guard'],
+    memory_guard_tier: ['memory','memory_guard_tier'],
+    memory_guard_custom_ceiling_gb: ['memory','memory_guard_custom_ceiling_gb'],
+    max_concurrent_requests: ['scheduler','max_concurrent_requests'],
+    embedding_batch_size: ['scheduler','embedding_batch_size'],
+    chunked_prefill: ['scheduler','chunked_prefill'],
+    prefill_priority: ['scheduler','prefill_priority'],
+    decode_fairness: ['scheduler','decode_fairness'],
+    cache_enabled: ['cache','enabled'],
+    ssd_cache_dir: ['cache','ssd_cache_dir'],
+    hot_cache_only: ['cache','hot_cache_only'],
+    hot_cache_write_through: ['cache','hot_cache_write_through'],
+    ane_compile_cache: ['cache','ane_compile_cache'],
+    initial_cache_blocks: ['cache','initial_cache_blocks'],
+    gdn_snapshot_storage: ['cache','gdn_snapshot_storage'],
+    gdn_ssd_pending_max_size: ['cache','gdn_ssd_pending_max_size'],
+    gdn_sidecar_precision: ['cache','gdn_sidecar_precision'],
+    sampling_max_context_window: ['sampling','max_context_window'],
+    sampling_max_context_window_policy: ['sampling','max_context_window_policy'],
+    sampling_max_tokens: ['sampling','max_tokens'],
+    sampling_temperature: ['sampling','temperature'],
+    sampling_top_p: ['sampling','top_p'], sampling_top_k: ['sampling','top_k'],
+    sampling_repetition_penalty: ['sampling','repetition_penalty'],
+    mcp_config: ['mcp','config_path'], mcp_expose_tools: ['mcp','expose_tools'],
+    usage_history: ['usage','usage_history'],
+    network_http_proxy: ['network','http_proxy'],
+    network_https_proxy: ['network','https_proxy'],
+    network_no_proxy: ['network','no_proxy'],
+    network_ca_bundle: ['network','ca_bundle'],
+    ui_language: ['ui','language'],
+    api_key: ['auth','api_key'],
+    skip_api_key_verification: ['auth','skip_api_key_verification'],
+};
+
+let GS = null;   // merged working copy (upstream + shadow)
+
+function gsGet(sec, field) {
+    const sh = GS._shadow || {};
+    const flat = Object.keys(GS_MAP).find(k =>
+        GS_MAP[k][0] === sec && GS_MAP[k][1] === field);
+    if (flat && flat in sh) return sh[flat];
+    const v = (GS[sec] || {})[field];
+    return v;
+}
+
+async function gsSave(fields) {
+    // classic saveGlobalSettings(): every mapped field of the working copy,
+    // plus the changed ones; server applies what's present, ignores nulls
+    const body = Object.assign({}, GS._shadow || {});
+    Object.assign(body, fields);
+    try {
+        const r = await fetch(`${API}/admin/api/global-settings`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        if (!r.ok) { toast('save failed: HTTP ' + r.status); return false; }
+        GS._shadow = body;
+        $('gs-sub').textContent = 'saved ✓ (shadow — real oMLX untouched)';
+        return true;
+    } catch (err) { toast('save failed: ' + err.message); return false; }
+}
+
+function gsBadge() {
+    const b = document.createElement('span');
+    b.className = 'spill load'; b.textContent = GS_LABELS.badge;
+    b.title = 'Applied after oMLX restart';
+    return b;
+}
+
+function gsRow(sec, labelTxt, hint, control, opts) {
+    opts = opts || {};
+    const row = document.createElement('div');
+    row.className = 'urow settings';
+    const lab = cell(labelTxt); lab.className = 'uname';
+    if (hint) {
+        const h = document.createElement('small');
+        h.className = 'dim'; h.textContent = hint;
+        lab.append(document.createElement('br'), h);
+    }
+    if (opts.badge) lab.append(gsBadge());
+    const ctl = cell(''); ctl.className = 'gctl';
+    ctl.append(control);
+    row.append(lab, ctl);
+    return row;
+}
+
+function gsText(sec, field, flat, L, extra) {
+    const inp = document.createElement('input');
+    inp.type = (extra && extra.type) || 'text';
+    if (extra && extra.placeholder) inp.placeholder = extra.placeholder;
+    if (extra && extra.min !== undefined) inp.min = extra.min;
+    if (extra && extra.max !== undefined) inp.max = extra.max;
+    if (extra && extra.step !== undefined) inp.step = extra.step;
+    const v = gsGet(sec, field);
+    inp.value = v == null ? '' : v;
+    if (extra && extra.range) {
+        const out = document.createElement('span');
+        out.className = 'gval'; out.textContent = String(v);
+        inp.oninput = () => { out.textContent = inp.value; };
+        inp.onchange = async () => { await gsSave({ [flat]: Number(inp.value) }); };
+        const wrap = document.createElement('span');
+        wrap.className = 'grange'; wrap.append(inp, out);
+        return wrap;
+    }
+    inp.onchange = async () => {
+        let val = inp.value;
+        if (extra && extra.number) val = val === '' ? null : Number(val);
+        if (extra && extra.bool) val = inp.checked;
+        if (await gsSave({ [flat]: val })) {
+            if (extra && extra.reload) renderGlobalSettings();
+        }
+    };
+    return inp;
+}
+
+function gsToggle(flat, on) {
+    const t = document.createElement('input');
+    t.type = 'checkbox'; t.checked = !!on;
+    t.onchange = () => gsSave({ [flat]: t.checked });
+    return t;
+}
+
+function gsSelect(flat, options, cur) {
+    const sel = document.createElement('select');
+    for (const [v, t] of options) {
+        const o = document.createElement('option');
+        o.value = v; o.textContent = t; sel.append(o);
+    }
+    sel.value = cur == null ? '' : String(cur);
+    sel.onchange = async () => {
+        if (await gsSave({ [flat]: sel.value === '' ? null : sel.value }))
+            renderGlobalSettings();   // refresh conditional rows (x-show parity)
+    };
+    return sel;
+}
+
+function gsTitle(t) {
+    const h = document.createElement('div');
+    h.className = 'gs-title'; h.textContent = t;
+    return h;
+}
 
 async function pollGlobalSettings() {
     let d;
     try { d = await fetchJson(`${API}/admin/api/global-settings`); }
-    catch (err) { emptyMsg($('gs-body'), 'global-settings not served by gateway (' + err.message + ')'); return; }
+    catch (err) { emptyMsg($('gs-body'), 'global-settings not served (' + err.message + ')'); return; }
+    GS = d;   // gateway already overlaid the shadow; resave accumulates
+    renderGlobalSettings();
+}
+
+function renderGlobalSettings() {
     const body = $('gs-body');
     body.textContent = '';
-    let n = 0;
-    for (const [title, pick] of GS_SECTIONS) {
-        const rows = Object.entries(pick(d) || {}).filter(([, v]) => v !== undefined);
-        if (!rows.length) continue;
-        const h = document.createElement('div');
-        h.className = 'gs-title'; h.textContent = title;
-        body.append(h);
-        for (const [k, v] of rows) {
-            n++;
-            const row = document.createElement('div'); row.className = 'urow settings';
-            const kc = cell(k); kc.className = 'uname';
-            const sv = Array.isArray(v) ? v.join(', ') : v === null ? '—' : String(v);
-            const vc = cell(sv.length > 120 ? sv.slice(0, 117) + '…' : sv);
-            vc.className = 'dim';
-            row.append(kc, vc);
-            body.append(row);
-        }
+    const L = GS_LABELS;
+
+    // ---- Global
+    body.append(gsTitle('Global'));
+    const notice = cell(L.restart_notice + ' ' + L.badge);
+    notice.className = 'dim warn-line';
+    body.append(notice);
+
+    // ---- Language
+    body.append(gsTitle('Language'));
+    body.append(gsRow('ui', 'Interface language', '',
+        gsSelect('ui_language', Object.entries(L.lang), gsGet('ui','language'))));
+
+    // ---- Auth
+    body.append(gsTitle('Auth'));
+    body.append(gsRow('auth', L.auth.api_key, L.auth.api_key_hint,
+        gsText('auth','api_key','api_key', L, { type: 'password',
+            placeholder: L.auth.api_key_placeholder, reload: true })));
+    const bpIn = document.createElement('input');
+    bpIn.type = 'text'; bpIn.value = GS.base_path || '';
+    bpIn.disabled = true;
+    bpIn.title = 'Set at launch (--base-path); read-only';
+    body.append(gsRow('auth', L.auth.base_path, L.auth.base_path_hint, bpIn));
+    body.append(gsRow('auth', L.auth.skip, L.auth.skip_hint + ' ' + L.auth.skip_warning,
+        gsToggle('skip_api_key_verification', gsGet('auth','skip_api_key_verification'))));
+
+    // ---- Server
+    body.append(gsTitle('Server'));
+    body.append(gsRow('server', L.server.host, '',
+        gsText('server','host','host', L, { placeholder: L.server.host_placeholder }),
+        { badge: true }));
+    body.append(gsRow('server', L.server.port, '',
+        gsText('server','port','port', L, { number: true }), { badge: true }));
+    body.append(gsRow('server', L.server.log_level, '',
+        gsSelect('log_level', L.server.levels, gsGet('server','log_level'))));
+
+    // ---- Model
+    body.append(gsTitle('Model'));
+    const dirs = gsGet('model','model_dirs') || [];
+    const dl = document.createElement('div');
+    dl.className = 'gs-dirs';
+    dirs.forEach((d, i) => {
+        const one = document.createElement('div');
+        one.className = 'gs-dir';
+        const inp = document.createElement('input');
+        inp.type = 'text'; inp.value = d;
+        inp.placeholder = i === 0 ? L.model.ph_primary : L.model.ph_additional;
+        const rm = document.createElement('button');
+        rm.className = 'se-btn act'; rm.textContent = '×';
+        rm.style.display = dirs.length > 1 ? '' : 'none';
+        rm.onclick = async () => {
+            const nd = dirs.filter((_, j) => j !== i);
+            if (await gsSave({ model_dirs: nd })) renderGlobalSettings();
+        };
+        inp.onchange = async () => {
+            const nd = dirs.slice(); nd[i] = inp.value;
+            if (await gsSave({ model_dirs: nd })) renderGlobalSettings();
+        };
+        one.append(inp, rm);
+        dl.append(one);
+    });
+    const add = document.createElement('button');
+    add.className = 'se-btn act'; add.textContent = '+ add directory';
+    add.onclick = async () => {
+        if (await gsSave({ model_dirs: dirs.concat('') })) renderGlobalSettings();
+    };
+    dl.append(add);
+    body.append(gsRow('model', L.model.dirs, '', dl));
+    body.append(gsRow('model', L.model.fallback, L.model.fallback_desc,
+        gsText('model','model_fallback','model_fallback', L)));
+    body.append(gsRow('model', L.model.hide_helper, L.model.hide_helper_desc,
+        gsToggle('hide_helper_models', gsGet('model','hide_helper_models'))));
+    body.append(gsRow('model', L.model.hf_cache, L.model.hf_cache_desc,
+        gsToggle('hf_cache_enabled', gsGet('huggingface','hf_cache_enabled'))));
+    const hfp = cell((GS.huggingface || {}).hf_cache_path || '—');
+    hfp.className = 'dim';
+    body.append(gsRow('model', 'HF cache path', '', hfp));
+    body.append(gsRow('model', L.model.idle, L.model.idle_desc,
+        gsSelect('idle_timeout_seconds', L.model.idle_opts,
+                 gsGet('idle_timeout','idle_timeout_seconds') ?? '')));
+
+    // ---- Resource Management
+    body.append(gsTitle('Resource Management'));
+    body.append(gsRow('res', L.res.max_conc, L.res.max_conc_hint,
+        gsText('scheduler','max_concurrent_requests','max_concurrent_requests', L,
+               { number: true, min: 1 })));
+    body.append(gsRow('res', L.res.batch, L.res.batch_hint,
+        gsText('scheduler','embedding_batch_size','embedding_batch_size', L,
+               { number: true, min: 1 })));
+    body.append(gsRow('res', L.res.chunked, L.res.chunked_desc,
+        gsToggle('chunked_prefill', gsGet('scheduler','chunked_prefill'))));
+    body.append(gsRow('res', L.res.prio, '',
+        gsSelect('prefill_priority', [['speed', L.res.prio_speed],
+                                      ['context', L.res.prio_context]],
+                 gsGet('scheduler','prefill_priority'))));
+    body.append(gsRow('res', L.res.fairness, L.res.fairness_desc,
+        gsToggle('decode_fairness', gsGet('scheduler','decode_fairness'))));
+    body.append(gsRow('res', L.res.guard, L.res.guard_desc,
+        gsToggle('memory_prefill_memory_guard', gsGet('memory','prefill_memory_guard'))));
+    const tierSel = gsSelect('memory_guard_tier', L.res.tiers,
+                             gsGet('memory','memory_guard_tier'));
+    body.append(gsRow('res', L.res.tier, '', tierSel));
+    if (gsGet('memory','memory_guard_tier') === 'custom') {
+        body.append(gsRow('res', L.res.custom, '',
+            gsText('memory','memory_guard_custom_ceiling_gb',
+                   'memory_guard_custom_ceiling_gb', L,
+                   { number: true, min: 1, step: 1, placeholder: L.res.custom_ph })));
     }
-    $('gs-sub').textContent = `${n} keys · read-only via gateway`;
+
+    // ---- Cache
+    body.append(gsTitle('Cache'));
+    body.append(gsRow('cache', L.cache.enabled, L.cache.enabled_hint,
+        gsToggle('cache_enabled', gsGet('cache','enabled'))));
+    body.append(gsRow('cache', L.cache.hot_only, L.cache.hot_only_hint,
+        gsToggle('hot_cache_only', gsGet('cache','hot_cache_only'))));
+    body.append(gsRow('cache', L.cache.ssd_dir, '',
+        gsText('cache','ssd_cache_dir','ssd_cache_dir', L)));
+
+    // ---- Generation Defaults
+    body.append(gsTitle('Generation Defaults'));
+    const temp = gsText('sampling','temperature','sampling_temperature', L,
+        { range: true, min: 0, max: 2, step: 0.1 });
+    body.append(gsRow('gen', L.gen.temperature, L.gen.temperature_hint, temp));
+    const topp = gsText('sampling','top_p','sampling_top_p', L,
+        { range: true, min: 0, max: 1, step: 0.05 });
+    body.append(gsRow('gen', L.gen.top_p, L.gen.top_p_hint, topp));
+    body.append(gsRow('gen', L.gen.top_k, L.gen.top_k_hint,
+        gsText('sampling','top_k','sampling_top_k', L, { number: true, min: 0 })));
+    body.append(gsRow('gen', L.gen.max_tokens, '',
+        gsText('sampling','max_tokens','sampling_max_tokens', L,
+               { number: true, min: 1, max: 131072 })));
+    body.append(gsRow('gen', L.gen.max_ctx, L.gen.max_ctx_hint,
+        gsText('sampling','max_context_window','sampling_max_context_window', L,
+               { number: true, min: 1, max: 2097152 })));
+    body.append(gsRow('gen', L.gen.max_policy, L.gen.max_policy_hint,
+        gsText('sampling','max_context_window_policy',
+               'sampling_max_context_window_policy', L,
+               { number: true, min: 1, max: 2097152, placeholder: 'None' })));
+    body.append(gsRow('gen', L.gen.rep_pen, L.gen.rep_pen_hint,
+        gsText('sampling','repetition_penalty','sampling_repetition_penalty', L,
+               { number: true, min: 1, step: 0.05 })));
+
+    // ---- MCP
+    body.append(gsTitle('MCP'));
+    body.append(gsRow('mcp', L.mcp.path, '',
+        gsText('mcp','config_path','mcp_config', L, { placeholder: L.mcp.ph }),
+        { badge: true }));
+    body.append(gsRow('mcp', L.mcp.expose, L.mcp.expose_hint,
+        gsToggle('mcp_expose_tools', gsGet('mcp','expose_tools'))));
+
+    // ---- Usage & Network
+    body.append(gsTitle('Usage & Network'));
+    body.append(gsRow('usage', L.usage.history, L.usage.history_hint,
+        gsToggle('usage_history', gsGet('usage','usage_history'))));
+    body.append(gsRow('net', L.net.http_proxy, L.net.proxy_hint,
+        gsText('network','http_proxy','network_http_proxy', L)));
+    body.append(gsRow('net', L.net.https_proxy, L.net.proxy_hint,
+        gsText('network','https_proxy','network_https_proxy', L)));
+    body.append(gsRow('net', L.net.no_proxy, L.net.no_proxy_hint,
+        gsText('network','no_proxy','network_no_proxy', L)));
+    body.append(gsRow('net', L.net.ca_bundle, L.net.ca_hint,
+        gsText('network','ca_bundle','network_ca_bundle', L)));
+
+    // ---- Advanced
+    body.append(gsTitle('Advanced'));
+    body.append(gsRow('adv', L.adv.distributed_enabled, L.adv.distributed_hint,
+        gsToggle('distributed_inference_enabled',
+                 gsGet('server','distributed_inference_enabled'))));
+    body.append(gsRow('adv', L.adv.burst, L.adv.burst_hint,
+        gsSelect('burst_decode_mode', L.adv.burst_opts,
+                 gsGet('server','burst_decode_mode'))));
+    body.append(gsRow('adv', L.adv.sse, L.adv.sse_hint,
+        gsSelect('sse_keepalive_mode', L.adv.sse_opts,
+                 gsGet('server','sse_keepalive_mode'))));
+    body.append(gsRow('adv', L.adv.mid_sys, L.adv.mid_sys_hint,
+        gsToggle('preserve_mid_system_cache', gsGet('server','preserve_mid_system_cache'))));
+    body.append(gsRow('adv', L.adv.audio, L.adv.audio_hint,
+        gsText('server','max_audio_upload_size','max_audio_upload_size', L,
+               { number: true, min: 1 })));
+    body.append(gsRow('adv', L.adv.ane, L.adv.ane_hint,
+        gsToggle('ane_compile_cache', gsGet('cache','ane_compile_cache'))));
+    body.append(gsRow('adv', L.adv.wt, L.adv.wt_hint,
+        gsToggle('hot_cache_write_through', gsGet('cache','hot_cache_write_through'))));
+    body.append(gsRow('adv', L.adv.blocks, L.adv.blocks_hint,
+        gsText('cache','initial_cache_blocks','initial_cache_blocks', L,
+               { number: true, min: 1 })));
+    const gsel = gsSelect('gdn_snapshot_storage', L.adv.gdn_store_opts,
+                          gsGet('cache','gdn_snapshot_storage'));
+    body.append(gsRow('adv', L.adv.gdn_store, L.adv.gdn_store_hint, gsel));
+    if (gsGet('cache','gdn_snapshot_storage') === 'ssd_sidecar') {
+        body.append(gsRow('adv', L.adv.gdn_pend, L.adv.gdn_pend_hint,
+            gsText('cache','gdn_ssd_pending_max_size','gdn_ssd_pending_max_size', L,
+                   { placeholder: '512MB' })));
+        const prow = gsRow('adv', L.adv.gdn_prec, L.adv.gdn_prec_hint,
+            gsSelect('gdn_sidecar_precision', L.adv.gdn_prec_opts,
+                     gsGet('cache','gdn_sidecar_precision')));
+        if (['int8','rht_int8'].includes(gsGet('cache','gdn_sidecar_precision'))) {
+            const w = document.createElement('small');
+            w.className = 'fhint warn'; w.textContent = L.adv.gdn_prec_warning;
+            prow.querySelector('.uname').append(w);
+        }
+        body.append(prow);
+    }
 }
-/* ---------------- models sub-pages: downloader / quantizer / uploader ---- */
+
 async function postJson(url, body) {
     const r = await fetch(url, { method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2427,6 +2850,7 @@ function renderUploader() {
 
 /* ---------------- settings sub-pages: stored model settings + prune ----- */
 let storedIndex = null;
+
 async function renderStoredSettings() {
     let idx, templates = [];
     try {
@@ -2443,8 +2867,10 @@ async function renderStoredSettings() {
     for (const e of rows) {
         const row = document.createElement('div'); row.className = 'urow usage';
         const name = cell(e.id); name.className = 'uname';
-        row.append(name, cell(e.alias || ''),
-                   cell(orphan.has(e.id) ? 'MISSING' : (known.has(e.id) ? 'PRESENT' : 'EXTERNAL')));
+        const st = cell(orphan.has(e.id) ? 'MISSING' : (known.has(e.id) ? 'PRESENT' : 'EXTERNAL'));
+        if (orphan.has(e.id)) st.className = 'spill miss';   // caution amber
+        else if (!known.has(e.id)) st.className = 'dim';
+        row.append(name, cell(e.alias || ''), st);
         host.append(row);
     }
     if (!rows.length) host.innerHTML = '<div class="empty">No match</div>';
@@ -2526,7 +2952,9 @@ async function openPruneDialog() {
 $('btn-prune').onclick = openPruneDialog;
 
 
-/* ---------------- models sub-page: helper models + MarkItDown box -------- */
+
+
+/* ---------------- models sub-page: helper models -------- */
 async function renderHelperModels() {
     let models;
     try { models = (await fetchJson(`${API}/admin/api/models`)).models; }
@@ -2615,10 +3043,8 @@ async function renderHelperModels() {
         head.append(state);
     }
     mkCard.append(head);
-    const desc = document.createElement('div');
-    desc.className = 'dim';
-    desc.textContent = 'Preprocess supported file attachments before LLM requests.';
-    mkCard.append(desc);
+    const mkGrid = document.createElement('div');
+    mkGrid.className = 'mk-fields';
 
     const enabledInp = document.createElement('input');
     enabledInp.type = 'checkbox';
@@ -2626,7 +3052,7 @@ async function renderHelperModels() {
     enabledInp.onchange = async () => {
         if (await saveIntegration({ markitdown_enabled: enabledInp.checked })) renderHelperModels();
     };
-    mkCard.append(integField('Enable MarkItDown',
+    mkGrid.append(integField('Enable MarkItDown',
         'Preprocess supported file attachments before LLM requests.', enabledInp));
 
     const exposeInp = document.createElement('input');
@@ -2636,13 +3062,13 @@ async function renderHelperModels() {
     exposeInp.onchange = async () => {
         if (await saveIntegration({ markitdown_expose_model: exposeInp.checked })) renderHelperModels();
     };
-    mkCard.append(integField('Show as model',
+    mkGrid.append(integField('Show as model',
         'Expose MarkItDown in model lists for direct Markdown conversion requests.', exposeInp));
 
-    mkCard.append(integField('Max file size (MB)',
+    mkGrid.append(integField('Max file size (MB)',
         'Reject larger document attachments before conversion.',
         integNumber('markitdown_max_file_size_mb', 1, 1024)));
-    mkCard.append(integField('Max files per request',
+    mkGrid.append(integField('Max files per request',
         'Limit document attachments converted in one request.',
         integNumber('markitdown_max_files_per_request', 1, 50)));
 
@@ -2662,7 +3088,8 @@ async function renderHelperModels() {
             + 'and PDFs with tables may not be processed correctly.';
         pdfField.append(warn);
     }
-    mkCard.append(pdfField);
+    mkGrid.append(pdfField);
+    mkCard.append(mkGrid);
     box.append(mkCard);
 
     /* ---- Web Search ---- */
@@ -2674,7 +3101,8 @@ async function renderHelperModels() {
     wsTitle.className = 'mk-title';
     wsTitle.textContent = 'Web Search';
     wsHead.append(wsTitle);
-    wsCard.append(wsHead);
+    const wsGrid = document.createElement('div');
+    wsGrid.className = 'mk-fields';
 
     const provSel = integSelect([
         ['ddgs', 'DDGS Total'], ['ddgs_custom', 'DDGS Custom'],
@@ -2683,7 +3111,7 @@ async function renderHelperModels() {
     ], integ.web_search_provider || 'ddgs', async v => {
         if (await saveIntegration({ web_search_provider: v })) renderHelperModels();
     });
-    wsCard.append(integField('Search provider',
+    wsGrid.append(integField('Search provider',
         'Backend used by the chat web search tool. DDGS Total queries every available engine and needs no key.',
         provSel));
 
@@ -2695,7 +3123,7 @@ async function renderHelperModels() {
         be.onchange = async () => {
             if (await saveIntegration({ web_search_ddgs_backends: be.value })) renderHelperModels();
         };
-        wsCard.append(integField('Search engines',
+        wsGrid.append(integField('Search engines',
             'Comma-separated engines to query. All of these work without an API key.', be));
     }
     if (integ.web_search_provider === 'brave') {
@@ -2706,7 +3134,7 @@ async function renderHelperModels() {
         key.onchange = async () => {
             if (await saveIntegration({ web_search_brave_api_key: key.value })) renderHelperModels();
         };
-        wsCard.append(integField('Brave API key',
+        wsGrid.append(integField('Brave API key',
             'Subscription token from the Brave Search API dashboard. Stored locally, never echoed.', key));
     }
     if (integ.web_search_provider === 'searxng') {
@@ -2717,11 +3145,11 @@ async function renderHelperModels() {
         url.onchange = async () => {
             if (await saveIntegration({ web_search_searxng_url: url.value })) renderHelperModels();
         };
-        wsCard.append(integField('SearXNG instance URL',
+        wsGrid.append(integField('SearXNG instance URL',
             'Base URL of a SearXNG instance with the JSON output format enabled.', url));
     }
 
-    wsCard.append(integField('Results per search',
+    wsGrid.append(integField('Results per search',
         'How many sources one web_search call returns (1-10).',
         integNumber('web_search_max_results', 1, 10)));
 
@@ -2730,7 +3158,7 @@ async function renderHelperModels() {
     ], integ.web_search_content_mode || 'snippet', async v => {
         if (await saveIntegration({ web_search_content_mode: v })) renderHelperModels();
     });
-    wsCard.append(integField('Result content',
+    wsGrid.append(integField('Result content',
         'Snippets keep the prompt small. Full page content fetches and inlines each result page.',
         modeSel));
 
@@ -2741,10 +3169,10 @@ async function renderHelperModels() {
         tr.onchange = async () => {
             if (await saveIntegration({ web_search_content_truncate: tr.checked })) renderHelperModels();
         };
-        wsCard.append(integField('Truncate page content',
+        wsGrid.append(integField('Truncate page content',
             'Cut each fetched page at the limit below. Turning this off can flood the model context.', tr));
         if (integ.web_search_content_truncate) {
-            wsCard.append(integField('Content limit (chars)',
+            wsGrid.append(integField('Content limit (chars)',
                 'Maximum characters kept per fetched page.',
                 integNumber('web_search_content_max_chars', 500, 200000)));
         }
@@ -2771,7 +3199,9 @@ async function renderHelperModels() {
         testBtn.disabled = false; testBtn.textContent = 'Test search';
     };
     testRow.append(testBtn, testOut);
-    wsCard.append(testRow);
+    testRow.className = 'mk-row';
+    wsGrid.append(testRow);
+    wsCard.append(wsHead, wsGrid);
     box.append(wsCard);
 
     $('hm-sub').textContent = `${helpers.length} helpers · integrations editable (shadow)`;
