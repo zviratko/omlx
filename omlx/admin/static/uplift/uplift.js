@@ -1770,8 +1770,13 @@ function editorNode() {
     scroll.append(fields);
     const bar = document.createElement('div');
     bar.className = 'editor-bar';
+    // CHANGES lives to the RIGHT of the form, not below it: when changes are
+    // queued the panel widens and the box appears as a side rail
+    const bodyRow = document.createElement('div');
+    bodyRow.className = 'editor-body';
     const changes = document.createElement('div');
     changes.id = 'se-changes'; changes.className = 'changelist ed'; changes.hidden = true;
+    bodyRow.append(scroll, changes);
     const save = document.createElement('button');
     save.className = 'se-btn'; save.textContent = 'Save'; save.id = 'se-save';
     const close = document.createElement('button');
@@ -1779,7 +1784,7 @@ function editorNode() {
     const msg = document.createElement('span');
     msg.className = 'stat-sub'; msg.id = 'se-msg';
     bar.append(save, close, msg);
-    panel.append(head, tabsRow, scroll, changes, bar);
+    panel.append(head, tabsRow, bodyRow, bar);
     save.onclick = saveEditor;
     close.onclick = () => closeEditor();
     return panel;
@@ -3138,7 +3143,7 @@ function gsValFlat(flat) {
     return GS._shadow ? GS._shadow[flat] : undefined;
 }
 function gsDisplay(v) {
-    if (v === null || v === undefined || v === '') return '—';
+    if (v === null || v === undefined || v === '') return '(unset)';
     return String(Array.isArray(v) ? v.join(',') : v);
 }
 /* fields whose values are secrets: diff chips and the CHANGES list say

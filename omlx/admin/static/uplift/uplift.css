@@ -440,7 +440,6 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
     align-items: center; }
 .admin-table .urow.admin { grid-template-columns: minmax(0,3fr) 110px 104px 90px minmax(0,5fr); }
 .admin-table .urow.usage { grid-template-columns: minmax(0,4fr) minmax(0,2fr) 120px auto; }
-.admin-table .urow.settings { grid-template-columns: minmax(0,2fr) minmax(0,5fr); }
 .admin-table .urow.head { color: var(--dim); border-top: 1px solid var(--ink); }
 .admin-table .urow span:not(:first-child) { text-align: right; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -559,6 +558,13 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
 
 /* ---- Model settings editor: popup modal, roomy, monospace everywhere ---- */
 .modal.nasa.editor { width: min(860px, 100%); max-height: 92vh; }
+/* form sits left; a CHANGES side rail opens on the right when changes queue
+   (the modal widens, the form keeps its width at the left edge) */
+.modal.nasa.editor:has(.changelist.ed:not([hidden])) { width: min(1200px, 100%); }
+.editor-body { display: flex; gap: 12px; flex: 1; min-height: 0; }
+.editor-body .editor-scroll { flex: 0 1 830px; min-width: 0; }
+#se-changes.ed { flex: 0 0 320px; align-self: stretch; max-height: none;
+    overflow: auto; border: 1px solid var(--edge); background: var(--field); }
 .modal.editor .editor-head { padding: 10px 14px; font-size: 12px; }
 .modal.editor .editor-scroll { padding: 8px 14px; }
 .modal.editor .editor-bar { padding: 8px 14px; }
@@ -653,13 +659,14 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
    framed panel with an inverted signage header strip; rows alternate
    shades inside the panel; controls sit in recessed field wells. */
 #gs-body.gs-wrap {
-    display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start;
-    max-width: 1200px; margin: 0 auto;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+    gap: 14px; align-items: start;
+    max-width: 1500px; margin: 0 auto;
 }
-/* boxes snap into a 2-column grid: ~half width, rows align at column edges */
+/* boxes snap into the grid rows; each box stretches to its column so no
+   trailing gap opens at the right edge */
 .gs-box {
-    flex: 1 1 calc(50% - 9px); min-width: 340px; max-width: 100%;
-    margin: 0 0 0 0;
+    margin: 0;
     border: 1px solid var(--edge); background: var(--card);
 }
 .gs-box-title {
@@ -670,12 +677,12 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
 }
 .gs-box-body { padding: 2px 12px 10px; }
 .gs-box .gs-title { display: none; }   /* title is re-emitted as panel header */
-.urow.settings { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 230px) 190px;
-    gap: 10px; align-items: center; padding: 9px 6px;
+.urow.settings { display: grid; grid-template-columns: minmax(0, 1fr) 84px 150px;
+    gap: 8px; align-items: center; padding: 9px 6px;
     border-bottom: 1px solid var(--edge); }
 .diffslot { display: flex; justify-content: flex-end; min-width: 0; }
 @media (max-width: 900px) {
-    .urow.settings { grid-template-columns: minmax(0, 1fr) 190px; }
+    .urow.settings { grid-template-columns: minmax(0, 1fr) 150px; }
     .diffslot { grid-column: 1 / -1; justify-content: flex-start; }
 }
 /* alternating row shade: instrument panel readout lines */
@@ -765,7 +772,7 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
 .urow.settings input, .urow.settings select, .urow.settings textarea {
     font: 400 11px/1.4 var(--mono); color: var(--ink);
     background: var(--field); border: 1px solid var(--edge);
-    padding: 6px 8px; min-width: 170px; border-radius: 0; }
+    padding: 6px 8px; min-width: 96px; border-radius: 0; }
 [data-theme="light"] .urow.settings input,
 [data-theme="light"] .urow.settings select { border-color: var(--ink); }
 .urow.settings select { -webkit-appearance: none; appearance: none;
@@ -781,7 +788,7 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
     color: var(--ink); opacity: 0.55; background: var(--row2); }
 .urow.settings input[type=checkbox] { min-width: 0; width: 15px; height: 15px;
     padding: 0; background: var(--field); accent-color: var(--ink); cursor: pointer; }
-.urow.settings .gctl { width: 190px; }
+.urow.settings .gctl { width: 150px; }
 .urow.settings .grange { display: flex; align-items: center; gap: 10px; width: 100%; }
 .urow.settings .grange input { flex: 1; min-width: 0; }
 .urow.settings .gval { min-width: 52px; }
@@ -823,13 +830,14 @@ label.se-row.restartq input, label.se-row.restartq select, label.se-row.restartq
     border-bottom-color: var(--red); }
 /* persistent save bar under the settings form: CHANGES list above buttons */
 .savebar { display: block; border: 1px solid var(--edge); background: var(--card);
-    padding: 0; margin-top: 4px; max-width: 1200px; margin-left: auto; margin-right: auto; }
+    padding: 0; margin-top: 4px; max-width: 1500px; margin-left: auto; margin-right: auto; }
 .savebar-row { display: flex; justify-content: flex-end; align-items: center;
     gap: 8px; padding: 8px 10px; }
 .changelist { border-bottom: 1px solid var(--edge); padding: 8px 10px;
     max-height: 180px; overflow: auto; background: var(--field); }
-.changelist .ch-head { font: 500 10px/1 var(--mono); letter-spacing: 0.1em;
-    color: var(--dim); margin-bottom: 6px; }
+.changelist .ch-head { font: 600 12px/1 var(--sans); letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--bg); background: var(--ink);
+    margin: -8px -10px 8px; padding: 8px 10px; }
 .changelist .ch-line { font: 400 11px/1.5 var(--mono); white-space: pre-wrap;
     word-break: break-all; }
 .changelist .ch-new { color: var(--accent); }
