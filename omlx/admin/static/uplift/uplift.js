@@ -840,18 +840,24 @@ async function fetchJson(url, opts) {
     return res.json();
 }
 async function putModelSettings(model, settings) {
-    const res = await fetch(`${API}/admin/api/models/${encodeURIComponent(model)}/settings`,
-        { method: 'PUT', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(settings) });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.detail ? JSON.stringify(body.detail) : res.status);
+    const body = await trackWrite(async () => {
+        const res = await fetch(`${API}/admin/api/models/${encodeURIComponent(model)}/settings`,
+            { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(settings) });
+        return res.json().catch(() => ({ detail: 'http ' + res.status }));
+    });
+    if (body.detail && body.success !== true) throw new Error(JSON.stringify(body.detail));
+    if (body.success === false) throw new Error(JSON.stringify(body.detail || body));
     return body;
 }
 async function postModelAction(model, action) {
-    const res = await fetch(`${API}/admin/api/models/${encodeURIComponent(model)}/${action}`,
-        { method: 'POST' });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.detail || res.status);
+    const body = await trackWrite(async () => {
+        const res = await fetch(`${API}/admin/api/models/${encodeURIComponent(model)}/${action}`,
+            { method: 'POST' });
+        return res.json().catch(() => ({ detail: 'http ' + res.status }));
+    });
+    if (body.detail && body.success !== true && body.deleted !== true)
+        throw new Error(typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail));
     return body;
 }
 async function pollStats() {
@@ -1457,7 +1463,7 @@ function editorNode() {
     panel.className = 'row-editor';
     const head = document.createElement('div');
     head.className = 'editor-head';
-    head.textContent = seModel + (seFormModel && seFormModel.model_alias ? ` · ${seFormModel.model_alias}` : '');
+    head.textContent = (seFormModel && seFormModel.model_alias ? seFormModel.model_alias + ' \u2192 ' : '') + seModel;
     const profilesHost = document.createElement('div');
     profilesHost.className = 'se-profiles';
     const fields = document.createElement('div');
@@ -1662,6 +1668,24 @@ async function saveEditor() {
 }
 
 let adminModels = [];
+let pendingWrites = 0;   // in-flight settings/action writes; ticks must not paint stale state
+/* The gateway's model snapshot refreshes on a poll (10 s live mode), so a
+   successful flag write can briefly paint back the OLD value ("pin does not
+   react"). Remember what we just wrote and overlay it until the fetched
+   model agrees, then the override expires on its own. */
+const flagOverrides = {};
+function flagSet(mid, patch) {
+    flagOverrides[mid] = Object.assign(flagOverrides[mid] || {}, patch);
+}
+async function flagWrite(mid, patch, write) {
+    flagSet(mid, patch);
+    try { await write(); }
+    catch (e) { if (flagOverrides[mid]) for (const k of Object.keys(patch)) delete flagOverrides[mid][k]; throw e; }
+}
+async function trackWrite(fn) {
+    pendingWrites++;
+    try { return await fn(); } finally { pendingWrites--; }
+}
 /* ---------------- model manager table (sorting, filters, row chips) ------ */
 let sortKey = (prefs.tableSort && prefs.tableSort.key) || 'name';
 let sortDir = (prefs.tableSort && prefs.tableSort.dir) || 1;      // 1 asc, -1 desc
@@ -1687,7 +1711,17 @@ async function renderModelAdmin(force) {
     try { models = (await fetchJson(`${API}/admin/api/models`)).models; }
     catch (_) { $('model-admin').innerHTML = '<div class="empty">API unreachable</div>'; return; }
     adminModels = models;
-    if (seModel && !force) return;   // editor open: don't re-render rows over a live form
+    // expire/apply optimistic flag overrides against the fresh snapshot
+    for (const m of models) {
+        const ov = flagOverrides[m.id];
+        if (!ov) continue;
+        for (const [k, v] of Object.entries(ov)) {
+            if (m[k] === v) delete ov[k]; else m[k] = v;
+        }
+        if (!Object.keys(ov).length) delete flagOverrides[m.id];
+    }
+    // editor open OR a write in flight: don't paint a possibly stale snapshot
+    if ((seModel || pendingWrites) && !force) return;
     const filter = ($('ma-filter').value || '').toLowerCase().trim();
     const typeSel = $('ma-type');
     const type = typeSel.value || '';
@@ -1709,14 +1743,16 @@ async function renderModelAdmin(force) {
     adminModels.__idx = idx;
     const orphan = new Set(idx.orphans || []);
     const knownIds = new Set(models.map(m => m.id));
-    let missing = (idx.entries || []).filter(e => !knownIds.has(e.id));
-    missing = missing.filter(e => !filter || e.id.toLowerCase().includes(filter) ||
+    const missingAll = (idx.entries || []).filter(e => !knownIds.has(e.id));
+    let missing = missingAll.filter(e => !filter || e.id.toLowerCase().includes(filter) ||
         (e.alias || '').toLowerCase().includes(filter));
     if (presentOnly) missing = [];
     const loadedN = models.filter(m => m.loaded).length;
     if (onManager) renderTemplatesBox();
+    // stored/missing never follow the filters; shown counts every visible row
     $('models-admin-sub').textContent = `${loadedN}/${models.length} loaded \u00b7 `
-        + `${idx.stored} stored \u00b7 ${missing.length} missing \u00b7 ${shown.length} shown`;
+        + `${idx.stored} stored \u00b7 ${missingAll.length} missing \u00b7 `
+        + `${shown.length + missing.length} shown`;
     const memUsed = stats ? stats.memUsed : null;
     $('ma-mem').textContent = memUsed !== null
         ? `memory ${C.fmtBytes(memUsed)} / ${C.fmtBytes(stats.memMax)}` : '';
@@ -1732,10 +1768,11 @@ async function renderModelAdmin(force) {
 
     const table = $('model-admin');
     table.innerHTML = '';
-    if (!shown.length) { table.innerHTML = '<div class="empty">No match</div>'; return; }
+    if (!shown.length && !missing.length) {
+        table.innerHTML = '<div class="empty">No match</div>'; return; }
     const head = document.createElement('div'); head.className = 'urow head admin';
     for (const [label, key] of [['model', 'name'], ['type', 'type'], ['state', 'state'],
-                                 ['size', 'size'], ['', null], ['', null]]) {
+                                 ['size', 'size'], ['', null]]) {
         const c = cell(label + (sortKey === key ? (sortDir === 1 ? ' \u25b2' : ' \u25bc') : ''));
         if (key) {
             c.classList.add('sortable');
@@ -1754,6 +1791,8 @@ async function renderModelAdmin(force) {
         row.dataset.mid = m.id;
         const name = cell(m.id);
         name.className = 'uname'; name.title = m.model_path || m.id;
+        if (m.settings && m.settings.model_alias)   // "Alias → real name"
+            name.prepend(cell(m.settings.model_alias + ' \u2192 '));
         if (m.pinned) name.prepend(cell('PIN \u00b7 '));
         if (m.is_favorite) {          // star icon left of the model name
             const star = cell('\u2605\u00a0');
@@ -1779,7 +1818,6 @@ async function renderModelAdmin(force) {
         if (s.mtp_enabled) bits.push(['MTP', 'on']);
         if (s.turboquant_kv_enabled) bits.push(['TQ', 'on']);
         if (s.reasoning_effort && s.reasoning_effort !== 'auto') bits.push(['R:' + s.reasoning_effort, '']);
-        if (m.is_default) bits.push(['DEFAULT', 'on']);
         if (m.is_hidden) bits.push(['HIDDEN', '']);
         for (const [txt, cls] of bits) {
             const chip = document.createElement('span');
@@ -1792,41 +1830,52 @@ async function renderModelAdmin(force) {
             const b = document.createElement('button');
             b.className = 'se-btn act'; b.textContent = label; b.title = title || label;
             b.onclick = async () => {
-                try { await fn(); } catch (err) { toast(`${label} failed: ${err.message}`); }
-                if (!noRerender) renderModelAdmin(true);
+                b.disabled = true;    // no double-toggle while the write is in flight
+                try { await fn(); } catch (err) {
+                    toast(`${label} failed: ${err.message}`); b.disabled = false; return; }
+                if (!noRerender) renderModelAdmin(true); else b.disabled = false;
             };
             return b;
         };
         actions.append(btn(m.pinned ? 'unpin' : 'pin',
-            () => postModelAction(m.id, m.pinned ? 'unpin' : 'pin'),
+            () => flagWrite(m.id, { pinned: !m.pinned },
+                () => postModelAction(m.id, m.pinned ? 'unpin' : 'pin')),
             m.pinned ? 'Unpin from top' : 'Pin to top'));
         actions.append(btn(m.is_favorite ? 'unfav' : 'fav',
-            () => putModelSettings(m.id, { is_favorite: !m.is_favorite }),
+            () => flagWrite(m.id, { is_favorite: !m.is_favorite },
+                () => putModelSettings(m.id, { is_favorite: !m.is_favorite })),
             m.is_favorite ? 'Unfavorite' : 'Favorite'));
         actions.append(btn(m.is_hidden ? 'show' : 'hide',
-            () => putModelSettings(m.id, { is_hidden: !m.is_hidden }),
+            () => flagWrite(m.id, { is_hidden: !m.is_hidden },
+                () => putModelSettings(m.id, { is_hidden: !m.is_hidden })),
             m.is_hidden ? 'Unhide' : 'Hide from pickers'));
-        if (!m.is_default) actions.append(btn('def', () => putModelSettings(m.id, { is_default: true }),
-                                             'Make default model'));
+        if (!m.is_default) actions.append(btn('def',
+            () => flagWrite(m.id, { is_default: true },
+                () => putModelSettings(m.id, { is_default: true })),
+            'Make default model'));
         actions.append(btn('reset settings', () => confirmDialog('Reset settings',
             `Reset all settings of ${m.id} to server defaults? Alias, overrides and `
             + 'flags return to defaults. This cannot be undone.',
             () => resetSettings(m.id), `Settings reset: ${m.id}`), 'Reset settings to defaults', true));
         actions.append(btn('edit', () => openEditor(m.id), 'Edit settings', true));
+        if (m.loaded) actions.append(btn('unload', () => postModelAction(m.id, 'unload')));
+        else actions.append(btn('load', () => postModelAction(m.id, 'load')));
+        actions.append(btn('delete settings', () => confirmDialog('Delete settings',
+            `Remove the stored configuration of ${m.id}? The model stays on disk; its `
+            + 'settings return to server defaults when saved again. This cannot be undone.',
+            () => deleteStoredSettings(m.id), `Settings deleted: ${m.id}`),
+            'Delete stored settings (model stays on disk)', true));
         actions.append(btn('delete', () => confirmDialog('Delete model',
             `Delete ${m.id} from disk? A loaded instance is unloaded first, then the `
             + 'model directory and its stored settings are removed. This cannot be undone.',
             () => deleteModelFromDisk(m.id), `Deleted ${m.id}`), 'Delete model from disk', true));
-        if (m.loaded) actions.append(btn('unload', () => postModelAction(m.id, 'unload')));
-        else actions.append(btn('load', () => postModelAction(m.id, 'load')));
         box.append(actions);
-        if (m.is_default) {          // DEFAULT badge: right of size, left of the box
+        if (m.is_default) {          // green DEFAULT: left-aligned inside the box
             const defb = cell('DEFAULT');
             defb.className = 'defbadge'; defb.title = 'Default model';
-            row.append(name, typeC, state, size, defb, box);
-        } else {
-            row.append(name, typeC, state, size, cell('\u00a0'), box);
+            box.prepend(defb);
         }
+        row.append(name, typeC, state, size, box);
         table.append(row);
     }
     if (missing.length) {
@@ -1836,22 +1885,26 @@ async function renderModelAdmin(force) {
         for (const e of missing) {
             const row = document.createElement('div'); row.className = 'urow admin';
             const name = cell(e.id); name.className = 'uname';
+            if (e.alias) name.prepend(cell(e.alias + ' \u2192 '));   // same Alias → name form
             const st = cell(orphan.has(e.id) ? 'MISSING' : 'EXTERNAL');
             if (orphan.has(e.id)) st.className = 'spill miss';   // caution amber
             else st.className = 'dim';
             const box = document.createElement('span'); box.className = 'settings-box';
-            if (e.alias) { const ch = cell('ALIAS ' + e.alias); ch.className = 'schip'; box.append(ch); }
             const acts = document.createElement('span'); acts.className = 'rowacts';
-            const db = document.createElement('button');
-            db.className = 'se-btn act danger'; db.textContent = 'delete';
-            db.title = 'Delete stored settings for this missing model';
-            db.onclick = () => confirmDialog('Delete settings',
+            const ds = document.createElement('button');
+            ds.className = 'se-btn act'; ds.textContent = 'delete settings';
+            ds.title = 'Delete stored settings for this missing model';
+            ds.onclick = () => confirmDialog('Delete settings',
                 `Remove stored configuration for ${e.id}? The model is not on disk; `
                 + 'its settings record is deleted. This cannot be undone.',
                 async () => { await deleteStoredSettings(e.id); },
                 `Deleted settings for ${e.id}`);
-            acts.append(db); box.append(acts);
-            row.append(name, cell('\u2014'), st, cell('\u2014'), cell('\u00a0'), box);
+            const dd = document.createElement('button');
+            dd.className = 'se-btn act'; dd.textContent = 'delete';
+            dd.disabled = true;
+            dd.title = 'Nothing on disk to delete \u2014 only the settings record exists';
+            acts.append(ds, dd); box.append(acts);
+            row.append(name, cell('\u2014'), st, cell('\u2014'), box);
             table.append(row);
         }
     }
@@ -1949,18 +2002,22 @@ async function resetSettings(model) {
     try { await putModelSettings(model, { is_pinned: null }); } catch (_) {}
 }
 async function deleteStoredSettings(model) {
-    const res = await fetch(`${API}/admin/api/models/${encodeURIComponent(model)}/settings`,
-        { method: 'DELETE' });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.detail ? JSON.stringify(body.detail) : res.status);
-    return body;
+    return trackWrite(async () => {
+        const res = await fetch(`${API}/admin/api/models/${encodeURIComponent(model)}/settings`,
+            { method: 'DELETE' });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.detail ? JSON.stringify(body.detail) : 'http ' + res.status);
+        return body;
+    });
 }
 async function deleteModelFromDisk(model) {
-    const res = await fetch(`${API}/admin/api/hf/models/${encodeURIComponent(model)}`,
-        { method: 'DELETE' });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.detail || res.status);
-    return body;
+    return trackWrite(async () => {
+        const res = await fetch(`${API}/admin/api/hf/models/${encodeURIComponent(model)}`,
+            { method: 'DELETE' });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.detail || 'http ' + res.status);
+        return body;
+    });
 }
 function renderTemplatesBox() {
     const host = $('ms-templates');
