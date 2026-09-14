@@ -19,9 +19,8 @@
         <span class="dd" id="dd-models">
             <button class="dd-btn" data-tab="models" id="dd-models-btn">Models <span class="dd-caret">▾</span></button>
             <span class="dd-menu" id="dd-models-menu" hidden>
-                <a href="#models" data-sub="settings">Model Settings</a>
+                <a href="#models" data-sub="manager">Models</a>
                 <a href="#models" data-sub="helper">Helper Models</a>
-                <a href="#models" data-sub="manager">Manager</a>
                 <a href="#models" data-sub="downloader">Downloader</a>
                 <a href="#models" data-sub="uploader">Uploader</a>
                 <a href="#models" data-sub="quantizer">oQ(e) Quantization</a>
@@ -135,7 +134,7 @@
 
     <!-- ============ MODELS ============ -->
     <section class="card wide" data-id="models-admin-page" data-cols="3" data-tab="models" data-sub="manager" data-full="1">
-        <h2><button class="collapse" title="Collapse">–</button>Model manager <span class="right" id="models-admin-sub"></span></h2>
+        <h2><button class="collapse" title="Collapse">–</button>Models <span class="right" id="models-admin-sub"></span></h2>
         <div class="card-body">
             <div class="filterbar">
                 <input type="search" id="ma-filter" placeholder="filter by name…">
@@ -143,7 +142,9 @@
                     <option value="">all types</option>
                 </select>
                 <label class="row"><input type="checkbox" id="ma-only-loaded"> loaded only</label>
+                <label class="row"><input type="checkbox" id="ma-present-only"> present only</label>
                 <span class="spacer"></span>
+                <button class="se-btn danger" id="btn-prune">Prune model settings…</button>
                 <span class="stat-sub" id="ma-mem"></span>
             </div>
             <div id="model-admin" class="admin-table"></div>
@@ -247,18 +248,11 @@
             </div>
         </div></section>
 
-    <section class="card wide" data-id="model-settings-page" data-cols="3" data-tab="models" data-sub="settings" data-full="1">
-        <h2><button class="collapse" title="Collapse">–</button>Model settings store <span class="right" id="ms-sub"></span></h2>
+    <section class="card wide" data-id="model-templates-page" data-cols="3" data-tab="models" data-sub="manager" data-full="1">
+        <h2><button class="collapse" title="Collapse">–</button>Global templates</h2>
         <div class="card-body">
-            <div class="filterbar">
-                <input type="search" id="ms-filter" placeholder="filter stored ids…">
-                <span class="spacer"></span>
-                <button class="se-btn danger" id="btn-prune">Prune model settings…</button>
-            </div>
-            <div class="se-hint" style="margin-bottom:8px">Stored configuration (model_settings.json in the sandbox).
-                Prune removes entries for models that no longer exist on disk.</div>
-            <div id="ms-body" class="admin-table"><div class="empty">—</div></div>
-            <h3 style="margin:16px 0 6px">Global templates</h3>
+            <div class="se-hint" style="margin-bottom:8px">Stored model configuration lives in model_settings.json.
+                The Missing section on the Models page and Prune remove entries for models that no longer exist on disk.</div>
             <div id="ms-templates" class="admin-table"><div class="empty">—</div></div>
         </div></section>
 

@@ -561,6 +561,9 @@ def model_clock():
                     emit({"type": "model-ready", "id": mid})
 
 
+DEAD = set()               # shadow-mode simulated disk deletes
+
+
 def base_models_fetch_once():
     """One-shot refresh of the real models snapshot (live-writes post-action)."""
     try:
@@ -568,6 +571,8 @@ def base_models_fetch_once():
         with LOCK:
             MODELS_BASE.clear()
             for m in data.get("models", []):
+                if m["id"] in DEAD:
+                    continue
                 MODELS_BASE[m["id"]] = m
             FETCH["models_ts"] = time.time()
     except Exception:  # noqa: BLE001 - next poll recovers
@@ -683,7 +688,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
     def _json(self, obj, code=200):
@@ -932,7 +937,12 @@ class Handler(BaseHTTPRequestHandler):
             MODELS_BASE[mid] = base
         return self._json(resp, code)
 
-    def _live_skipped(self, p):
+    def _live_skipped(self, p, method="POST"):
+        # DELETE model settings has NO upstream route — always mock-served.
+        # PUT model settings DOES exist upstream and must forward in live mode.
+        if method == "DELETE" and p.startswith("/admin/api/models/") \
+                and p.endswith("/settings"):
+            return True
         return p.startswith(self.MOCK_ONLY_PREFIXES) or \
             p == "/admin/api/prune-model-settings" or \
             p == "/admin/api/model-settings-index"
@@ -1250,7 +1260,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         p = urlparse(self.path).path
         parts = p.split("/")
-        if LIVE_WRITES and not self._live_skipped(p):
+        if LIVE_WRITES and not self._live_skipped(p, "DELETE"):
             return self._live_forward("DELETE", p, None)
         if len(parts) >= 7 and parts[1] == "admin" and parts[3] == "models" and parts[5] == "profiles":
             mid, name = urllib.parse.unquote(parts[4]), urllib.parse.unquote(parts[6])
@@ -1263,6 +1273,42 @@ class Handler(BaseHTTPRequestHandler):
             if STORE and STORE.delete_template(name):
                 return self._json({"deleted": True, "name": name})
             return self._json({"detail": f"Template not found: {name}"}, 404)
+        # DELETE /admin/api/models/{id}/settings — drop the stored record
+        if (len(parts) == 6 and parts[1] == "admin" and parts[3] == "models"
+                and parts[5] == "settings"):
+            mid = urllib.parse.unquote(parts[4])
+            if STORE is None:
+                return self._json({"detail": "store unavailable"}, 503)
+            removed = STORE.prune_settings([mid])
+            removed_t = STORE.prune_templates(removed)
+            if removed:
+                emit({"type": "settings-deleted", "id": mid})
+                return self._json({"deleted": True, "model_id": mid,
+                                   "removed": removed,
+                                   "removed_templates": removed_t})
+            return self._json({"detail": f"No stored settings: {mid}"}, 404)
+        # DELETE /admin/api/hf/models/{name} — shadow-mode disk delete
+        if (len(parts) == 6 and parts[1] == "admin" and parts[3] == "hf"
+                and parts[4] == "models"):
+            name = urllib.parse.unquote(parts[5])
+            with LOCK:
+                known = name in MODELS_BASE or name in MODELS_OVER
+                if known:
+                    DEAD.add(name)
+                    MODELS_BASE.pop(name, None)
+                    MODELS_OVER.pop(name, None)
+            if not known:
+                return self._json({"detail": "Model not found"}, 404)
+            if STORE:
+                removed = STORE.prune_settings([name])
+                removed_t = STORE.prune_templates(removed)
+            else:
+                removed, removed_t = [], []
+            emit({"type": "model-deleted", "id": name})
+            return self._json({"success": True, "model_name": name,
+                               "removed_settings": removed,
+                               "removed_templates": removed_t,
+                               "_shadow": True})
         return self._json({"detail": "write endpoint not provided by gateway", "_intercepted": True}, 404)
 
 

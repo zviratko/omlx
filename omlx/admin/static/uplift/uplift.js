@@ -23,12 +23,12 @@ if (!(layout.percentile in PERCENTILES)) layout.percentile = 'p95';
 /* ---------------- tabs (hash routing, like the classic dashboard) --------- */
 const TABS = ['status', 'models', 'usage', 'logs', 'settings'];
 const SUBS = {
-    models: ['settings', 'helper', 'manager', 'downloader', 'uploader', 'quantizer'],
+    models: ['manager', 'helper', 'downloader', 'uploader', 'quantizer'],
     settings: ['global'],
 };
 const SUB_LABELS = {
-    manager: 'Manager', downloader: 'Downloader', quantizer: 'oQ(e) Quantization',
-    uploader: 'Uploader', helper: 'Helper Models', settings: 'Model Settings',
+    manager: 'Models', downloader: 'Downloader', quantizer: 'oQ(e) Quantization',
+    uploader: 'Uploader', helper: 'Helper Models',
     global: 'Server Settings',
 };
 function currentTab() {
@@ -75,7 +75,7 @@ function applyTab() {
         if (sub === 'quantizer') renderQuantizer();
         if (sub === 'uploader') renderUploader();
         if (sub === 'helper') renderHelperModels();
-        if (sub === 'settings') renderStoredSettings();
+        if (sub === 'manager') renderTemplatesBox();
     }
     if (tab === 'settings') pollGlobalSettings();
 }
@@ -1692,6 +1692,7 @@ async function renderModelAdmin(force) {
     const typeSel = $('ma-type');
     const type = typeSel.value || '';
     const onlyLoaded = $('ma-only-loaded').checked;
+    const presentOnly = $('ma-present-only').checked;
     let shown = models.filter(m =>
         (!filter || m.id.toLowerCase().includes(filter) ||
          (m.display_name || '').toLowerCase().includes(filter) ||
@@ -1699,8 +1700,23 @@ async function renderModelAdmin(force) {
         (!type || (m.model_type || '') === type) &&
         (!onlyLoaded || m.loaded || m.is_loading));
     shown = sortModels(shown);
+    // settings store drives the Missing section below the present rows
+    const onManager = document.documentElement.dataset.tab === 'models'
+        && document.documentElement.dataset.sub === 'manager'
+        && !!$('ma-present-only');
+    let idx = { stored: adminModels.__idx ? adminModels.__idx.stored : 0, orphans: [], entries: [] };
+    if (onManager) { try { idx = await fetchJson(`${API}/admin/api/model-settings-index`); } catch (_) {} }
+    adminModels.__idx = idx;
+    const orphan = new Set(idx.orphans || []);
+    const knownIds = new Set(models.map(m => m.id));
+    let missing = (idx.entries || []).filter(e => !knownIds.has(e.id));
+    missing = missing.filter(e => !filter || e.id.toLowerCase().includes(filter) ||
+        (e.alias || '').toLowerCase().includes(filter));
+    if (presentOnly) missing = [];
     const loadedN = models.filter(m => m.loaded).length;
-    $('models-admin-sub').textContent = `${loadedN}/${models.length} loaded \u00b7 ${shown.length} shown`;
+    if (onManager) renderTemplatesBox();
+    $('models-admin-sub').textContent = `${loadedN}/${models.length} loaded \u00b7 `
+        + `${idx.stored} stored \u00b7 ${missing.length} missing \u00b7 ${shown.length} shown`;
     const memUsed = stats ? stats.memUsed : null;
     $('ma-mem').textContent = memUsed !== null
         ? `memory ${C.fmtBytes(memUsed)} / ${C.fmtBytes(stats.memMax)}` : '';
@@ -1719,7 +1735,7 @@ async function renderModelAdmin(force) {
     if (!shown.length) { table.innerHTML = '<div class="empty">No match</div>'; return; }
     const head = document.createElement('div'); head.className = 'urow head admin';
     for (const [label, key] of [['model', 'name'], ['type', 'type'], ['state', 'state'],
-                                 ['size', 'size'], ['', null]]) {
+                                 ['size', 'size'], ['', null], ['', null]]) {
         const c = cell(label + (sortKey === key ? (sortDir === 1 ? ' \u25b2' : ' \u25bc') : ''));
         if (key) {
             c.classList.add('sortable');
@@ -1739,6 +1755,11 @@ async function renderModelAdmin(force) {
         const name = cell(m.id);
         name.className = 'uname'; name.title = m.model_path || m.id;
         if (m.pinned) name.prepend(cell('PIN \u00b7 '));
+        if (m.is_favorite) {          // star icon left of the model name
+            const star = cell('\u2605\u00a0');
+            star.className = 'favstar'; star.title = 'Favorite';
+            name.prepend(star);
+        }
         const typeC = cell(m.model_type || '\u2014'); typeC.className = 'dim';
         // State: fixed-size text pill, uniform width across the three states
         const state = document.createElement('span');
@@ -1758,7 +1779,6 @@ async function renderModelAdmin(force) {
         if (s.mtp_enabled) bits.push(['MTP', 'on']);
         if (s.turboquant_kv_enabled) bits.push(['TQ', 'on']);
         if (s.reasoning_effort && s.reasoning_effort !== 'auto') bits.push(['R:' + s.reasoning_effort, '']);
-        if (m.is_favorite) bits.push(['FAV', 'on']);
         if (m.is_default) bits.push(['DEFAULT', 'on']);
         if (m.is_hidden) bits.push(['HIDDEN', '']);
         for (const [txt, cls] of bits) {
@@ -1788,13 +1808,174 @@ async function renderModelAdmin(force) {
             m.is_hidden ? 'Unhide' : 'Hide from pickers'));
         if (!m.is_default) actions.append(btn('def', () => putModelSettings(m.id, { is_default: true }),
                                              'Make default model'));
+        actions.append(btn('reset settings', () => confirmDialog('Reset settings',
+            `Reset all settings of ${m.id} to server defaults? Alias, overrides and `
+            + 'flags return to defaults. This cannot be undone.',
+            () => resetSettings(m.id), `Settings reset: ${m.id}`), 'Reset settings to defaults', true));
         actions.append(btn('edit', () => openEditor(m.id), 'Edit settings', true));
+        actions.append(btn('delete', () => confirmDialog('Delete model',
+            `Delete ${m.id} from disk? A loaded instance is unloaded first, then the `
+            + 'model directory and its stored settings are removed. This cannot be undone.',
+            () => deleteModelFromDisk(m.id), `Deleted ${m.id}`), 'Delete model from disk', true));
         if (m.loaded) actions.append(btn('unload', () => postModelAction(m.id, 'unload')));
         else actions.append(btn('load', () => postModelAction(m.id, 'load')));
         box.append(actions);
-        row.append(name, typeC, state, size, box);
+        if (m.is_default) {          // DEFAULT badge: right of size, left of the box
+            const defb = cell('DEFAULT');
+            defb.className = 'defbadge'; defb.title = 'Default model';
+            row.append(name, typeC, state, size, defb, box);
+        } else {
+            row.append(name, typeC, state, size, cell('\u00a0'), box);
+        }
         table.append(row);
     }
+    if (missing.length) {
+        const sep = cell('Missing \u2014 stored settings, model not on disk');
+        sep.className = 'sec-div';
+        table.append(sep);
+        for (const e of missing) {
+            const row = document.createElement('div'); row.className = 'urow admin';
+            const name = cell(e.id); name.className = 'uname';
+            const st = cell(orphan.has(e.id) ? 'MISSING' : 'EXTERNAL');
+            if (orphan.has(e.id)) st.className = 'spill miss';   // caution amber
+            else st.className = 'dim';
+            const box = document.createElement('span'); box.className = 'settings-box';
+            if (e.alias) { const ch = cell('ALIAS ' + e.alias); ch.className = 'schip'; box.append(ch); }
+            const acts = document.createElement('span'); acts.className = 'rowacts';
+            const db = document.createElement('button');
+            db.className = 'se-btn act danger'; db.textContent = 'delete';
+            db.title = 'Delete stored settings for this missing model';
+            db.onclick = () => confirmDialog('Delete settings',
+                `Remove stored configuration for ${e.id}? The model is not on disk; `
+                + 'its settings record is deleted. This cannot be undone.',
+                async () => { await deleteStoredSettings(e.id); },
+                `Deleted settings for ${e.id}`);
+            acts.append(db); box.append(acts);
+            row.append(name, cell('\u2014'), st, cell('\u2014'), cell('\u00a0'), box);
+            table.append(row);
+        }
+    }
+}
+
+/* shared informed-confirmation modal; runs act() on confirm, then refreshes */
+function confirmDialog(title, msg, act, okMsg) {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    const box = document.createElement('div');
+    box.className = 'modal nasa';
+    const h = document.createElement('h3'); h.textContent = title;
+    const sub = document.createElement('div'); sub.className = 'se-hint';
+    sub.textContent = msg;
+    const bar = document.createElement('div'); bar.className = 'row buttons';
+    const cancel = document.createElement('button'); cancel.textContent = 'Cancel';
+    cancel.onclick = () => overlay.remove();
+    const ok = document.createElement('button');
+    ok.className = 'danger'; ok.textContent = 'Confirm';
+    ok.onclick = async () => {
+        ok.disabled = true; cancel.disabled = true;
+        try {
+            await act(); toast(okMsg || title); overlay.remove();
+            if (seModel) closeEditor();
+            renderModelAdmin(true);
+        }
+        catch (err) { ok.disabled = false; cancel.disabled = false; toast(`Failed: ${err.message}`); }
+    };
+    bar.append(document.createElement('span'), cancel, ok);
+    box.append(h, sub, bar);
+    overlay.append(box);
+    overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+    document.addEventListener('keydown', function esc(e) {
+        if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', esc); }
+    });
+    document.body.append(overlay);
+    ok.focus();
+}
+
+/* EVERY ModelSettingsRequest field sent as explicit null = clear-to-defaults
+   (server semantics: sent-null clears, omitted keeps). Parity: the full 79-key
+   set mirrors routes.py ModelSettingsRequest (globalspec gate guards drift);
+   is_pinned rides a separate PUT — it lives in the engine pool, not settings. */
+function settingsResetPayload() {
+    const p = {};
+    const nullKeys = [
+        'model_alias', 'model_type_override', 'max_context_window', 'max_tokens',
+        'temperature', 'top_p', 'top_k', 'repetition_penalty', 'min_p',
+        'presence_penalty', 'force_sampling', 'max_tool_result_tokens',
+        'chat_template_kwargs', 'forced_ct_kwargs', 'ttl_seconds', 'index_cache_freq',
+        'enable_thinking', 'preserve_thinking', 'qwen4_ple_ssd_offload',
+        'deepseek_v41_engram_ssd_offload', 'deepseek_v41_ced_prefill_enabled',
+        'thinking_budget_enabled', 'thinking_budget_tokens', 'mtp_num_draft_tokens',
+        'turboquant_kv_enabled', 'turboquant_kv_bits', 'turboquant_skip_last',
+        'qwen35_ane_prefill_enabled', 'qwen35_ane_prefill_sequence_length',
+        'qwen35_ane_prefill_tail_padding_min_tokens', 'qwen35_ane_prefill_fraction',
+        'qwen35_ane_prefill_shared_fraction', 'qwen35_ane_prefill_fused_down',
+        'qwen35_ane_prefill_max_layers', 'qwen35_ane_prefill_dual_ane',
+        'qwen35_ane_prefill_gdn', 'qwen35_ane_prefill_gdn_fraction',
+        'qwen35_ane_prefill_gdn_max_layers', 'qwen35_ane_prefill_cpu_enabled',
+        'qwen35_ane_prefill_cpu_fraction', 'qwen35_ane_prefill_cpu_down_fraction',
+        'qwen35_ane_prefill_cpu_gdn_fraction', 'qwen35_ane_prefill_cpu_threads',
+        'qwen35_ane_prefill_cpu_shared_resource', 'qwen35_oq_a8_enabled',
+        'qwen35_oq_a8_min_tokens', 'moe_expert_offload_enabled',
+        'moe_expert_offload_resident_fraction', 'specprefill_enabled',
+        'specprefill_draft_model', 'specprefill_keep_pct', 'specprefill_threshold',
+        'dflash_enabled', 'dflash_draft_model', 'dflash_draft_quant_enabled',
+        'dflash_draft_quant_weight_bits', 'dflash_draft_quant_activation_bits',
+        'dflash_draft_quant_group_size', 'dflash_max_ctx', 'dflash_in_memory_cache',
+        'dflash_in_memory_cache_max_entries', 'dflash_in_memory_cache_max_bytes',
+        'dflash_ssd_cache', 'dflash_ssd_cache_max_bytes', 'dflash_draft_window_size',
+        'dflash_draft_sink_size', 'dflash_block_size', 'dflash_verify_mode',
+        'mtp_enabled', 'vlm_mtp_enabled', 'vlm_mtp_draft_model',
+        'vlm_mtp_draft_block_size', 'reasoning_parser', 'guided_grammar_enabled',
+        'guided_grammar', 'trust_remote_code',
+        'is_default', 'is_hidden', 'is_favorite'];
+    for (const k of nullKeys) p[k] = null;
+    // these fields 400 on null upstream (routes.py validates them); their
+    // defaults are concrete values — mirror omlx/model_settings.py exactly.
+    p.qwen35_ane_prefill_sequence_length = 2048;
+    p.qwen35_ane_prefill_tail_padding_min_tokens = 0;
+    p.qwen35_ane_prefill_max_layers = 64;
+    p.qwen35_ane_prefill_gdn_max_layers = 48;
+    p.qwen35_ane_prefill_gdn_fraction = 0.5;
+    p.qwen35_ane_prefill_cpu_threads = 8;
+    p.qwen35_ane_prefill_cpu_fraction = 0.135;
+    p.qwen35_ane_prefill_cpu_down_fraction = 0.0;
+    p.qwen35_ane_prefill_cpu_gdn_fraction = 0.0;
+    p.qwen35_oq_a8_min_tokens = 128;
+    return p;
+}
+async function resetSettings(model) {
+    await putModelSettings(model, settingsResetPayload());
+    // pin rides the same endpoint; clear it explicitly to reach full defaults
+    try { await putModelSettings(model, { is_pinned: null }); } catch (_) {}
+}
+async function deleteStoredSettings(model) {
+    const res = await fetch(`${API}/admin/api/models/${encodeURIComponent(model)}/settings`,
+        { method: 'DELETE' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.detail ? JSON.stringify(body.detail) : res.status);
+    return body;
+}
+async function deleteModelFromDisk(model) {
+    const res = await fetch(`${API}/admin/api/hf/models/${encodeURIComponent(model)}`,
+        { method: 'DELETE' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.detail || res.status);
+    return body;
+}
+function renderTemplatesBox() {
+    const host = $('ms-templates');
+    if (!host) return;
+    fetchJson(`${API}/admin/api/profile-templates`)
+        .then(d => d.templates || []).catch(() => []).then(templates => {
+        host.innerHTML = '';   // empty string + static markup only, no user data
+        if (!templates.length) { host.innerHTML = '<div class="empty">No global templates</div>'; return; }
+        for (const t of templates) {
+            const row = document.createElement('div'); row.className = 'urow usage';
+            const name = cell(t.display_name || t.name); name.className = 'uname';
+            row.append(name, cell(t.description || ''), cell((t.updated_at || '').slice(0, 10)));
+            host.append(row);
+        }
+    });
 }
 function cell(text) { const s = document.createElement('span'); s.textContent = text; return s; }
 function emptyMsg(host, msg) {   // error text goes through textContent, never innerHTML
@@ -1809,6 +1990,7 @@ $('ma-filter').oninput = () => {
 };
 $('ma-type').onchange = () => { if (seModel) closeEditor(); renderModelAdmin(true); };
 $('ma-only-loaded').onchange = () => { if (seModel) closeEditor(); renderModelAdmin(true); };
+$('ma-present-only').onchange = () => { if (seModel) closeEditor(); renderModelAdmin(true); };
 
 /* ---------------- usage (Usage tab) ---------------- */
 function createUsageChart() {
@@ -3010,42 +3192,7 @@ function renderUploader() {
     renderTasks('up-tasks', 'upload');
 }
 
-/* ---------------- settings sub-pages: stored model settings + prune ----- */
-let storedIndex = null;
-
-async function renderStoredSettings() {
-    let idx, templates = [];
-    try {
-        idx = await fetchJson(`${API}/admin/api/model-settings-index`);
-        try { templates = (await fetchJson(`${API}/admin/api/profile-templates`)).templates; } catch (_) {}
-    } catch (err) { emptyMsg($('ms-body'), err.message); return; }
-    storedIndex = idx;
-    const known = new Set(adminModels.map(m => m.id));
-    const orphan = new Set(idx.orphans || []);
-    const f = ($('ms-filter').value || '').toLowerCase();
-    $('ms-sub').textContent = `${idx.stored} stored · ${idx.orphans.length} missing`;
-    const host = $('ms-body'); host.innerHTML = '';
-    const rows = (idx.entries || []).filter(e => !f || e.id.toLowerCase().includes(f));
-    for (const e of rows) {
-        const row = document.createElement('div'); row.className = 'urow usage';
-        const name = cell(e.id); name.className = 'uname';
-        const st = cell(orphan.has(e.id) ? 'MISSING' : (known.has(e.id) ? 'PRESENT' : 'EXTERNAL'));
-        if (orphan.has(e.id)) st.className = 'spill miss';   // caution amber
-        else if (!known.has(e.id)) st.className = 'dim';
-        row.append(name, cell(e.alias || ''), st);
-        host.append(row);
-    }
-    if (!rows.length) host.innerHTML = '<div class="empty">No match</div>';
-    const th = $('ms-templates'); th.innerHTML = '';
-    if (!templates.length) th.innerHTML = '<div class="empty">No global templates</div>';
-    for (const t of templates) {
-        const row = document.createElement('div'); row.className = 'urow usage';
-        const name = cell(t.display_name || t.name); name.className = 'uname';
-        row.append(name, cell(t.description || ''), cell((t.updated_at || '').slice(0, 10)));
-        th.append(row);
-    }
-}
-$('ms-filter').oninput = () => renderStoredSettings();
+/* ------- stored settings: prune dialog (the list merged into Models) ---- */
 
 async function openPruneDialog() {
     let orphans = [];
@@ -3098,7 +3245,6 @@ async function openPruneDialog() {
                 (r.removed_templates && r.removed_templates.length
                     ? `, ${r.removed_templates.length} template(s)` : ''));
             overlay.remove();
-            renderStoredSettings();
             renderModelAdmin(true);
         } catch (err) { toast('prune failed: ' + err.message); }
     };
