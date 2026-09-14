@@ -682,6 +682,9 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
     margin: 0 0 14px; break-inside: avoid;
     border: 1px solid var(--edge); background: var(--card);
 }
+/* R10-11: alternate box shades like the model list boxes; the inverted
+   header strip stays as-is so each panel keeps its signage band */
+.gs-box:nth-of-type(even) { background: var(--row2); }
 .gs-box-title {
     /* signage header strip: inverted colors, full-bleed across the panel */
     font: 500 11px/1 var(--sans); text-transform: uppercase; letter-spacing: 0.12em;
