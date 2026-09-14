@@ -1073,35 +1073,116 @@ const SE_RESTART_KEYS = new Set([
     'dflash_ssd_cache', 'dflash_ssd_cache_max_bytes', 'trust_remote_code',
     'mtp_enabled', 'vlm_mtp_enabled', 'vlm_mtp_draft_model',
     'vlm_mtp_draft_block_size']);
-function seDirtyKeys() {
-    const out = [];
-    for (const k of Object.keys(seValues)) {
-        if (k === 'ctKwargEntries') continue;
-        if (JSON.stringify(seValues[k]) !== JSON.stringify(seOrig[k])) out.push(k);
-    }
-    return out;
+function seDirtyKeys() {                     // dirty keys of the ACTIVE tab
+    const t = seTab();
+    return t ? [...t.dirty] : [];
 }
 function seNeedsRestart() {
     return seDirtyKeys().some(k => SE_RESTART_KEYS.has(k));
 }
+function seAnyTabDirty() {
+    for (const t of seTabs) {
+        if (t.dirty.size) return true;
+        if (t.id !== 'base') {
+            if ((t._origExpose || false) !== !!t.expose_as_model ||
+                (t._origApi || '') !== (t.api_name || '')) return true;
+        }
+    }
+    return false;
+}
 function seUpdateSaveBtn() {
     const b = document.getElementById('se-save'); if (!b) return;
     const n = seDirtyKeys().length;
-    const restart = seNeedsRestart() &&
+    const restart = seNeedsRestart() && isBaseTabActive() &&
         !!(seFormModel && (seFormModel.loaded || seFormModel.is_loading));
+    function isBaseTabActive() { return seIsBaseTab(); }
     b.classList.toggle('queued', n > 0);
     b.classList.toggle('restart-mode', restart);
-    b.textContent = n ? (restart ? '▶ RESTART MODEL (' + n + ')' : 'SAVE (' + n + ')')
-                      : 'SAVE';
+    const tabTxt = seIsBaseTab() ? '' : ' PROFILE';
+    b.textContent = n ? (restart ? '▶ RESTART MODEL (' + n + ')'
+                                 : 'SAVE' + tabTxt + ' (' + n + ')')
+                      : (seIsBaseTab() ? 'SAVE' : 'SAVE PROFILE');
     b.title = restart
         ? 'Some queued settings apply only after the model is reloaded' : '';
+    renderEdChanges();
 }
+/* CHANGES box above the editor buttons: yaml-style key: old -> key: new,
+   including inherit flips for profile tabs and the expose/api lines */
+function renderEdChanges() {
+    const box = document.getElementById('se-changes'); if (!box) return;
+    const t = seTab();
+    const lines = [];
+    const shown = new Set();
+    if (seIsBaseTab()) {
+        for (const k of t.dirty) {
+            lines.push(k + ': ' + gsDisplay(seOrig[k]) + ' → ' +
+                       k + ': ' + gsDisplay(seValues[k]));
+            shown.add(k);
+        }
+    } else {
+        for (const k of t.dirty) {
+            const o = SE_INHERIT_KEYS.has(k) ? seOvSnap(t)[k] : t.origVals[k];
+            lines.push(k + ': ' + gsDisplay(o) + ' \u2192 ' +
+                       k + ': ' + gsDisplay(seValues[k]));
+            shown.add(k);
+        }
+    }
+    // edited-back fields whose diff lives only in widgets: drop from box too
+    for (const el of document.querySelectorAll('#se-fields .diff-out')) {
+        const key = el.closest('label.se-row')?.dataset.key;
+        if (!key || shown.has(key)) continue;
+    }
+    if (!seIsBaseTab()) {
+        if ((t._origExpose || false) !== !!t.expose_as_model)
+            lines.unshift('expose_as_model: ' + gsDisplay(!!t._origExpose) +
+                          ' → expose_as_model: ' + gsDisplay(!!t.expose_as_model));
+        if ((t._origApi || '') !== (t.api_name || ''))
+            lines.unshift('api_name: ' + gsDisplay(t._origApi) +
+                          ' → api_name: ' + gsDisplay(t.api_name));
+    }
+    box.hidden = !lines.length;
+    box.textContent = '';
+    if (!lines.length) return;
+    const head = document.createElement('div'); head.className = 'ch-head';
+    head.textContent = 'CHANGES (' + lines.length + ')';
+    box.append(head);
+    for (const ln of lines) {
+        const d = document.createElement('div'); d.className = 'ch-line';
+        d.textContent = ln;
+        box.append(d);
+    }
+}
+function renderEdList() { renderEdChanges(); }
 
 /* ---- spec-driven settings form (parity with classic _modal_model_settings) ---- */
 /* seValues holds the modelspec form state (UpliftModelSpec.buildState shape).
    Widgets write straight into seValues and re-run renderEditorFields() so the
    same conditional visibility the classic modal uses (x-show rules) applies. */
 let seFormModel = null;      // the /admin/api/models entry this editor is for
+
+/* ---- editor profile tabs -------------------------------------------------
+   The editor edits a STACK of targets: the Base model settings plus one tab
+   per model profile. Profile tabs hold sparse overrides: keys absent from a
+   profile are INHERITED from the base at request time (server does exactly
+   this: merged = base.to_dict(); merged.update(profile.settings)). The UI
+   mirrors that — an empty input shows the base value as placeholder
+   "value (inherited)", a filled input is an override. Only overrides are
+   persisted, so changing the base never needs manual syncing. */
+let seTabs = [];            // [{id:'base',dirty:Set}|{id,name,display_name,
+                            //   expose_as_model,api_name,overrides:{},base?,
+                            //   template?,dirty:Set}]
+let seActiveTab = 'base';
+let seBaseVals = null;      // base modelspec-shape state (source of inherit display)
+/* Sampling keys are inheritable on profile tabs (empty = follow base). */
+const SE_INHERIT_KEYS = new Set(['temperature', 'top_p', 'top_k',
+    'repetition_penalty', 'min_p', 'presence_penalty']);
+function seOvSnap(t) {                       // frozen stored-override snapshot
+    if (!t._ovSnap) t._ovSnap = JSON.parse(JSON.stringify(t.overrides || {}));
+    return t._ovSnap;
+}
+function seInitSnap(t) { t._ovSnap = JSON.parse(JSON.stringify(t.overrides || {})); return t; }
+function seTab() { return seTabs.find(t => t.id === seActiveTab) || seTabs[0]; }
+function seIsBaseTab() { return seTab().id === 'base'; }
 
 function seBind(kind, key, opts) {
     /* one labeled field bound to seValues[key]; matches classic addRow() but
@@ -1139,6 +1220,40 @@ function seBind(kind, key, opts) {
         input = document.createElement('textarea');
         input.rows = 3;
         input.value = seValues[key] == null ? '' : seValues[key];
+    } else if (kind === 'inheritable-number') {
+        // profile-tab number: value comes from the tab's OVERRIDES only;
+        // empty = inherit, placeholder shows the base value
+        kind = 'number';
+        input = document.createElement('input');
+        input.type = 'number';
+        const bv = seBaseVals ? seBaseVals[key] : undefined;
+        if (opts && opts.min != null) input.min = opts.min;
+        if (opts && opts.max != null) input.max = opts.max;
+        if (opts && opts.step != null) input.step = opts.step;
+        const cur = seTab() && seTab().overrides[key];
+        input.value = cur == null || cur === '' ? '' : cur;
+        if (bv != null) input.placeholder = String(bv) + ' (inherited)';
+    } else if (kind === 'inheritable-text') {
+        kind = 'text';
+        input = document.createElement('input');
+        input.type = 'text';
+        const bv = seBaseVals ? seBaseVals[key] : undefined;
+        const cur = seTab() && seTab().overrides[key];
+        input.value = cur == null ? '' : cur;
+        if (bv != null && bv !== '') input.placeholder = String(bv) + ' (inherited)';
+    } else if (kind === 'inheritable-bool') {
+        // three-state: override-on / override-off / inherit (empty)
+        input = document.createElement('select');
+        const cur = seTab() && seTab().overrides[key];
+        const on = document.createElement('option');
+        on.value = 'true';  on.textContent = 'Yes (override)';
+        const off = document.createElement('option');
+        off.value = 'false'; off.textContent = 'No (override)';
+        const inh = document.createElement('option');
+        const bv = seBaseVals ? seBaseVals[key] : undefined;
+        inh.value = ''; inh.textContent = 'Inherited: ' + (bv === true ? 'Yes' : bv === false ? 'No' : '—');
+        input.append(inh, on, off);
+        input.value = cur === true || cur === 'true' ? 'true' : cur === false || cur === 'false' ? 'false' : '';
     } else {
         input = document.createElement('input');
         input.type = 'number';
@@ -1151,34 +1266,75 @@ function seBind(kind, key, opts) {
     if (opts && opts.disabled) input.disabled = true;
     const evt = (kind === 'textarea' || kind === 'text' || kind === 'number') ? 'input' : 'change';
     input.addEventListener(evt, () => {
+        const t = seTab();
         if (kind === 'bool') seValues[key] = input.checked;
-        else if (kind === 'number') seValues[key] = input.value === '' ? null : Number(input.value);
+        else if (kind === 'number') {
+            // inheritable numbers keep "" = inherit (undefined), otherwise value
+            if (input.value === '') seValues[key] = (t && t.id !== 'base') ? undefined : null;
+            else seValues[key] = Number(input.value);
+        }
         else if (kind === 'select') seValues[key] = input.value;
         else seValues[key] = input.value;
-        // dirty marking: changed values get the |orig → new| readout and
-        // the Save button counts them
+        // inherited-bool tri-state maps '' -> undefined (inherit)
+        if (input.tagName === 'SELECT' && input.dataset.inherit === '1')
+            seValues[key] = input.value === '' ? undefined : input.value === 'true';
+        // keep the tab override map live so re-renders show typed values
+        if (t && t.id !== 'base') {
+            if (seValues[key] === undefined) delete t.overrides[key];
+            else t.overrides[key] = seValues[key];
+        }
+        // dirty marking against the tab's ORIGINAL baseline (for inheritable
+        // profile fields the original is the STORED override, possibly absent)
         const lab2 = input.closest('label.se-row');
         if (lab2) {
-            const changed = JSON.stringify(seValues[key]) !== JSON.stringify(seOrig[key]);
+            const orig = (t && t.id !== 'base' && SE_INHERIT_KEYS.has(key))
+                ? seOvSnap(t)[key]
+                : (t && t.origVals ? t.origVals[key] : seOrig[key]);
+            const changed = JSON.stringify(seValues[key]) !== JSON.stringify(orig);
+            if (changed) t && t.dirty.add(key); else t && t.dirty.delete(key);
             lab2.classList.toggle('dirty', changed);
             lab2.classList.toggle('restartq', changed && SE_RESTART_KEYS.has(key));
-            let rd = lab2.querySelector('.diff-out');
-            if (changed) {
-                if (!rd) {
-                    rd = document.createElement('span'); rd.className = 'diff-out';
-                    const o = document.createElement('span'); o.className = 'diff-o';
-                    const nn = document.createElement('span'); nn.className = 'diff-n';
-                    rd.append(o, document.createTextNode('→'), nn);
-                    lab2.append(rd);
+            const rd = lab2.querySelector('.diff-out');
+            if (rd) {
+                rd.hidden = !changed;
+                if (changed) {
+                    rd.querySelector('.diff-o').textContent = gsDisplay(orig);
+                    rd.querySelector('.diff-n').textContent = gsDisplay(seValues[key]) + ' (now)';
                 }
-                rd.querySelector('.diff-o').textContent = gsDisplay(seOrig[key]);
-                rd.querySelector('.diff-n').textContent = gsDisplay(seValues[key]);
-            } else if (rd) rd.remove();
+            }
         }
         seUpdateSaveBtn();
         if (opts && opts.onChange) opts.onChange(seValues);
     });
-    label.append(name, input);
+    label.dataset.key = key;
+    if (input.tagName === 'SELECT' && ['true','false',''].includes(input.value)
+        && opts && opts.inherit) input.dataset.inherit = '1';
+    const slot = document.createElement('span'); slot.className = 'se-slot';
+    const rd = document.createElement('span'); rd.className = 'diff-out'; rd.hidden = true;
+    const o = document.createElement('span'); o.className = 'diff-o';
+    o.title = 'Click to revert';
+    o.onclick = (ev) => {
+        ev.preventDefault();
+        const t = seTab(); if (!t) return;
+        const origV = (t.id !== 'base' && SE_INHERIT_KEYS.has(key))
+            ? seOvSnap(t)[key]
+            : ((t.origVals || seOrig)[key]);
+        seValues[key] = origV === undefined ? (t.id !== 'base' ? undefined : seOrig[key]) : origV;
+        t.dirty.delete(key);
+        if (t.id !== 'base') {
+            // revert an override back to inherit/original override
+            if (origV === undefined) delete t.overrides[key];
+            else t.overrides[key] = origV;
+        }
+        renderEditorFields(document.getElementById('se-fields'));
+        seUpdateSaveBtn();
+    };
+    const nn = document.createElement('span'); nn.className = 'diff-n';
+    rd.append(o, document.createTextNode('→'), nn);
+    slot.append(rd);
+    const ctlBox = document.createElement('span'); ctlBox.className = 'se-ctl';
+    ctlBox.append(input);
+    label.append(name, slot, ctlBox);
     if (opts && opts.hint) {
         const h = document.createElement('small');
         h.className = 'se-hint'; h.textContent = opts.hint;
@@ -1196,13 +1352,54 @@ function seSection(title) {
 function renderEditorFields(container) {
     const S = window.UpliftModelSpec;
     const m = seFormModel || {};
+    // profile tabs edit overrides-on-base; base tab edits the model itself
+    const tab = seTab();
+    if (tab && tab.id !== 'base' && seBaseVals) {
+        const mergedState = Object.assign({}, seBaseVals,
+            JSON.parse(JSON.stringify(tab.workVals || {})));
+        seValues = mergedState;
+        seOrig = tab.origVals || Object.assign({}, seBaseVals);
+    }
     container.textContent = '';
     const grid = () => { const g = document.createElement('div'); g.className = 'pair'; container.append(g); return g; };
 
     /* ---- basic ---- */
+    if (!seIsBaseTab()) {
+        const ban = document.createElement('div'); ban.className = 'se-profile-banner';
+        const t = seTab();
+        const exp = document.createElement('label'); exp.className = 'se-prof-expose';
+        const cb = document.createElement('input'); cb.type = 'checkbox';
+        cb.checked = !!t.expose_as_model;
+        const lbl = document.createElement('span'); lbl.textContent = ' EXPOSE AS API MODEL ';
+        cb.onchange = () => { t.expose_as_model = cb.checked; seUpdateSaveBtn(); };
+        const api = document.createElement('input'); api.type = 'text';
+        api.placeholder = 'api_name'; api.value = t.api_name || '';
+        api.style.width = '180px';
+        api.oninput = () => { t.api_name = api.value.trim(); seUpdateSaveBtn(); };
+        exp.append(cb, lbl, api);
+        ban.append(exp);
+        if (t._new || !t.profileId) {
+            const nmIn = document.createElement('input');
+            nmIn.type = 'text'; nmIn.className = 'se-newname';
+            nmIn.value = t.display_name || t.name || '';
+            nmIn.style.width = '200px';
+            nmIn.oninput = () => { t.name = nmIn.value.trim(); t.display_name = t.name;
+                seUpdateSaveBtn();
+                const strip = document.querySelector('.se-tabs');
+                if (strip) seRenderTabs(document.querySelector('.modal.editor')); };
+            exp.prepend(nmIn);
+        }
+        const hint = document.createElement('small'); hint.className = 'dim';
+        hint.textContent = t.template
+            ? 'Global template copy: applies to this model only when saved as a profile.'
+            : 'Empty fields inherit the base model (shown greyed as "value (inherited)").';
+        ban.append(hint);
+        container.append(ban);
+    }
     container.append(seSection('Basic Settings'));
     let g = grid();
-    g.append(seBind('text', 'model_alias', { label: 'Model Alias' }));
+    if (seIsBaseTab() || !seTab().template)
+        g.append(seBind('text', 'model_alias', { label: 'Model Alias' }));
     g.append(seBind('select', 'model_type_override', {
         label: 'Model Type',
         options: [{ value: '', label: 'Auto-detect' },
@@ -1213,8 +1410,14 @@ function renderEditorFields(container) {
         ['temperature', 0, 2, 0.05, 'Temperature'], ['top_p', 0, 1, 0.05, 'Top P'],
         ['top_k', 0, null, 1, 'Top K'], ['repetition_penalty', 0.5, 2, 0.01, 'Repetition Penalty'],
         ['min_p', 0, 1, 0.01, 'Min P'], ['presence_penalty', -2, 2, 0.05, 'Presence Penalty']];
-    if (!S.isDiffusion(m)) for (const [k, mn, mx, st, lab] of sampling)
+    const inheritOn = !seIsBaseTab();
+    if (!S.isDiffusion(m)) for (const [k, mn, mx, st, lab] of sampling) {
+        if (inheritOn) {
+            g.append(seBind('inheritable-number', k, { label: lab, min: mn, max: mx, step: st }));
+            continue;
+        }
         g.append(seBind('number', k, { label: lab, min: mn, max: mx, step: st }));
+    }
     g.append(seBind('bool', 'force_sampling', { label: 'Force Sampling',
         hint: 'Override request sampling parameters with configured values' }));
     g.append(seBind('number', 'ttl_seconds', { label: 'TTL (Seconds)', step: 1 }));
@@ -1551,15 +1754,17 @@ function editorNode() {
     const head = document.createElement('div');
     head.className = 'editor-head';
     head.textContent = (seFormModel && seFormModel.model_alias ? seFormModel.model_alias + ' \u2192 ' : '') + seModel;
-    const profilesHost = document.createElement('div');
-    profilesHost.className = 'se-profiles';
+    const tabsRow = document.createElement('div');
+    tabsRow.className = 'se-tabs';
     const scroll = document.createElement('div');
     scroll.className = 'editor-scroll';
     const fields = document.createElement('div');
     fields.id = 'se-fields';
-    scroll.append(profilesHost, fields);
+    scroll.append(fields);
     const bar = document.createElement('div');
     bar.className = 'editor-bar';
+    const changes = document.createElement('div');
+    changes.id = 'se-changes'; changes.className = 'changelist ed'; changes.hidden = true;
     const save = document.createElement('button');
     save.className = 'se-btn'; save.textContent = 'Save'; save.id = 'se-save';
     const close = document.createElement('button');
@@ -1567,12 +1772,13 @@ function editorNode() {
     const msg = document.createElement('span');
     msg.className = 'stat-sub'; msg.id = 'se-msg';
     bar.append(save, close, msg);
-    panel.append(head, scroll, bar);
+    panel.append(head, tabsRow, scroll, changes, bar);
     save.onclick = saveEditor;
     close.onclick = () => closeEditor();
     return panel;
 }
 function closeEditor() {
+    if (seModel) delete profilesCache[seModel];   // tree must show new profiles
     seModel = null; seFormModel = null;
     renderModelAdmin(); // rows were frozen while the editor was open
     document.querySelectorAll('.editor-overlay').forEach(n => n.remove());
@@ -1602,12 +1808,20 @@ async function openEditor(model) {
     seFormModel = entry || { id: model };
     seValues = window.UpliftModelSpec.buildState(seFormModel, settings);
     seOrig = JSON.parse(JSON.stringify(seValues));
+    seBaseVals = JSON.parse(JSON.stringify(seValues));
+    seTabs = [{ id: 'base', dirty: new Set(), origVals: JSON.parse(JSON.stringify(seOrig)) }];
+    seActiveTab = 'base';
     // is_hidden/is_favorite/is_default/pinned are toggled from the models ROW
     // (classic _models.html), never in the settings modal — parity: not here.
     // popup modal, not an inline accordion: stable size for long forms
     const panel = editorNode();
     renderEditorFields(panel.querySelector('#se-fields'));
-    seLoadProfiles(model, panel.querySelector('.se-profiles'));
+    seLoadProfiles(model, panel.querySelector('.se-tabs')).then(() => seRenderTabs(panel));
+    panel._reRender = () => {
+        renderEditorFields(panel.querySelector('#se-fields'));
+        seRenderTabs(panel);
+        seUpdateSaveBtn();
+    };
     if (!row) $('se-msg') && ($('se-msg').textContent = `Model ${model} not listed`);
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay editor-overlay';
@@ -1620,14 +1834,216 @@ async function openEditor(model) {
     });
 }
 
+function seRenderTabs(panel) {
+    const strip = panel.querySelector('.se-tabs');
+    if (!strip) return;
+    strip.textContent = '';
+    for (const t of seTabs) {
+        const b = document.createElement('button');
+        b.className = 'se-tab' + (t.id === seActiveTab ? ' active' : '');
+        let mark = '';
+        const nameChanged = t.id !== 'base' &&
+            ((t._origExpose || false) !== !!t.expose_as_model ||
+             (t._origApi || '') !== (t.api_name || ''));
+        if (t.dirty.size || nameChanged) mark = ' ●';
+        const nm = t.id === 'base' ? 'BASE'
+            : (t.template ? '◱ ' : '') + (t.display_name || t.name || t.id);
+        b.textContent = nm + mark;
+        b.title = t.id === 'base' ? 'Model settings (base)'
+            : (t.template ? 'Global template (copy, unsaved)' : 'Profile: ' + (t.name || ''));
+        b.onclick = () => {
+            seCaptureTab();                 // save edits of the tab we leave
+            seActiveTab = t.id;
+            if (t.id !== 'base') seRestoreTab(t);
+            else { seValues = Object.assign({}, t.workVals || seBaseVals);
+                   seOrig = t.origVals || seOrig; }
+            renderEditorFields(document.getElementById('se-fields'));
+            seRenderTabs(panel);
+            seUpdateSaveBtn();
+        };
+        if (t.id !== 'base' && !t.template) {
+            const x = document.createElement('span');
+            x.className = 'se-tab-x'; x.textContent = '✕'; x.title = 'Close this tab (profile stays on server)';
+            x.onclick = (ev) => {
+                ev.stopPropagation();
+                seTabs = seTabs.filter(z => z.id !== t.id);
+                if (seActiveTab === t.id) { seActiveTab = 'base';
+                    seValues = JSON.parse(JSON.stringify(seBaseVals));
+                    seOrig = JSON.parse(JSON.stringify(seTabs[0].origVals)); }
+                renderEditorFields(document.getElementById('se-fields'));
+                seRenderTabs(panel); seUpdateSaveBtn();
+            };
+            b.append(x);
+        }
+        strip.append(b);
+    }
+    // New profile: focused input with incremental "Model profile X", values
+    // inherited from the tab we were on, dropdown of global templates + models
+    const nb = document.createElement('button');
+    nb.className = 'se-tab se-new'; nb.textContent = '+ NEW PROFILE';
+    nb.onclick = () => seNewProfile(panel);
+    strip.append(nb);
+    const drop = document.createElement('select');
+    drop.className = 'se-tab-drop';
+    const ph = document.createElement('option'); ph.value = ''; ph.textContent = 'apply from…';
+    drop.append(ph);
+    for (const t of (window.__seTemplates || [])) {
+        const o = document.createElement('option'); o.value = 'tpl:' + t.name;
+        o.textContent = '◱ ' + (t.display_name || t.name); drop.append(o);
+    }
+    for (const mm of (adminModels || [])) {
+        if (mm.id === seModel) continue;
+        const o = document.createElement('option'); o.value = 'mdl:' + mm.id;
+        o.textContent = '⊕ ' + (mm.display_name || mm.id); drop.append(o);
+    }
+    drop.onchange = () => {
+        const v = drop.value; if (!v) return;
+        drop.value = '';
+        const [kind, id] = [v.slice(0, 3), v.slice(4)];
+        if (kind === 'tpl') {
+            const tpl = (window.__seTemplates || []).find(x => x.name === id);
+            if (tpl) seOpenTemplateTab(panel, tpl);
+        } else {
+            toast('Loading ' + id + ' settings…');
+            fetchJson(`${API}/admin/api/models/${encodeURIComponent(id)}/settings`)
+                .then(d => seOpenModelCopyTab(panel, id, d.settings || {}))
+                .catch(e => toast('Load failed: ' + e.message));
+        }
+    };
+    strip.append(drop);
+    const ap = panel.querySelector('#se-apply-prof');
+    if (ap) {
+        const sel = panel.querySelector('#se-prof-sel');
+        ap.onclick = async () => {
+            if (!sel || !sel.value) return;
+            try {
+                await fetch(`${API}/admin/api/models/${encodeURIComponent(seModel)}/profiles/${encodeURIComponent(sel.value)}/apply`, { method: 'POST' });
+                toast('Applied profile ' + sel.value);
+                openEditor(seModel);
+            } catch (e) { toast('Apply failed: ' + e.message); }
+        };
+    }
+}
+function seCaptureTab() {
+    // pull live widget values into the active tab before switching
+    const t = seTab(); if (!t) return;
+    if (t.id === 'base') { t.workVals = Object.assign({}, seValues); return; }
+    t.workVals = Object.assign({}, seValues);
+    for (const k of Object.keys(seValues)) {
+        if (seValues[k] === undefined) delete t.workVals[k];
+    }
+    // overrides = keys whose value differs from base
+    const ov = {};
+    for (const [k, v] of Object.entries(t.workVals)) {
+        if (JSON.stringify(v) !== JSON.stringify(seBaseVals[k])) ov[k] = v;
+    }
+    // keep overrides that were captured but reverted-to-inherit out
+    for (const k of Object.keys(t.overrides)) if (!(k in ov)) delete t.overrides[k];
+    t.overrides = Object.assign({}, t.overrides, ov);
+}
+function seRestoreTab(t) {
+    seValues = Object.assign({}, seBaseVals, JSON.parse(JSON.stringify(t.workVals || t.overrides || {})));
+}
+function seNextAutoName() {
+    let i = 1;
+    const used = new Set(seTabs.filter(t => t.name).map(t => (t.name || '').toLowerCase()));
+    while (used.has('model-profile-' + i)) i++;
+    return 'Model profile ' + i;
+}
+function seAddTab(t) {
+    seTabs.push(t); seCaptureTab();          // capture previous tab first
+    seActiveTab = t.id;
+    return t;
+}
+function seNewProfile(panel) {
+    seCaptureTab();
+    const from = seValues;                   // inherited from current tab
+    const name = seNextAutoName();
+    const ov = {};
+    if (seActiveTab !== 'base') {
+        const src = seTab();
+        Object.assign(ov, JSON.parse(JSON.stringify(src.overrides || {})));
+    }
+    const t = { id: 'new' + Date.now(), name, display_name: name,
+        expose_as_model: false, api_name: '', overrides: ov,
+        workVals: JSON.parse(JSON.stringify(from)),
+        origVals: Object.assign({}, seBaseVals, JSON.parse(JSON.stringify(ov))),
+        dirty: new Set(), _new: true, _origExpose: false, _origApi: '' };
+    seInitSnap(t);
+    seTabs.push(t);
+    seActiveTab = t.id;
+    seRestoreTab(t);
+    renderEditorFields(document.getElementById('se-fields'));
+    seRenderTabs(panel); seUpdateSaveBtn();
+    // focus the name input for incremental rename
+    const inp = panel.querySelector('.se-newname');
+    if (inp) { inp.focus(); inp.select(); }
+}
+function seOpenTemplateTab(panel, tpl) {
+    seCaptureTab();
+    const t = { id: 'tpl' + Date.now(), name: tpl.name, display_name: tpl.display_name || tpl.name,
+        template: tpl.name, expose_as_model: false, api_name: '',
+        overrides: JSON.parse(JSON.stringify(tpl.settings || {})),
+        workVals: Object.assign({}, seBaseVals, JSON.parse(JSON.stringify(tpl.settings || {}))),
+        origVals: Object.assign({}, seBaseVals, JSON.parse(JSON.stringify(tpl.settings || {}))),
+        dirty: new Set(), _origExpose: false, _origApi: '' };
+    seInitSnap(t);
+    seTabs.push(t); seActiveTab = t.id; seRestoreTab(t);
+    renderEditorFields(document.getElementById('se-fields'));
+    seRenderTabs(panel); seUpdateSaveBtn();
+}
+function seOpenModelCopyTab(panel, modelId, settings) {
+    seCaptureTab();
+    const st = window.UpliftModelSpec.buildState({ id: modelId }, settings);
+    const ov = {};
+    for (const [k, v] of Object.entries(st)) {
+        if (k === 'ctKwargEntries') continue;
+        if (JSON.stringify(v) !== JSON.stringify(seBaseVals[k])) ov[k] = v;
+    }
+    const short = modelId.split('/').pop();
+    const t = { id: 'mdl' + Date.now(), name: 'from-' + short, display_name: 'Copy of ' + short,
+        expose_as_model: false, api_name: '', overrides: ov, workVals: st,
+        origVals: Object.assign({}, seBaseVals, JSON.parse(JSON.stringify(ov))),
+        dirty: new Set(), _origExpose: false, _origApi: '' };
+    seInitSnap(t);
+    seTabs.push(t); seActiveTab = t.id; seRestoreTab(t);
+    renderEditorFields(document.getElementById('se-fields'));
+    seRenderTabs(panel); seUpdateSaveBtn();
+}
+
 /* ---- per-model profiles (sidebar of the classic editor) ---- */
 async function seLoadProfiles(model, host) {
     let profs = [];
     try { profs = (await fetchJson(`${API}/admin/api/models/${encodeURIComponent(model)}/profiles`)).profiles || []; } catch (_) {}
     host.textContent = '';
+    window.__seProfiles = profs;
     const pt = document.createElement('div');
-    pt.className = 'se-hint'; pt.textContent = 'Profiles (this model)';
-    host.append(pt);
+    pt.className = 'se-hint'; pt.textContent = 'Profiles: ';
+    const sel2 = document.createElement('select'); sel2.id = 'se-prof-sel';
+    const none2 = document.createElement('option'); none2.value = ''; none2.textContent = 'apply stored profile…';
+    const apB = document.createElement('button'); apB.className = 'se-btn'; apB.id = 'se-apply-prof';
+    apB.textContent = 'APPLY';
+    sel2.append(none2, ...profs.map(p => { const o = document.createElement('option');
+        o.value = p.name; o.textContent = p.display_name || p.name; return o; }));
+    // open an existing profile as a tab for editing
+    sel2.onchange = () => {
+        const p = profs.find(x => x.name === sel2.value); if (!p) return;
+        const panel = document.querySelector('.modal.editor');
+        const ov = JSON.parse(JSON.stringify(p.settings || {}));
+        seCaptureTab();
+        const t = { id: 'p' + Date.now(), name: p.name, display_name: p.display_name || p.name,
+            expose_as_model: !!p.expose_as_model, api_name: p.api_name || '',
+            profileId: p.name,
+            overrides: ov, workVals: Object.assign({}, seBaseVals, JSON.parse(JSON.stringify(ov))),
+            origVals: Object.assign({}, seBaseVals, JSON.parse(JSON.stringify(ov))),
+            dirty: new Set(), _origExpose: !!p.expose_as_model, _origApi: p.api_name || '' };
+        seInitSnap(t);
+        seTabs.push(t); seActiveTab = t.id; seRestoreTab(t);
+        renderEditorFields(document.getElementById('se-fields'));
+        seRenderTabs(panel); seUpdateSaveBtn();
+    };
+    host.append(pt, sel2, apB);
+    const oldPt = null;
     const row = document.createElement('div');
     row.className = 'se-prof-row';
     const sel = document.createElement('select');
@@ -1680,6 +2096,7 @@ async function seLoadProfiles(model, host) {
     // Global templates (global_templates.json): apply or snapshot into a template.
     let tpls = [];
     try { tpls = (await fetchJson(`${API}/admin/api/profile-templates`)).templates || []; } catch (_) {}
+    window.__seTemplates = tpls;
     if (tpls.length || true) {
         const trow = document.createElement('div');
         trow.className = 'se-prof-row';
@@ -1736,6 +2153,8 @@ async function saveEditor() {
     if (!seModel) return;
     const panel = document.querySelector('.modal.editor');
     if (!panel) return;
+    seCaptureTab();
+    if (!seIsBaseTab()) return saveProfileTab(panel);
     const msg = panel.querySelector('#se-msg');
     const errors = window.UpliftModelSpec.validate(seValues);
     if (errors.length) {
@@ -1775,6 +2194,50 @@ async function saveEditor() {
     } catch (err) {
         msg.textContent = `error: ${err.message}`;
         toast(`Save failed: ${err.message}`);
+    }
+}
+async function saveProfileTab(panel) {
+    const msg = panel.querySelector('#se-msg');
+    const t = seTab();
+    const name = (t.name || '').trim();
+    if (!name) { toast('profile name required'); return; }
+    // full modelspec-shaped settings + inheritable validation via base merge
+    const mergedForValidate = Object.assign({}, seBaseVals,
+        JSON.parse(JSON.stringify(t.workVals || {})));
+    const errors = window.UpliftModelSpec.validate(mergedForValidate);
+    if (errors.length) { msg.textContent = errors[0]; toast(errors[0]); return; }
+    // only keys that differ from base persist (inheritance semantics)
+    const ov = {};
+    for (const [k, v] of Object.entries(t.workVals || {})) {
+        if (k === 'ctKwargEntries' || k === 'model_alias') continue;
+        if (v === undefined) continue;
+        if (JSON.stringify(v) !== JSON.stringify(seBaseVals[k])) ov[k] = v;
+    }
+    msg.textContent = 'saving profile…';
+    const body = { name, display_name: t.display_name || name, settings: ov,
+        expose_as_model: !!t.expose_as_model, api_name: t.api_name || null };
+    try {
+        const path = `${API}/admin/api/models/${encodeURIComponent(seModel)}/profiles` +
+            (t.profileId ? '/' + encodeURIComponent(t.profileId) : '');
+        const r = await fetch(path, { method: t.profileId ? 'PUT' : 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(t.profileId
+                ? { settings: ov, display_name: t.display_name || name,
+                    expose_as_model: !!t.expose_as_model, api_name: t.api_name || null }
+                : body) });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.detail || d.error || String(r.status));
+        toast(`Saved profile ${name}`);
+        t.profileId = name; t.dirty = new Set();
+        t._origExpose = !!t.expose_as_model; t._origApi = t.api_name || '';
+        t.name = name; t.display_name = name;
+        t.origVals = Object.assign({}, seBaseVals, JSON.parse(JSON.stringify(t.workVals || {})));
+        t._ovSnap = JSON.parse(JSON.stringify(ov));   // saved overrides are the new original
+        msg.textContent = 'saved ✓';
+        seRenderTabs(panel); seUpdateSaveBtn();
+    } catch (e) {
+        msg.textContent = 'error: ' + e.message;
+        toast(`Profile save failed: ${e.message}`);
     }
 }
 
@@ -1983,7 +2446,9 @@ async function renderModelAdmin(force) {
         actions.className = 'rowacts';
         const btn = (label, fn, title, noRerender) => {
             const b = document.createElement('button');
-            b.className = 'se-btn act'; b.textContent = label; b.title = title || label;
+            b.className = 'se-btn act';
+            if (label.indexOf('DELETE') === 0) b.classList.add('danger');
+            b.textContent = label; b.title = title || label;
             b.onclick = async () => {
                 b.disabled = true;    // no double-toggle while the write is in flight
                 try { await fn(); } catch (err) {
@@ -1992,17 +2457,17 @@ async function renderModelAdmin(force) {
             };
             return b;
         };
-        actions.append(btn(m.is_hidden ? 'show' : 'hide',
+        actions.append(btn(m.is_hidden ? 'SHOW' : 'HIDE',
             () => flagWrite(m.id, { is_hidden: !m.is_hidden },
                 () => putModelSettings(m.id, { is_hidden: !m.is_hidden })),
             m.is_hidden ? 'Unhide' : 'Hide from pickers'));
-        actions.append(btn('edit', () => openEditor(m.id), 'Edit settings', true));
-        actions.append(btn('del settings', () => confirmDialog('Delete settings',
+        actions.append(btn('EDIT', () => openEditor(m.id), 'Edit settings', true));
+        actions.append(btn('DELETE SETTINGS', () => confirmDialog('Delete settings',
             `Remove the stored configuration of ${m.id}? The model stays on disk; its `
             + 'settings return to server defaults when saved again. This cannot be undone.',
             () => deleteStoredSettings(m.id), `Settings deleted: ${m.id}`),
             'Delete stored settings (model stays on disk)', true));
-        actions.append(btn('del model', () => confirmDialog('Delete model',
+        actions.append(btn('DELETE MODEL', () => confirmDialog('Delete model',
             `Delete ${m.id} from disk? A loaded instance is unloaded first, then the `
             + 'model directory and its stored settings are removed. This cannot be undone.',
             () => deleteModelFromDisk(m.id), `Deleted ${m.id}`), 'Delete model from disk'));
@@ -2031,7 +2496,7 @@ async function renderModelAdmin(force) {
             const box = document.createElement('span'); box.className = 'settings-box';
             const acts = document.createElement('span'); acts.className = 'rowacts';
             const ds = document.createElement('button');
-            ds.className = 'se-btn act danger'; ds.textContent = 'del settings';
+            ds.className = 'se-btn act danger'; ds.textContent = 'DELETE SETTINGS';
             ds.title = 'Delete stored settings for this missing model';
             ds.onclick = () => confirmDialog('Delete settings',
                 `Remove stored configuration for ${e.id}? The model is not on disk; `
@@ -2039,7 +2504,7 @@ async function renderModelAdmin(force) {
                 async () => { await deleteStoredSettings(e.id); },
                 `Deleted settings for ${e.id}`);
             const dm = document.createElement('button');
-            dm.className = 'se-btn act danger'; dm.textContent = 'del model';
+            dm.className = 'se-btn act danger'; dm.textContent = 'DELETE MODEL';
             dm.disabled = true;
             dm.title = 'Nothing on disk to delete \u2014 only the settings record exists';
             acts.append(ds, dm);
@@ -2116,6 +2581,9 @@ function copyText(t) {   // plain-http LAN origins lack navigator.clipboard
 }
 /* Properties of an alias/exposed profile that diverge from the model's own
    settings — rendered as indicator chips next to the alias tree line. */
+/* cached per-model profile lists for the row alias tree (30 s TTL; editor
+   writes invalidate immediately) */
+const profilesCache = {};
 function aliasDiffChips(prof, base) {
     const SHORT = { temperature: 'TEMP', top_p: 'TOP_P', top_k: 'TOP_K',
         max_tokens: 'MAX', max_context_window: 'CTX', enable_thinking: 'THINK',
@@ -2146,10 +2614,10 @@ function copyBtn(textToCopy, title) {
    hanging below the main row inside the same model box. */
 function aliasTree(m) {
     const lines = [];
-    const line = (alias, chips) => {
+    const line = (alias, chips, tip) => {
         const l = document.createElement('div'); l.className = 'alias-line';
         const mk = cell(alias); mk.className = 'alias-name';
-        mk.title = 'Serves this model on the API under the name "' + alias + '"';
+        mk.title = tip || ('Serves this model on the API under the name "' + alias + '"');
         l.append(mk, copyBtn(alias, 'Copy alias "' + alias + '"'));
         for (const txt of chips) {
             const chip = document.createElement('span');
@@ -2159,10 +2627,50 @@ function aliasTree(m) {
     };
     if (m.settings && m.settings.model_alias) line(m.settings.model_alias, []);
     for (const p of (m.exposed_profiles || []))
-        line(p.api_name || p.name, aliasDiffChips(p.settings, m.settings));
-    if (!lines.length) return null;
+        line(p.api_name || p.name, aliasDiffChips(p.settings, m.settings),
+             'Serves this model on the API under the name "' + (p.api_name || p.name) + '"');
+    // stored (not-yet-exposed) profiles: dim chips so they are not invisible.
+    // Cached briefly; invalidated whenever the editor writes a profile.
+    const profHost = document.createElement('div');
+    profHost.className = 'prof-lines';
+    profHost.dataset.mid = m.id;
+    const renderProfiles = (profs) => {
+        for (const p of profs) {
+            if ((m.exposed_profiles || []).some(e => e.name === p.name)) continue;
+            const l = document.createElement('div'); l.className = 'alias-line dim-line';
+            const tag = document.createElement('span');
+            tag.className = 'schip'; tag.textContent = 'PROFILE';
+            const mk = cell(p.display_name || p.name); mk.className = 'alias-name dim';
+            mk.title = 'Stored profile — expose it as an API model from the editor to serve requests under its name';
+            l.append(tag, mk);
+            for (const txt of aliasDiffChips(p.settings, m.settings)) {
+                const chip = document.createElement('span');
+                chip.className = 'schip'; chip.textContent = txt; l.append(chip);
+            }
+            profHost.append(l);
+        }
+        if (!profHost.children.length) profHost.remove();
+    };
+    const c = profilesCache[m.id];
+    if (c && Date.now() - c.t < 30000) { renderProfiles(c.profs); }
+    else fetchJson(`${API}/admin/api/models/${encodeURIComponent(m.id)}/profiles`)
+        .then(d => { profilesCache[m.id] = { t: Date.now(), profs: d.profiles || [] };
+                     renderProfiles(d.profiles || []); })
+        .catch(() => profHost.remove());
+    if (!lines.length) {
+        // no aliases yet: the tree box appears only once profiles resolve
+        const t = document.createElement('div'); t.className = 'alias-tree';
+        t.append(profHost); t.hidden = true;
+        profHost.dataset.needsShow = '1';
+        const obs = new MutationObserver(() => {
+            if (profHost.children.length) { t.hidden = false; obs.disconnect(); }
+        });
+        obs.observe(profHost, { childList: true });
+        return t;
+    }
     const t = document.createElement('div'); t.className = 'alias-tree';
     lines.forEach(l => t.append(l));
+    t.append(profHost);
     return t;
 }
 
@@ -2564,10 +3072,8 @@ const GS_RESTART_FIELDS = new Set([
     'cache_enabled', 'mcp_config', 'distributed_inference_enabled',
     'network_ca_bundle', 'hf_endpoint', 'ms_endpoint']);
 function gsQueueSave(flat, val) {           // edit -> queue, no fetch yet
-    gsDirty[flat] = val;
     markFieldDirty(flat, val);
-    gsUpdateSaveBtn();
-    gsMarkSections();
+    if (['custom_model_prefixes'].includes(flat)) renderGlobalSettings();
 }
 function gsFlatOf(sec, field) {
     return Object.keys(GS_MAP).find(k => GS_MAP[k][0] === sec && GS_MAP[k][1] === field);
@@ -2588,26 +3094,31 @@ function gsDisplay(v) {
 }
 function markFieldDirty(flat, val) {
     const orig = gsOrigFlat(flat);
-    const cur = flat in gsDirty ? gsDirty[flat] : val;
-    const row = document.querySelector('#gs-body [data-flat="' + flat + '"]');
-    if (!row) return;
+    const cur = val === undefined ? gsValFlat(flat) : val;
     const changed = JSON.stringify(orig) !== JSON.stringify(cur);
-    row.classList.toggle('dirty', changed);
-    row.classList.toggle('restartq', changed && GS_RESTART_FIELDS.has(flat));
-    let rd = row.querySelector('.diff-out');
-    if (changed) {
-        if (!rd) {
-            rd = document.createElement('span');
-            rd.className = 'diff-out';
-            const o = document.createElement('span'); o.className = 'diff-o';
-            const n = document.createElement('span'); n.className = 'diff-n';
-            rd.append(o, document.createTextNode('→'), n);
-            const ctl = row.querySelector('.gctl');
-            if (ctl) ctl.append(rd); else row.append(rd);
+    if (changed) gsDirty[flat] = cur;
+    else delete gsDirty[flat];               // edited back = no longer queued
+    const row = document.querySelector('#gs-body [data-flat="' + flat + '"]');
+    if (row) {
+        row.classList.toggle('dirty', changed);
+        row.classList.toggle('restartq', changed && GS_RESTART_FIELDS.has(flat));
+        const rd = row.querySelector('.diff-out');
+        if (rd) {
+            rd.hidden = !changed;
+            if (changed) {
+                rd.querySelector('.diff-o').textContent = gsDisplay(orig);
+                rd.querySelector('.diff-n').textContent = gsDisplay(cur) + ' (now)';
+            }
         }
-        rd.querySelector('.diff-o').textContent = gsDisplay(orig);
-        rd.querySelector('.diff-n').textContent = gsDisplay(cur);
-    } else if (rd) rd.remove();
+    }
+    gsUpdateSaveBtn();
+    gsMarkSections();
+    renderDirtyList();
+}
+function revertField(flat) {                // click on |original| chip
+    delete gsDirty[flat];
+    renderGlobalSettings();                 // inputs rebuild from the baseline
+    renderDirtyList();
 }
 function gsMarkSections() {
     for (const box of document.querySelectorAll('#gs-body .gs-box')) {
@@ -2617,6 +3128,30 @@ function gsMarkSections() {
         const anyRestart = rows.some(r => r.classList.contains('restartq'));
         head.classList.toggle('sec-dirty', rows.length > 0 && !anyRestart);
         head.classList.toggle('sec-restart', anyRestart);
+        let warn = head.querySelector('.rqnow');
+        if (!warn) { warn = document.createElement('span'); warn.className = 'rqnow';
+                     warn.textContent = ' RESTART REQUIRED '; head.append(warn); }
+        warn.style.display = anyRestart ? '' : 'none';
+    }
+}
+function renderDirtyList() {
+    const box = document.getElementById('gs-changes');
+    if (!box) return;
+    const keys = Object.keys(gsDirty);
+    box.hidden = !keys.length;
+    box.textContent = '';
+    if (!keys.length) return;
+    const head = document.createElement('div'); head.className = 'ch-head';
+    head.textContent = 'CHANGES (' + keys.length + ')';
+    box.append(head);
+    for (const k of keys) {
+        const line = document.createElement('div'); line.className = 'ch-line';
+        const a = document.createElement('span'); a.textContent = k + ': ' + gsDisplay(gsOrigFlat(k));
+        const arrow = document.createTextNode(' → ');
+        const b2 = document.createElement('span'); b2.textContent = k + ': ' + gsDisplay(gsDirty[k]);
+        b2.className = 'ch-new';
+        line.append(a, arrow, b2);
+        box.append(line);
     }
 }
 function gsSaveBtn() { return document.getElementById('gs-save'); }
@@ -2650,6 +3185,7 @@ async function gsCommit() {
     // re-render inputs from the new baseline; keeps still-queued edits shown
     renderGlobalSettings();
     gsUpdateSaveBtn();
+    renderDirtyList();
 }
 async function gsRestartServer() {
     const b = gsSaveBtn(); if (!b) return;
@@ -2745,13 +3281,23 @@ function gsRow(sec, labelTxt, hint, control, opts) {
     }
     if (hint) {
         const h = document.createElement('small');
-        h.className = 'dim'; h.textContent = hint;
-        lab.append(document.createElement('br'), h);
+        h.className = 'dim'; h.textContent = hint;   // sits beside the name
+        lab.append(h);
     }
     if (opts.badge) lab.append(gsBadge());
+    // fixed 3-column layout: name+hint | diff slot (reserved, never moves
+    // the control) | control — the input keeps its place when it goes dirty
+    const slot = document.createElement('span'); slot.className = 'diffslot';
+    const rd = document.createElement('span'); rd.className = 'diff-out'; rd.hidden = true;
+    const o = document.createElement('span'); o.className = 'diff-o';
+    o.title = 'Click to revert to the original value';
+    const n = document.createElement('span'); n.className = 'diff-n';
+    o.onclick = () => { if (opts.flat) revertField(opts.flat); };
+    rd.append(o, document.createTextNode('→'), n);
+    slot.append(rd);
     const ctl = cell(''); ctl.className = 'gctl';
     ctl.append(control);
-    row.append(lab, ctl);
+    row.append(lab, slot, ctl);
     return row;
 }
 
@@ -2774,13 +3320,17 @@ function gsText(sec, field, flat, L, extra) {
         wrap.className = 'grange'; wrap.append(inp, out);
         return wrap;
     }
-    inp.onchange = () => {
+    const queue = (ev) => {
         let val = inp.value;
         if (extra && extra.number) val = val === '' ? null : Number(val);
         if (extra && extra.bool) val = inp.checked;
         gsQueueSave(flat, val);
-        if (extra && extra.reload) renderGlobalSettings();
+        // conditional-row refresh only on commit (blur/change): a full
+        // re-render on every keystroke would steal the input's focus
+        if (extra && extra.reload && (!ev || ev.type === 'change')) renderGlobalSettings();
     };
+    inp.addEventListener('input', queue);
+    inp.addEventListener('change', queue);
     return inp;
 }
 
@@ -2834,11 +3384,8 @@ function renderGlobalSettings() {
     body.textContent = '';
     const L = GS_LABELS;
 
-    // ---- Global
-    body.append(gsTitle('Global'));
-    const notice = cell(L.restart_notice + ' ' + L.badge);
-    notice.className = 'dim warn-line';
-    body.append(notice);
+    // (the old "Global" restart-notice box was removed; the RESTART chip,
+    //  red field marks and the RESTART SERVER button carry that meaning now)
 
     // ---- Language
     body.append(gsTitle('Language'));
@@ -3143,22 +3690,39 @@ function renderGlobalSettings() {
         bar = document.createElement('div');
         bar.id = 'gs-savebar';
         bar.className = 'savebar';
+        const changes = document.createElement('div');
+        changes.id = 'gs-changes'; changes.className = 'changelist'; changes.hidden = true;
+        const rowb = document.createElement('div'); rowb.className = 'savebar-row';
         const b = document.createElement('button');
         b.id = 'gs-save'; b.className = 'se-btn savebtn'; b.textContent = 'SAVE';
         b.onclick = gsSaveOrRestart;
         const clr = document.createElement('button');
-        clr.id = 'gs-discard'; clr.className = 'se-btn'; clr.textContent = 'Discard';
+        clr.id = 'gs-discard'; clr.className = 'se-btn'; clr.textContent = 'DISCARD';
         clr.onclick = () => {
             Object.keys(gsDirty).forEach(k => delete gsDirty[k]);
-            renderGlobalSettings(); gsUpdateSaveBtn();
+            renderGlobalSettings(); gsUpdateSaveBtn(); renderDirtyList();
         };
-        bar.append(clr, b);
+        rowb.append(clr, b);
+        bar.append(changes, rowb);
         wrap.parentElement.append(bar);
     }
     // re-apply still-queued dirty marks after re-render
-    for (const flat of Object.keys(wasDirty)) markFieldDirty(flat, wasDirty[flat]);
+    for (const flat of Object.keys(wasDirty)) {
+        markFieldDirty(flat, wasDirty[flat]);
+        // re-render rebuilds inputs from the server baseline; put the
+        // queued (unsaved) value back so the edit stays visible while typing
+        const row = document.querySelector('#gs-body [data-flat="' + flat + '"]');
+        const ctl = row && (row.querySelector('input[type=checkbox]') || row.querySelector('select') || row.querySelector('input'));
+        if (ctl) {
+            if (ctl.type === 'checkbox') ctl.checked = !!wasDirty[flat];
+            else ctl.value = wasDirty[flat] == null ? '' : wasDirty[flat];
+            const gv = row.querySelector('.gval');
+            if (gv) gv.textContent = String(wasDirty[flat]);
+        }
+    }
     gsMarkSections();
     gsUpdateSaveBtn();
+    renderDirtyList();
     const clrB = document.getElementById('gs-discard');
     if (clrB) clrB.style.display = Object.keys(gsDirty).length ? '' : 'none';
 }

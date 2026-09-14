@@ -311,9 +311,42 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
 .se-btn:hover { background: var(--ink); color: var(--bg); border-color: var(--ink); }
 .se-btn:disabled { border-color: var(--edge); color: var(--dim); cursor: default; }
 .se-btn:disabled:hover { background: transparent; color: var(--dim); }
-.se-row { display: flex; justify-content: space-between; align-items: center; gap: 10px;
-    font: 300 12px/1.4 var(--mono); margin-bottom: 8px; }
-.se-row input, .se-row select { width: 110px; }
+.se-row { display: grid; grid-template-columns: minmax(0,1fr) 150px 130px;
+    align-items: center; gap: 8px;
+    font: 300 12px/1.4 var(--mono); margin-bottom: 6px; }
+.se-row > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; }
+.se-ctl { display: flex; justify-content: flex-end; min-width: 0; }
+.se-row input, .se-row select { width: 130px; min-width: 0; }
+.se-row input[type=checkbox] { width: auto; }
+.se-row .se-hint { grid-column: 1 / -1; }
+.se-row textarea { grid-column: 1 / -1; width: 100%; }
+.se-slot { display: flex; justify-content: flex-end; min-width: 0; }
+.se-slot .diff-out { margin-left: 0; }
+/* checkbox hugs its description: label wraps it inline left-aligned */
+.se-row:has(input[type=checkbox]) { grid-template-columns: minmax(0,1fr) 150px auto; }
+.se-row:has(input[type=checkbox]) .se-ctl { justify-content: flex-start; }
+/* inherited placeholder look (profile tab) */
+.se-row input::placeholder { color: var(--dim); font-style: italic; opacity: 0.8; }
+/* ---- editor profile tab strip ---- */
+.se-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+    padding: 6px 8px; border-bottom: 1px solid var(--edge); background: var(--card); }
+.se-tab { font: 500 10px/1 var(--mono); letter-spacing: 0.06em; padding: 6px 10px;
+    border: 1px solid var(--edge); background: transparent; color: var(--dim);
+    cursor: pointer; border-radius: 0; position: relative; }
+.se-tab.active { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.se-tab.se-new { color: var(--accent); border-color: var(--accent); }
+.se-tab.se-new:hover { background: var(--accent); color: #141414; }
+.se-tab-x { margin-left: 6px; color: inherit; opacity: 0.6; }
+.se-tab-x:hover { opacity: 1; }
+.se-tab-drop { font: 400 10px/1 var(--mono); background: var(--field); color: var(--ink);
+    border: 1px solid var(--edge); padding: 5px 6px; margin-left: auto; }
+.se-profile-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+    border: 1px solid var(--accent); padding: 7px 10px; margin: 8px 0;
+    background: var(--field); }
+.se-prof-expose { display: inline-flex; align-items: center; gap: 6px;
+    font: 500 10px/1 var(--mono); letter-spacing: 0.06em; color: var(--accent); }
+.changelist.ed { margin: 0 8px; max-width: none; }
 @keyframes pulse { 50% { opacity: .5; } }
 .model-name { font: 400 12px/1.4 var(--mono); flex: 1; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap; }
@@ -420,17 +453,26 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
 #model-admin .mbox:nth-of-type(even) { background: var(--row2); }
 #model-admin .mbox .urow.admin { border-bottom: 0; }
 #model-admin .mbox .settings-box { background: var(--field); }
-/* trunk: vertical line dropping from the main row, splitting into aliases */
-#model-admin .alias-tree { margin: 0 10px 8px 26px; padding: 6px 0 2px 0;
-    border-left: 2px solid var(--frame); }
+/* trunk: vertical line dropping from the main row, splitting into aliases.
+   Styled as an explicit elbow conduit (rounded corner into each alias) so
+   the hierarchy reads at a glance, not a hairline. */
+#model-admin .alias-tree { margin: 0 10px 8px 22px; padding: 8px 0 2px 0;
+    border-left: 3px solid var(--dim); border-bottom-left-radius: 0; }
 #model-admin .alias-line { position: relative; display: flex; align-items: center;
-    gap: 8px; margin: 0 0 4px; padding: 3px 8px; min-width: 0;
+    gap: 8px; margin: 0 0 6px; padding: 4px 8px; min-width: 0;
     border: 1px solid var(--edge); background: var(--field);
     font: 400 12px/1.4 var(--mono); }
 #model-admin .alias-line::before { content: ""; position: absolute;
-    left: -13px; top: 50%; width: 12px; border-top: 2px solid var(--frame); }
+    left: -16px; top: -8px; bottom: 50%; width: 14px;
+    border-left: 3px solid var(--dim); border-bottom: 3px solid var(--dim);
+    border-bottom-left-radius: 8px; }
+#model-admin .alias-tree .alias-line:first-child::after { content: "";
+    position: absolute; left: -19px; top: -10px; width: 6px; height: 3px;
+    background: var(--dim); }
 #model-admin .alias-line span { text-align: left !important; }
 #model-admin .alias-line .alias-name { color: var(--ink); }
+#model-admin .alias-line.dim-line { opacity: 0.75; border-style: dashed; }
+#model-admin .alias-line .alias-name.dim { color: var(--dim); }
 .copybtn { background: transparent; border: 1px solid var(--edge); color: var(--dim);
     width: 20px; height: 18px; padding: 0; flex: 0 0 auto; cursor: pointer;
     font: 400 11px/1 var(--mono); border-radius: 0;
@@ -512,7 +554,10 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
 .se-btn.act { height: 22px; padding: 0 8px; font-size: 10px; }
 
 /* ---- Model settings editor: popup modal, roomy, monospace everywhere ---- */
-.modal.nasa.editor { width: min(900px, 100%); max-height: 90vh; }
+.modal.nasa.editor { width: min(860px, 100%); max-height: 92vh; }
+.modal.editor .editor-head { padding: 10px 14px; font-size: 12px; }
+.modal.editor .editor-scroll { padding: 8px 14px; }
+.modal.editor .editor-bar { padding: 8px 14px; }
 .modal.editor .editor-scroll { overflow: auto; min-height: 0; flex: 1;
     padding-right: 4px; }
 .modal.editor .editor-head { font: 500 13px/1.3 var(--mono); color: var(--ink);
@@ -604,12 +649,13 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
    framed panel with an inverted signage header strip; rows alternate
    shades inside the panel; controls sit in recessed field wells. */
 #gs-body.gs-wrap {
-    columns: 2; column-gap: 18px;
+    display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start;
     max-width: 1200px; margin: 0 auto;
 }
+/* boxes snap into a 2-column grid: ~half width, rows align at column edges */
 .gs-box {
-    break-inside: avoid; display: inline-block; width: 100%;
-    margin: 0 0 18px;
+    flex: 1 1 calc(50% - 9px); min-width: 340px; max-width: 100%;
+    margin: 0 0 0 0;
     border: 1px solid var(--edge); background: var(--card);
 }
 .gs-box-title {
@@ -620,17 +666,23 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
 }
 .gs-box-body { padding: 2px 12px 10px; }
 .gs-box .gs-title { display: none; }   /* title is re-emitted as panel header */
-.urow.settings { display: grid; grid-template-columns: minmax(0, 1fr) 190px;
-    gap: 12px; align-items: center; padding: 9px 6px;
+.urow.settings { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 230px) 190px;
+    gap: 10px; align-items: center; padding: 9px 6px;
     border-bottom: 1px solid var(--edge); }
+.diffslot { display: flex; justify-content: flex-end; min-width: 0; }
+@media (max-width: 900px) {
+    .urow.settings { grid-template-columns: minmax(0, 1fr) 190px; }
+    .diffslot { grid-column: 1 / -1; justify-content: flex-start; }
+}
 /* alternating row shade: instrument panel readout lines */
 .urow.settings:nth-of-type(even) { background: var(--row2); }
 .urow.settings:last-child { border-bottom: 0; }
 .urow.settings .gctl { display: flex; justify-content: flex-end; }
 .urow.settings .uname { white-space: normal; overflow: visible; text-overflow: clip;
     font: 400 12px/1.4 var(--mono); }
-.urow.settings .uname small { display: block; color: var(--dim);
-    font: 300 10px/1.35 var(--sans); margin-top: 2px; }
+/* description sits next to the setting name (wraps below only when tight) */
+.urow.settings .uname small { display: inline; color: var(--dim);
+    font: 300 10px/1.35 var(--sans); margin-left: 8px; }
 [data-theme="light"] .urow.settings .uname small { color: #4a463e; }  /* AA on beige rows */
 /* ---- Cockpit lamps: every row shows PINNED / DEFAULT / FAV; lit = active
    (green), unlit = grey inactive. Clicking a lamp toggles the property. ---- */
@@ -672,6 +724,12 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
 [data-theme="cockpit"] .admin-table .lsw-seg.on { background: #57e38a; color: #04140b; }
 .admin-table .lsw-seg.load { color: var(--accent); min-width: 82px; }
 .admin-table .lsw-seg:disabled { cursor: default; }
+/* row action buttons: uniform geometry, danger deletes red like the classic
+   dashboard; labels are UPPERCASE (user request) */
+.admin-table .act { min-width: 74px; text-align: center; font-weight: 500;
+    letter-spacing: 0.05em; }
+.admin-table .act.danger { color: var(--red); border-color: var(--red); }
+.admin-table .act.danger:hover { background: var(--red); color: #fff; }
 .admin-table .sec-div {
     width: 100%; padding: 12px 2px 4px; font: 500 10px/1.4 var(--sans);
     text-transform: uppercase; letter-spacing: 0.12em; color: var(--dim);
@@ -690,9 +748,15 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
 .rqmark { display: inline-flex; align-items: center; justify-content: center;
     width: 13px; height: 13px; background: var(--red); color: #fff;
     font: 700 10px/1 var(--mono); margin-right: 5px; flex: 0 0 auto; }
-.urow.settings .uname { white-space: normal; overflow: visible; text-overflow: clip;
-    display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
-.urow.settings .uname > small { white-space: normal; }
+.urow.settings .uname { display: flex; flex-wrap: wrap; align-items: baseline;
+    gap: 2px 8px; }
+.urow.settings .uname > small { white-space: normal; margin-left: 0; }
+/* arrows flank the RESTART REQUIRED strip in the section header */
+.gs-box-title { display: flex; align-items: center; }
+.gs-box-title .rqnow { margin-left: auto; color: inherit;
+    font: 500 9px/1 var(--mono); letter-spacing: 0.08em; }
+.gs-box-title.sec-restart .rqnow::before { content: '▾'; margin-right: 6px; }
+.gs-box-title.sec-restart .rqnow::after { content: '▾'; margin-left: 6px; }
 /* controls sit in recessed field wells, distinct from the panel ground */
 .urow.settings input, .urow.settings select, .urow.settings textarea {
     font: 400 11px/1.4 var(--mono); color: var(--ink);
@@ -713,7 +777,10 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
     color: var(--ink); opacity: 0.55; background: var(--row2); }
 .urow.settings input[type=checkbox] { min-width: 0; width: 15px; height: 15px;
     padding: 0; background: var(--field); accent-color: var(--ink); cursor: pointer; }
+.urow.settings .gctl { width: 190px; }
 .urow.settings .grange { display: flex; align-items: center; gap: 10px; width: 100%; }
+.urow.settings .grange input { flex: 1; min-width: 0; }
+.urow.settings .gval { min-width: 52px; }
 .urow.settings input[type=range] { background: transparent; border: 0; padding: 0;
     flex: 1; accent-color: var(--ink); }
 .urow.settings .gval { font: 400 11px var(--mono); min-width: 34px; text-align: right;
@@ -737,8 +804,9 @@ label.se-row.restartq input, label.se-row.restartq select, label.se-row.restartq
 .diff-out { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px;
     font: 400 10px/1.3 var(--mono); flex: 0 0 auto; }
 .diff-out .diff-o { border: 1px solid var(--edge); color: var(--dim);
-    padding: 2px 5px; max-width: 140px; overflow: hidden; text-overflow: ellipsis;
-    white-space: nowrap; }
+    padding: 2px 5px; max-width: 110px; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; cursor: pointer; background: var(--row2); }
+.diff-out .diff-o:hover { color: var(--ink); border-color: var(--ink); }
 .diff-out .diff-n { border: 1px solid var(--accent); color: var(--accent);
     padding: 2px 5px; max-width: 140px; overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap; }
@@ -749,10 +817,18 @@ label.se-row.restartq input, label.se-row.restartq select, label.se-row.restartq
     border-bottom-color: var(--accent); }
 .gs-box-title.sec-restart { background: var(--red); color: #fff;
     border-bottom-color: var(--red); }
-/* persistent save bar under the settings form */
-.savebar { display: flex; justify-content: flex-end; align-items: center; gap: 8px;
-    border: 1px solid var(--edge); background: var(--card); padding: 8px 10px;
-    margin-top: 4px; }
+/* persistent save bar under the settings form: CHANGES list above buttons */
+.savebar { display: block; border: 1px solid var(--edge); background: var(--card);
+    padding: 0; margin-top: 4px; max-width: 1200px; margin-left: auto; margin-right: auto; }
+.savebar-row { display: flex; justify-content: flex-end; align-items: center;
+    gap: 8px; padding: 8px 10px; }
+.changelist { border-bottom: 1px solid var(--edge); padding: 8px 10px;
+    max-height: 180px; overflow: auto; background: var(--field); }
+.changelist .ch-head { font: 500 10px/1 var(--mono); letter-spacing: 0.1em;
+    color: var(--dim); margin-bottom: 6px; }
+.changelist .ch-line { font: 400 11px/1.5 var(--mono); white-space: pre-wrap;
+    word-break: break-all; }
+.changelist .ch-new { color: var(--accent); }
 .savebtn { font-weight: 500; letter-spacing: 0.06em; }
 .savebtn.queued { background: var(--accent); border-color: var(--accent); color: #141414; }
 .savebtn.restart-mode { background: var(--red); border-color: var(--red); color: #fff; }
