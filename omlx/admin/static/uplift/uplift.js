@@ -1373,6 +1373,7 @@ function renderEditorFields(container) {
     if (tab && tab.id !== 'base' && seBaseVals) {
         const mergedState = Object.assign({}, seBaseVals,
             JSON.parse(JSON.stringify(tab.workVals || {})));
+        seNormalizeKwargs(mergedState);   // R10-6: raw kwargs shape -> editor entries
         seValues = mergedState;
         seOrig = tab.origVals || Object.assign({}, seBaseVals);
     }
@@ -1701,6 +1702,19 @@ function renderAne(container, g) {
 }
 
 /* chat_template_kwargs editor: value kinds per classic modal */
+/* R10-6: renderCtKwargs mutates entry objects; push the list back to the
+   active tab's workVals so re-renders (conditional toggles, tab switches)
+   show the edits instead of rebuilding from a stale clone. */
+function seSyncKwEntries() {
+    const t = seTab();
+    if (!t) return;
+    t.workVals = t.workVals || {};
+    t.workVals.ctKwargEntries = seValues.ctKwargEntries;
+    // entries are now the single source of truth for this tab
+    delete t.workVals.chat_template_kwargs;
+    delete t.workVals.forced_ct_kwargs;
+}
+
 function renderCtKwargs(container) {
     const S = window.UpliftModelSpec;
     container.append(seSection('Chat Template Kwargs'));
@@ -1770,9 +1784,11 @@ function renderCtKwargs(container) {
     add.className = 'se-btn'; add.textContent = '+ Add';
     add.addEventListener('click', () => {
         seValues.ctKwargEntries.push({ type: 'custom', key: '', value: '', force: false });
+        seSyncKwEntries();
         renderEditorFields(container);
     });
     g.append(add);
+    seSyncKwEntries();   // R10-6: keep the edited list live on the tab
 }
 
 function editorNode() {
@@ -1783,6 +1799,10 @@ function editorNode() {
     head.textContent = (seFormModel && seFormModel.model_alias ? seFormModel.model_alias + ' \u2192 ' : '') + seModel;
     const tabsRow = document.createElement('div');
     tabsRow.className = 'se-tabs';
+    // F-013: profile/template management rows need their own container —
+    // seRenderTabs() wipes .se-tabs on every tab switch and used to erase them.
+    const profsRow = document.createElement('div');
+    profsRow.className = 'se-profs';
     const scroll = document.createElement('div');
     scroll.className = 'editor-scroll';
     const fields = document.createElement('div');
@@ -1804,7 +1824,7 @@ function editorNode() {
     const msg = document.createElement('span');
     msg.className = 'stat-sub'; msg.id = 'se-msg';
     bar.append(save, close, msg);
-    panel.append(head, tabsRow, bodyRow, bar);
+    panel.append(head, tabsRow, profsRow, bodyRow, bar);
     save.onclick = saveEditor;
     close.onclick = () => closeEditor();
     return panel;
@@ -1849,7 +1869,7 @@ async function openEditor(model) {
     // popup modal, not an inline accordion: stable size for long forms
     const panel = editorNode();
     renderEditorFields(panel.querySelector('#se-fields'));
-    seLoadProfiles(model, panel.querySelector('.se-tabs')).then(() => seRenderTabs(panel));
+    seLoadProfiles(model, panel.querySelector('.se-profs')).then(() => seRenderTabs(panel));
     panel._reRender = () => {
         renderEditorFields(panel.querySelector('#se-fields'));
         seRenderTabs(panel);
@@ -1994,17 +2014,43 @@ function seCaptureTab() {
     for (const k of Object.keys(seValues)) {
         if (seValues[k] === undefined) delete t.workVals[k];
     }
-    // overrides = keys whose value differs from base
+    // overrides = keys whose value differs from base. R10-6: ctKwargEntries
+    // and model_alias are UI/internal fields, never real profile settings —
+    // persisting them corrupts the kwargs editor after a tab switch.
     const ov = {};
     for (const [k, v] of Object.entries(t.workVals)) {
+        if (k === 'ctKwargEntries' || k === 'model_alias') continue;
         if (JSON.stringify(v) !== JSON.stringify(seBaseVals[k])) ov[k] = v;
     }
     // keep overrides that were captured but reverted-to-inherit out
     for (const k of Object.keys(t.overrides)) if (!(k in ov)) delete t.overrides[k];
     t.overrides = Object.assign({}, t.overrides, ov);
+    seNormalizeKwargs(t.overrides);
+}
+function seNormalizeKwargs(vals) {
+    // R10-6: raw settings payloads (profiles/templates) carry
+    // chat_template_kwargs + forced_ct_kwargs; the editor works on the
+    // modelspec ctKwargEntries shape. Convert so kwargs render editable;
+    // when entries already exist, drop the raw twins so a save can't write
+    // a stale chat_template_kwargs alongside the edited entries.
+    if (!vals) return;
+    const hasRaw = vals.chat_template_kwargs || vals.forced_ct_kwargs;
+    if (vals.ctKwargEntries && vals.ctKwargEntries.length && !hasRaw) return;
+    if (!hasRaw) return;
+    // raw kwargs present: they win over entries built from base;
+    // base entries for keys the raw payload doesn't mention are kept.
+    // (After the first kwargs render, seSyncKwEntries has removed the raw
+    // twins from workVals, so re-renders keep the user's edited entries.)
+    const raw = vals.chat_template_kwargs || {};
+    const rebuilt = window.UpliftModelSpec.buildCtKwargEntries(raw, vals.forced_ct_kwargs, false);
+    const keep = (vals.ctKwargEntries || []).filter(e => !(e.key in raw));
+    vals.ctKwargEntries = rebuilt.concat(keep);
+    delete vals.chat_template_kwargs;
+    delete vals.forced_ct_kwargs;
 }
 function seRestoreTab(t) {
     seValues = Object.assign({}, seBaseVals, JSON.parse(JSON.stringify(t.workVals || t.overrides || {})));
+    seNormalizeKwargs(seValues);
 }
 function seNextAutoName() {
     let i = 1;
@@ -2279,8 +2325,16 @@ async function saveProfileTab(panel) {
     // full modelspec-shaped settings + inheritable validation via base merge
     const mergedForValidate = Object.assign({}, seBaseVals,
         JSON.parse(JSON.stringify(t.workVals || {})));
+    seNormalizeKwargs(mergedForValidate);   // R10-6
     const errors = window.UpliftModelSpec.validate(mergedForValidate);
     if (errors.length) { msg.textContent = errors[0]; toast(errors[0]); return; }
+    // R10-6: convert the tab's edited kwargs entries back to the raw
+    // settings shape so the inheritance diff below can persist them
+    if (t.workVals && t.workVals.ctKwargEntries) {
+        const kw = window.UpliftModelSpec.buildPayload(t.workVals, seFormModel);
+        t.workVals.chat_template_kwargs = kw.chat_template_kwargs;
+        t.workVals.forced_ct_kwargs = kw.forced_ct_kwargs;
+    }
     // only keys that differ from base persist (inheritance semantics)
     const ov = {};
     for (const [k, v] of Object.entries(t.workVals || {})) {
