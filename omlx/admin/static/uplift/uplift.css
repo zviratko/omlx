@@ -257,6 +257,14 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
     text-transform: uppercase; letter-spacing: 0.08em; margin-top: 3px; }
 .stat-sub { color: var(--dim); font: 300 11px/1.4 var(--mono); }
 .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 18px; }
+/* R10-14: a toggle's children live in an indented sub-block spanning the
+   full pair width, marked by an accent trunk so parent/child reads at a
+   glance; nests (dflash -> quantization, ANE -> CPU) simply indent again */
+.se-sub { grid-column: 1 / -1; display: grid; gap: 8px;
+    grid-template-columns: 1fr 1fr;
+    margin: 2px 0 6px; padding-left: 12px; border-left: 2px solid var(--accent); }
+.se-sub .se-field:first-child { margin-top: 0; }
+.se-sub .se-wide { grid-column: 1 / -1; }
 
 .meter { height: 4px; background: var(--grid); margin-top: 10px; }
 .meter > div { height: 100%; width: 0%; background: var(--chart-2);

@@ -1379,6 +1379,10 @@ function renderEditorFields(container) {
     }
     container.textContent = '';
     const grid = () => { const g = document.createElement('div'); g.className = 'pair'; container.append(g); return g; };
+    // R10-14: a toggle's child controls go into an indented sub-block so
+    // the parent/child relationship reads visually; nestable.
+    const sub = (parent) => { const d = document.createElement('div');
+        d.className = 'se-sub'; parent.append(d); return d; };
 
     /* ---- basic ---- */
     if (!seIsBaseTab()) {
@@ -1479,13 +1483,13 @@ function renderEditorFields(container) {
             hint: 'Limit thinking tokens for reasoning models.',
             onChange: renderEditorFields.bind(null, container) }));
         if (seValues.enableThinkingBudget)
-            g.append(seBind('number', 'thinking_budget_tokens',
+            sub(g).append(seBind('number', 'thinking_budget_tokens',
                 { label: 'Thinking budget (tokens)', min: 1, step: 1 }));
         g.append(seBind('bool', 'enableToolResultLimit', { label: 'Limit Tool Result Tokens',
             hint: 'Truncate large tool results (e.g. file reads) to a token limit.',
             onChange: renderEditorFields.bind(null, container) }));
         if (seValues.enableToolResultLimit)
-            g.append(seBind('number', 'max_tool_result_tokens',
+            sub(g).append(seBind('number', 'max_tool_result_tokens',
                 { label: 'Tool result token limit', min: 1, step: 1 }));
         const ggWrap = seBind('textarea', 'guided_grammar', {
             label: 'Guided Grammar',
@@ -1525,7 +1529,11 @@ function renderEditorFields(container) {
             ggInp.value = p.grammar;
             ggInp.dispatchEvent(new Event('input', { bubbles: true }));
         };
-        g.append(seBind('bool', 'guided_grammar_enabled', { label: 'Guided Grammar',
+        // R10-14: grammar toggle + textarea + preset dropdown form one
+        // framed unit; the box is always present, visibly disabled when off
+        const gsb = sub(g);
+        gsb.classList.add('se-sub-keep');
+        gsb.append(seBind('bool', 'guided_grammar_enabled', { label: 'Guided Grammar',
             hint: 'Apply an EBNF grammar by default for this model.',
             // toggle must NOT reflow the form: the grammar box is always
             // present, just visibly disabled while the feature is off
@@ -1534,12 +1542,12 @@ function renderEditorFields(container) {
         // R10-9: example dropdown docks inside the grammar field's control
         // box (below the textarea) so toggle + textarea + presets read as one unit
         ggWrap.querySelector('.se-ctl').append(presetSel);
-        g.append(ggWrap);
+        gsb.append(ggWrap);
         g.append(seBind('bool', 'enableIndexCache', { label: 'Index Cache',
             hint: 'Skip redundant indexer computation in DSA layers (DeepSeek V3/GLM-5).',
             onChange: renderEditorFields.bind(null, container) }));
         if (seValues.enableIndexCache)
-            g.append(seBind('number', 'index_cache_freq',
+            sub(g).append(seBind('number', 'index_cache_freq',
                 { label: 'Frequency (every Nth layer keeps indexer)', min: 1, step: 1 }));
     }
     g.append(seBind('bool', 'trust_remote_code', { label: 'Trust Remote Code',
@@ -1556,7 +1564,7 @@ function renderEditorFields(container) {
             hint: 'Compress KV cache using vector quantization. Lower bits = more compression.',
             onChange: renderEditorFields.bind(null, container) }));
         if (seValues.turboquant_kv_enabled)
-            g.append(seBind('number', 'turboquant_kv_bits',
+            sub(g).append(seBind('number', 'turboquant_kv_bits',
                 { label: 'Bits per channel', min: 2, max: 8, step: 0.25 }));
     }
     if (m.qwen4_ple_ssd_offload_supported || seValues.qwen4_ple_ssd_offload)
@@ -1581,7 +1589,7 @@ function renderEditorFields(container) {
             hint: 'Stream Mixture-of-Experts weights from the checkpoint on demand, keeping only part resident.',
             onChange: renderEditorFields.bind(null, container) }));
         if (seValues.moe_expert_offload_enabled)
-            g.append(seBind('number', 'moe_expert_offload_resident_fraction',
+            sub(g).append(seBind('number', 'moe_expert_offload_resident_fraction',
                 { label: 'Resident experts (fraction)', min: 0.01, max: 1, step: 0.01 }));
     }
     if (S.isQwenOqA8(m)) {
@@ -1589,7 +1597,7 @@ function renderEditorFields(container) {
             hint: 'Experimental GPU INT8 activation quantization for supported Q4/Q5 prefill.',
             onChange: renderEditorFields.bind(null, container) }));
         if (seValues.qwen35_oq_a8_enabled)
-            g.append(seBind('number', 'qwen35_oq_a8_min_tokens',
+            sub(g).append(seBind('number', 'qwen35_oq_a8_min_tokens',
                 { label: 'Minimum prompt tokens', min: 1, step: 1 }));
     }
     if (m.ane_prefill_backend && !S.isDiffusion(m)) renderAne(container, g);
@@ -1604,17 +1612,18 @@ function renderEditorFields(container) {
             g.append(seBind('bool', 'specprefill_enabled', { label: 'SpecPrefill',
                 onChange: renderEditorFields.bind(null, container) }));
             if (seValues.specprefill_enabled) {
+                const sb = sub(g);
                 const pool = S_.specprefillCandidates(models, m.id).map(x => ({ value: x.id }));
-                g.append(seBind('select', 'specprefill_draft_model',
+                sb.append(seBind('select', 'specprefill_draft_model',
                     { label: 'Draft Model', options: [{ value: '', label: 'Select draft model...' }, ...pool], picker: true }));
-                g.append(seBind('select', 'specprefill_keep_pct', { label: 'Keep Rate', options: [
+                sb.append(seBind('select', 'specprefill_keep_pct', { label: 'Keep Rate', options: [
                     { value: '0.1', label: '10% — Aggressive (~5-7x, some quality loss)' },
                     { value: '0.2', label: '20% — Balanced (~3x, recommended)' },
                     { value: '0.25', label: '25% — Conservative+ (~2.5x)' },
                     { value: '0.3', label: '30% — Conservative (~2.2x)' },
                     { value: '0.4', label: '40% — Mild (~1.8x)' },
                     { value: '0.5', label: '50% — Minimal (~1.5x)' }], picker: true }));
-                g.append(seBind('number', 'specprefill_threshold',
+                sb.append(seBind('number', 'specprefill_threshold',
                     { label: 'Threshold (tokens)', min: 1024, max: 131072, step: 1024 }));
             }
         }
@@ -1623,39 +1632,40 @@ function renderEditorFields(container) {
                 hint: m.dflash_compatible === false ? (m.dflash_compatibility_reason || 'not compatible') : '',
                 onChange: renderEditorFields.bind(null, container) }));
             if (seValues.dflash_enabled) {
+                const sb = sub(g);
                 const pool = S_.dflashCandidates(models, m.id).map(x => ({ value: x.id }));
-                g.append(seBind('select', 'dflash_draft_model',
+                sb.append(seBind('select', 'dflash_draft_model',
                     { label: 'Draft Model', options: [{ value: '', label: 'Select draft model...' }, ...pool], picker: true }));
-                g.append(seBind('bool', 'dflash_draft_quant_enabled', { label: 'Quantization',
+                sb.append(seBind('bool', 'dflash_draft_quant_enabled', { label: 'Quantization',
                     onChange: renderEditorFields.bind(null, container) }));
                 if (seValues.dflash_draft_quant_enabled) {
-                    g.append(seBind('select', 'dflash_draft_quant_weight_bits', { label: 'Weight Bits', options: [
+                    sb.append(seBind('select', 'dflash_draft_quant_weight_bits', { label: 'Weight Bits', options: [
                         { value: 2, label: '2-bit' }, { value: 4, label: '4-bit' }, { value: 8, label: '8-bit' }], picker: true }));
-                    g.append(seBind('select', 'dflash_draft_quant_activation_bits', { label: 'Activation Bits', options: [
+                    sb.append(seBind('select', 'dflash_draft_quant_activation_bits', { label: 'Activation Bits', options: [
                         { value: 16, label: '16-bit' }, { value: 32, label: '32-bit' }], picker: true }));
-                    g.append(seBind('number', 'dflash_draft_quant_group_size', { label: 'Group Size', min: 16, max: 256, step: 16 }));
+                    sb.append(seBind('number', 'dflash_draft_quant_group_size', { label: 'Group Size', min: 16, max: 256, step: 16 }));
                 }
-                g.append(seBind('number', 'dflash_max_ctx', { label: 'Max Context (fallback threshold)', step: 1 }));
-                g.append(seBind('bool', 'dflash_in_memory_cache', { label: 'In-memory cache',
+                sb.append(seBind('number', 'dflash_max_ctx', { label: 'Max Context (fallback threshold)', step: 1 }));
+                sb.append(seBind('bool', 'dflash_in_memory_cache', { label: 'In-memory cache',
                     onChange: renderEditorFields.bind(null, container) }));
                 if (seValues.dflash_in_memory_cache) {
-                    g.append(seBind('number', 'dflash_in_memory_cache_max_entries',
+                    sb.append(seBind('number', 'dflash_in_memory_cache_max_entries',
                         { label: 'In-memory cache max entries', min: 1, step: 1 }));
-                    g.append(seBind('number', 'dflash_in_memory_cache_max_gib',
+                    sb.append(seBind('number', 'dflash_in_memory_cache_max_gib',
                         { label: 'In-memory cache size (GiB)', min: 1, step: 1,
                           hint: 'Byte budget for L1 snapshots; LRU evicts when exceeded.' }));
                     if (seValues.dflash_ssd_cache_available) {
-                        g.append(seBind('bool', 'dflash_ssd_cache', { label: 'SSD cache',
+                        sb.append(seBind('bool', 'dflash_ssd_cache', { label: 'SSD cache',
                             hint: 'Requires in-memory cache to be enabled.' }));
                         if (seValues.dflash_ssd_cache)
-                            g.append(seBind('number', 'dflash_ssd_cache_max_gib',
+                            sb.append(seBind('number', 'dflash_ssd_cache_max_gib',
                                 { label: 'SSD cache size (GiB)', min: 1, step: 1 }));
                     }
                 }
-                g.append(seBind('number', 'dflash_draft_window_size', { label: 'Draft window size' }));
-                g.append(seBind('number', 'dflash_draft_sink_size', { label: 'Draft sink size', min: 0, step: 1 }));
-                g.append(seBind('number', 'dflash_block_size', { label: 'Runtime block size', step: 1 }));
-                g.append(seBind('select', 'dflash_verify_mode', { label: 'Verify mode', options: [
+                sb.append(seBind('number', 'dflash_draft_window_size', { label: 'Draft window size' }));
+                sb.append(seBind('number', 'dflash_draft_sink_size', { label: 'Draft sink size', min: 0, step: 1 }));
+                sb.append(seBind('number', 'dflash_block_size', { label: 'Runtime block size', step: 1 }));
+                sb.append(seBind('select', 'dflash_verify_mode', { label: 'Verify mode', options: [
                     { value: 'adaptive', label: 'adaptive (default)' },
                     { value: 'dflash', label: 'dflash' },
                     { value: 'ddtree', label: 'ddtree' }], picker: true }));
@@ -1675,10 +1685,11 @@ function renderEditorFields(container) {
                 hint: 'Speculative decoding via an external MTP drafter model.',
                 onChange: renderEditorFields.bind(null, container) }));
             if (seValues.vlm_mtp_enabled) {
+                const sb = sub(g);
                 const pool = S_.vlmMtpDrafters(models, m.id).map(x => ({ value: x.id }));
-                g.append(seBind('select', 'vlm_mtp_draft_model', { label: 'Drafter model', options: [
+                sb.append(seBind('select', 'vlm_mtp_draft_model', { label: 'Drafter model', options: [
                     { value: '', label: 'Select an assistant or MTP drafter…' }, ...pool], picker: true }));
-                g.append(seBind('number', 'vlm_mtp_draft_block_size',
+                sb.append(seBind('number', 'vlm_mtp_draft_block_size',
                     { label: 'Draft block size (tokens per round, blank = 4)', step: 1 }));
             }
         }
@@ -1695,43 +1706,47 @@ function renderAne(container, g) {
                  : 'Split eligible Qwen 3.5/3.6/3.8 prompt-processing work across both ANEs and the GPU.',
         onChange: renderEditorFields.bind(null, container) }));
     if (!seValues.qwen35_ane_prefill_enabled) return;
-    g.append(seBind('number', 'qwen35_ane_prefill_sequence_length',
+    const sbA = (function () { const d = document.createElement('div');
+        d.className = 'se-sub'; g.append(d); return d; })();
+    sbA.append(seBind('number', 'qwen35_ane_prefill_sequence_length',
         { label: 'Prompt block', min: 1024, step: 64 }));
-    if (!k2) g.append(seBind('number', 'qwen35_ane_prefill_tail_padding_min_tokens',
+    if (!k2) sbA.append(seBind('number', 'qwen35_ane_prefill_tail_padding_min_tokens',
         { label: 'Pad tails from', min: 0, step: 1 }));
-    g.append(seBind('number', 'qwen35_ane_prefill_fraction',
+    sbA.append(seBind('number', 'qwen35_ane_prefill_fraction',
         { label: 'MLP on ANE', min: 0, max: 1, step: 0.01 }));
-    g.append(seBind('number', 'qwen35_ane_prefill_shared_fraction',
+    sbA.append(seBind('number', 'qwen35_ane_prefill_shared_fraction',
         { label: 'Shared MLP on ANE', min: 0, max: 1, step: 0.01 }));
     if (!k2) {
-        g.append(seBind('number', 'qwen35_ane_prefill_max_layers',
+        sbA.append(seBind('number', 'qwen35_ane_prefill_max_layers',
             { label: 'MLP layer limit', min: 1, step: 1 }));
-        g.append(seBind('bool', 'qwen35_ane_prefill_dual_ane',
+        sbA.append(seBind('bool', 'qwen35_ane_prefill_dual_ane',
             { label: 'Use both ANEs', hint: 'Pin one resident program to each physical ANE instance.' }));
     }
-    g.append(seBind('bool', 'qwen35_ane_prefill_gdn',
+    sbA.append(seBind('bool', 'qwen35_ane_prefill_gdn',
         { label: 'Accelerate GDN', hint: 'Also split eligible GDN input projections across the ANEs and GPU.',
           onChange: renderEditorFields.bind(null, container) }));
     if (seValues.qwen35_ane_prefill_gdn) {
-        g.append(seBind('number', 'qwen35_ane_prefill_gdn_fraction',
+        sbA.append(seBind('number', 'qwen35_ane_prefill_gdn_fraction',
             { label: 'GDN on ANE (fraction)', min: 0, max: 1, step: 0.01 }));
-        g.append(seBind('number', 'qwen35_ane_prefill_gdn_max_layers',
+        sbA.append(seBind('number', 'qwen35_ane_prefill_gdn_max_layers',
             { label: 'GDN layer limit', min: 0, step: 1 }));
     }
-    g.append(seBind('bool', 'qwen35_ane_prefill_cpu_enabled',
+    sbA.append(seBind('bool', 'qwen35_ane_prefill_cpu_enabled',
         { label: 'Share MLP work with CPU',
           hint: 'Requires a separate Qwen q4 checkpoint clone with floating tensors converted.',
           onChange: renderEditorFields.bind(null, container) }));
     if (seValues.qwen35_ane_prefill_cpu_enabled) {
-        g.append(seBind('number', 'qwen35_ane_prefill_cpu_fraction',
+        const sbC = (function () { const d = document.createElement('div');
+            d.className = 'se-sub'; sbA.append(d); return d; })();
+        sbC.append(seBind('number', 'qwen35_ane_prefill_cpu_fraction',
             { label: 'MLP on CPU (fraction)', min: 0, max: 1, step: 0.001 }));
-        g.append(seBind('number', 'qwen35_ane_prefill_cpu_down_fraction',
+        sbC.append(seBind('number', 'qwen35_ane_prefill_cpu_down_fraction',
             { label: 'Down projection on CPU (fraction, 0 = disabled)', min: 0, max: 1, step: 0.001 }));
-        g.append(seBind('number', 'qwen35_ane_prefill_cpu_gdn_fraction',
+        sbC.append(seBind('number', 'qwen35_ane_prefill_cpu_gdn_fraction',
             { label: 'GDN on CPU (fraction)', min: 0, max: 1, step: 0.001 }));
-        g.append(seBind('number', 'qwen35_ane_prefill_cpu_threads',
+        sbC.append(seBind('number', 'qwen35_ane_prefill_cpu_threads',
             { label: 'CPU workers (0 = automatic)', min: 0, step: 1 }));
-        g.append(seBind('bool', 'qwen35_ane_prefill_cpu_shared_resource',
+        sbC.append(seBind('bool', 'qwen35_ane_prefill_cpu_shared_resource',
             { label: 'Performance-aware scheduling',
               hint: "Uses Apple's shared-resource scheduler hint and falls back automatically." }));
     }
