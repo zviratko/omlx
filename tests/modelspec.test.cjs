@@ -58,6 +58,17 @@ test('buildState: MoE offload stays off when hardware unsupported', () => {
 
 /* ---- validate (server __post_init__ mirrors) ---- */
 const ok = st => S.validate(st);
+test('validate: sampling range checks (sweep 1.3a)', () => {
+    const st = S.buildState(base(), {});
+    assert.deepStrictEqual(ok(st), []);              // nulls inherit, no errors
+    st.temperature = 99;
+    assert.match(ok(st).join('|'), /Temperature must be between 0 and 2/);
+    st.temperature = 1.5; st.top_p = 1.4; st.presence_penalty = -3;
+    st.top_k = 2.5;
+    const errs = ok(st).join('|');
+    assert.match(errs, /Top P/); assert.match(errs, /Presence Penalty/);
+    assert.match(errs, /Top K/);
+});
 test('validate: mtp + dflash conflict', () => {
     const st = S.buildState(base(), { mtp_enabled: true, dflash_enabled: true });
     assert.match(ok(st).join('|'), /Lightning MTP and DFlash/);

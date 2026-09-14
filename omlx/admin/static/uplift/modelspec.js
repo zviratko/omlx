@@ -198,6 +198,24 @@
     const num = v => Number(v);
     function validate(ms) {
         const errors = [];
+        // sweep 1.3a: sampling ranges (classic's input bounds; server has
+        // none, so an unvalidated UI happily stores temperature 99)
+        const rng = (label, v, lo, hi) => {
+            if (v === null || v === undefined || v === '') return;
+            const n = num(v);
+            if (!Number.isFinite(n) || n < lo || n > hi)
+                errors.push(label + ' must be between ' + lo + ' and ' + hi + '.');
+        };
+        rng('Temperature', ms.temperature, 0, 2);
+        rng('Top P', ms.top_p, 0, 1);
+        rng('Min P', ms.min_p, 0, 1);
+        rng('Repetition Penalty', ms.repetition_penalty, 0.5, 2);
+        rng('Presence Penalty', ms.presence_penalty, -2, 2);
+        if (ms.top_k !== null && ms.top_k !== undefined && ms.top_k !== '') {
+            const n = num(ms.top_k);
+            if (!Number.isInteger(n) || n < 0)
+                errors.push('Top K must be an integer of at least 0.');
+        }
         if (ms.qwen35_oq_a8_enabled) {
             if (ms.qwen35_ane_prefill_enabled)
                 errors.push('ANE prefill and INT8 activation prefill cannot both be enabled; they accelerate the same projections. Turn one off.');
