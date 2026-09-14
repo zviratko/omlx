@@ -3374,13 +3374,14 @@ function gsText(sec, field, flat, L, extra) {
     const v = gsGet(sec, field);
     inp.value = v == null ? '' : v;
     if (extra && extra.range) {
-        const out = document.createElement('span');
-        out.className = 'gval'; out.textContent = String(v);
-        inp.oninput = () => { out.textContent = inp.value; gsQueueSave(flat, Number(inp.value)); };
-        inp.onchange = () => gsQueueSave(flat, Number(inp.value));
-        const wrap = document.createElement('span');
-        wrap.className = 'grange'; wrap.append(inp, out);
-        return wrap;
+        // R10-1: the old readout span duplicated the value in a second
+        // bordered box that looked like another input. The control itself
+        // shows the value; a number input gives the native stepper instead.
+        inp.type = 'number';
+        const queueRange = () => gsQueueSave(flat, inp.value === '' ? null : Number(inp.value));
+        inp.oninput = queueRange;
+        inp.onchange = queueRange;
+        return inp;
     }
     const queue = (ev) => {
         let val = inp.value;
@@ -3778,8 +3779,6 @@ function renderGlobalSettings() {
         if (ctl) {
             if (ctl.type === 'checkbox') ctl.checked = !!wasDirty[flat];
             else ctl.value = wasDirty[flat] == null ? '' : wasDirty[flat];
-            const gv = row.querySelector('.gval');
-            if (gv) gv.textContent = String(wasDirty[flat]);
         }
     }
     gsMarkSections();

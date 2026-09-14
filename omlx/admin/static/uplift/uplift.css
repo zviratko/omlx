@@ -789,13 +789,6 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
 .urow.settings input[type=checkbox] { min-width: 0; width: 15px; height: 15px;
     padding: 0; background: var(--field); accent-color: var(--ink); cursor: pointer; }
 .urow.settings .gctl { width: 150px; }
-.urow.settings .grange { display: flex; align-items: center; gap: 10px; width: 100%; }
-.urow.settings .grange input { flex: 1; min-width: 0; }
-.urow.settings .gval { min-width: 52px; }
-.urow.settings input[type=range] { background: transparent; border: 0; padding: 0;
-    flex: 1; accent-color: var(--ink); }
-.urow.settings .gval { font: 400 11px var(--mono); min-width: 34px; text-align: right;
-    background: var(--field); border: 1px solid var(--edge); padding: 4px 6px; }
 .gs-dirs { display: flex; flex-direction: column; gap: 6px; width: 100%; }
 .gs-dir { display: flex; gap: 6px; }
 .gs-dir input { flex: 1; min-width: 0; }
