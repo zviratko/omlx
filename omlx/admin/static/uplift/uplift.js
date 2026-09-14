@@ -327,6 +327,8 @@ $('opt-hide-debug').onchange = e => { layout.logsHideDebug = e.target.checked; C
 $('btn-layout-reset').onclick = () => {
     Object.assign(layout, C.LAYOUT_DEFAULTS, { collapsed: {} });
     applyLayout();
+    applyOrder();   // F-017: defaults mean markup order; without this the
+                    // dragged order stays on screen until a manual reload
     fillSelect($('opt-cols'), [[1, '1'], [2, '2'], [3, '3'], [4, '4'], [5, '5']], layout.cols);
     fillSelect($('opt-window'), C.LAYOUT_WINDOWS.map(s => [s, s >= 3600 ? '1 hour' : `${s / 60} min`]), layout.chartWindowSec);
     fillSelect($('opt-interval'), C.LAYOUT_INTERVALS.map(ms => [ms, `${ms / 1000} s`]), layout.intervalMs);
