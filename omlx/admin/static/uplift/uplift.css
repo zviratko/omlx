@@ -311,9 +311,12 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
 .se-btn:hover { background: var(--ink); color: var(--bg); border-color: var(--ink); }
 .se-btn:disabled { border-color: var(--edge); color: var(--dim); cursor: default; }
 .se-btn:disabled:hover { background: transparent; color: var(--dim); }
-.se-row { display: grid; grid-template-columns: minmax(0,1fr) 150px 130px;
+.se-row { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,96px) 130px;
     align-items: center; gap: 8px;
     font: 300 12px/1.4 var(--mono); margin-bottom: 6px; }
+/* the |original| chip is narrower so name labels ("Enable Thinking") fit */
+.se-row .diff-out { margin-left: 0; gap: 4px; }
+.se-row .diff-out .diff-o { max-width: 68px; }
 .se-row > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap; }
 .se-ctl { display: flex; justify-content: flex-end; min-width: 0; }
@@ -456,19 +459,20 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
 /* trunk: vertical line dropping from the main row, splitting into aliases.
    Styled as an explicit elbow conduit (rounded corner into each alias) so
    the hierarchy reads at a glance, not a hairline. */
-#model-admin .alias-tree { margin: 0 10px 8px 22px; padding: 8px 0 2px 0;
-    border-left: 3px solid var(--dim); border-bottom-left-radius: 0; }
+/* trunk hangs below the model NAME (x≈80px = after the lamps), not the box
+   edge. Square diagram-style wiring: a vertical trunk drops and turns right
+   into every line; the trunk ENDS at the bottom-most branch (no stub below). */
+#model-admin .alias-tree { margin: 0 10px 8px 96px; padding: 8px 0 2px 0; }
 #model-admin .alias-line { position: relative; display: flex; align-items: center;
     gap: 8px; margin: 0 0 6px; padding: 4px 8px; min-width: 0;
     border: 1px solid var(--edge); background: var(--field);
     font: 400 12px/1.4 var(--mono); }
+/* each line draws its own trunk segment: riser from above + square corner
+   into the line. -20px overdraw bridges the 6px gaps between lines so the
+   segments read as one continuous wire, and stops at the last corner. */
 #model-admin .alias-line::before { content: ""; position: absolute;
-    left: -16px; top: -8px; bottom: 50%; width: 14px;
-    border-left: 3px solid var(--dim); border-bottom: 3px solid var(--dim);
-    border-bottom-left-radius: 8px; }
-#model-admin .alias-tree .alias-line:first-child::after { content: "";
-    position: absolute; left: -19px; top: -10px; width: 6px; height: 3px;
-    background: var(--dim); }
+    left: -16px; top: -16px; bottom: 50%; width: 14px;
+    border-left: 3px solid var(--dim); border-bottom: 3px solid var(--dim); }
 #model-admin .alias-line span { text-align: left !important; }
 #model-admin .alias-line .alias-name { color: var(--ink); }
 #model-admin .alias-line.dim-line { opacity: 0.75; border-style: dashed; }

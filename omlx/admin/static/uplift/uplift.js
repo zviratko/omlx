@@ -1115,15 +1115,17 @@ function renderEdChanges() {
     const shown = new Set();
     if (seIsBaseTab()) {
         for (const k of t.dirty) {
-            lines.push(k + ': ' + gsDisplay(seOrig[k]) + ' → ' +
-                       k + ': ' + gsDisplay(seValues[k]));
+            const sec = SECRET_KEYS.has(k) ? '••• CHANGED' : null;
+            lines.push(k + ': ' + (sec || gsDisplay(seOrig[k])) + ' → ' +
+                       k + ': ' + (sec || gsDisplay(seValues[k])));
             shown.add(k);
         }
     } else {
         for (const k of t.dirty) {
+            const sec = SECRET_KEYS.has(k) ? '••• CHANGED' : null;
             const o = SE_INHERIT_KEYS.has(k) ? seOvSnap(t)[k] : t.origVals[k];
-            lines.push(k + ': ' + gsDisplay(o) + ' \u2192 ' +
-                       k + ': ' + gsDisplay(seValues[k]));
+            lines.push(k + ': ' + (sec || gsDisplay(o)) + ' \u2192 ' +
+                       k + ': ' + (sec || gsDisplay(seValues[k])));
             shown.add(k);
         }
     }
@@ -1297,9 +1299,13 @@ function seBind(kind, key, opts) {
             const rd = lab2.querySelector('.diff-out');
             if (rd) {
                 rd.hidden = !changed;
-                if (changed) {
+                if (changed && SECRET_KEYS.has(key)) {
+                    // secret stays masked: only say that it changed
+                    rd.classList.add('masked');
+                    rd.querySelector('.diff-o').textContent = '••• CHANGED';
+                } else if (changed) {
+                    rd.classList.remove('masked');
                     rd.querySelector('.diff-o').textContent = gsDisplay(orig);
-                    rd.querySelector('.diff-n').textContent = gsDisplay(seValues[key]) + ' (now)';
                 }
             }
         }
@@ -1329,8 +1335,9 @@ function seBind(kind, key, opts) {
         renderEditorFields(document.getElementById('se-fields'));
         seUpdateSaveBtn();
     };
-    const nn = document.createElement('span'); nn.className = 'diff-n';
-    rd.append(o, document.createTextNode('→'), nn);
+    // the NEW value is the live input itself; the slot only carries the
+    // |original| chip pointing at it, so the input never jumps
+    rd.append(o, document.createTextNode('→'));
     slot.append(rd);
     const ctlBox = document.createElement('span'); ctlBox.className = 'se-ctl';
     ctlBox.append(input);
@@ -1399,7 +1406,7 @@ function renderEditorFields(container) {
     container.append(seSection('Basic Settings'));
     let g = grid();
     if (seIsBaseTab() || !seTab().template)
-        g.append(seBind('text', 'model_alias', { label: 'Model Alias' }));
+        g.append(seBind('text', 'model_alias', { label: 'Display Name' }));
     g.append(seBind('select', 'model_type_override', {
         label: 'Model Type',
         options: [{ value: '', label: 'Auto-detect' },
@@ -1887,20 +1894,49 @@ function seRenderTabs(panel) {
     drop.className = 'se-tab-drop';
     const ph = document.createElement('option'); ph.value = ''; ph.textContent = 'apply from…';
     drop.append(ph);
+    // grouped: bundled GLOBAL PRESETS (qwen3.5/…, gemma4, llama4 …), then
+    // user templates, then copy-from-other-model
+    const g1 = document.createElement('optgroup'); g1.label = 'Global presets';
+    for (const p of (window.__sePresets || [])) {
+        const o = document.createElement('option'); o.value = 'pre:' + p.name;
+        o.textContent = '◧ ' + (p.display_name || p.name); g1.append(o);
+    }
+    if (g1.children.length) drop.append(g1);
+    const g2 = document.createElement('optgroup'); g2.label = 'Model profiles (templates)';
     for (const t of (window.__seTemplates || [])) {
         const o = document.createElement('option'); o.value = 'tpl:' + t.name;
-        o.textContent = '◱ ' + (t.display_name || t.name); drop.append(o);
+        o.textContent = '◱ ' + (t.display_name || t.name); g2.append(o);
     }
+    if (g2.children.length) drop.append(g2);
+    const g3 = document.createElement('optgroup'); g3.label = 'Copy settings from model';
     for (const mm of (adminModels || [])) {
         if (mm.id === seModel) continue;
         const o = document.createElement('option'); o.value = 'mdl:' + mm.id;
-        o.textContent = '⊕ ' + (mm.display_name || mm.id); drop.append(o);
+        o.textContent = '⊕ ' + (mm.display_name || mm.id); g3.append(o);
+        // the model's aliases/profiles carry their own settings — copyable too
+        for (const ep of (mm.exposed_profiles || [])) {
+            const po = document.createElement('option');
+            po.value = 'mpr:' + encodeURIComponent(mm.id) + '|' + ep.name;
+            po.textContent = '⊕ ' + (mm.display_name || mm.id) + ' ▸ ' + (ep.api_name || ep.name);
+            g3.append(po);
+        }
     }
+    if (g3.children.length) drop.append(g3);
     drop.onchange = () => {
         const v = drop.value; if (!v) return;
         drop.value = '';
-        const [kind, id] = [v.slice(0, 3), v.slice(4)];
-        if (kind === 'tpl') {
+        const kind = v.slice(0, 3), id = v.slice(4);
+        if (kind === 'mpr') {
+            // model profile: settings are already local in adminModels
+            const mid = decodeURIComponent(id.slice(0, id.indexOf('|')));
+            const pname = id.slice(id.indexOf('|') + 1);
+            const mm = (adminModels || []).find(x => x.id === mid);
+            const ep = mm && (mm.exposed_profiles || []).find(x => x.name === pname);
+            if (ep) seOpenModelCopyTab(panel, mid + '/' + pname, ep.settings || {});
+        } else if (kind === 'pre') {
+            const pre = (window.__sePresets || []).find(x => x.name === id);
+            if (pre) seOpenTemplateTab(panel, pre);
+        } else if (kind === 'tpl') {
             const tpl = (window.__seTemplates || []).find(x => x.name === id);
             if (tpl) seOpenTemplateTab(panel, tpl);
         } else {
@@ -2097,6 +2133,19 @@ async function seLoadProfiles(model, host) {
     let tpls = [];
     try { tpls = (await fetchJson(`${API}/admin/api/profile-templates`)).templates || []; } catch (_) {}
     window.__seTemplates = tpls;
+    // Bundled global presets (same source as the classic editor's preset
+    // menu: /admin/static/omlx_preset.json), cached 1 day like classic does.
+    if (!window.__sePresets) {
+        try {
+            const cached = JSON.parse(localStorage.getItem('omlx_preset_cache') || 'null');
+            if (cached && cached.presets) window.__sePresets = cached.presets;
+            else {
+                const d = await fetchJson(`${API}/admin/static/omlx_preset.json`);
+                window.__sePresets = d.presets || [];
+                localStorage.setItem('omlx_preset_cache', JSON.stringify(d));
+            }
+        } catch (_) { window.__sePresets = []; }
+    }
     if (tpls.length || true) {
         const trow = document.createElement('div');
         trow.className = 'se-prof-row';
@@ -3092,6 +3141,9 @@ function gsDisplay(v) {
     if (v === null || v === undefined || v === '') return '—';
     return String(Array.isArray(v) ? v.join(',') : v);
 }
+/* fields whose values are secrets: diff chips and the CHANGES list say
+   CHANGED instead of printing the value (API key stays masked everywhere) */
+const SECRET_KEYS = new Set(['api_key', 'cloud_token', 'hf_token']);
 function markFieldDirty(flat, val) {
     const orig = gsOrigFlat(flat);
     const cur = val === undefined ? gsValFlat(flat) : val;
@@ -3105,9 +3157,13 @@ function markFieldDirty(flat, val) {
         const rd = row.querySelector('.diff-out');
         if (rd) {
             rd.hidden = !changed;
-            if (changed) {
+            if (changed && SECRET_KEYS.has(flat)) {
+                // masked field (API key): indicate the change, not the value
+                rd.classList.add('masked');
+                rd.querySelector('.diff-o').textContent = '••• CHANGED';
+            } else if (changed) {
+                rd.classList.remove('masked');
                 rd.querySelector('.diff-o').textContent = gsDisplay(orig);
-                rd.querySelector('.diff-n').textContent = gsDisplay(cur) + ' (now)';
             }
         }
     }
@@ -3146,9 +3202,10 @@ function renderDirtyList() {
     box.append(head);
     for (const k of keys) {
         const line = document.createElement('div'); line.className = 'ch-line';
-        const a = document.createElement('span'); a.textContent = k + ': ' + gsDisplay(gsOrigFlat(k));
+        const secret = SECRET_KEYS.has(k);
+        const a = document.createElement('span'); a.textContent = k + ': ' + (secret ? '•••' : gsDisplay(gsOrigFlat(k)));
         const arrow = document.createTextNode(' → ');
-        const b2 = document.createElement('span'); b2.textContent = k + ': ' + gsDisplay(gsDirty[k]);
+        const b2 = document.createElement('span'); b2.textContent = k + ': ' + (secret ? '••• CHANGED' : gsDisplay(gsDirty[k]));
         b2.className = 'ch-new';
         line.append(a, arrow, b2);
         box.append(line);
@@ -3291,9 +3348,9 @@ function gsRow(sec, labelTxt, hint, control, opts) {
     const rd = document.createElement('span'); rd.className = 'diff-out'; rd.hidden = true;
     const o = document.createElement('span'); o.className = 'diff-o';
     o.title = 'Click to revert to the original value';
-    const n = document.createElement('span'); n.className = 'diff-n';
     o.onclick = () => { if (opts.flat) revertField(opts.flat); };
-    rd.append(o, document.createTextNode('→'), n);
+    // the new value is the live control itself; slot shows |original| → only
+    rd.append(o, document.createTextNode('→'));
     slot.append(rd);
     const ctl = cell(''); ctl.className = 'gctl';
     ctl.append(control);
