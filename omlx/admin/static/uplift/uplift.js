@@ -1782,8 +1782,15 @@ function renderCtKwargs(container) {
             val.addEventListener('change', () => { e.value = val.value; });
         } else if (e.type === 'reasoning_effort') {
             val = document.createElement('select');
-            ['low', 'medium', 'high', 'xhigh', 'max', '__custom__'].forEach(v => {
-                const o = document.createElement('option'); o.value = v; o.textContent = v; val.append(o); });
+            // R10-10: offer the model-reported effort options; fall back to
+            // the standard preset list, current value always selectable
+            const opts = ((seFormModel || {}).reasoning_effort_options || []).length
+                ? [...seFormModel.reasoning_effort_options]
+                : ['low', 'medium', 'high', 'xhigh', 'max'];
+            if (!e.custom && !opts.includes(e.value)) opts.unshift(e.value);
+            opts.concat(['__custom__']).forEach(v => {
+                const o = document.createElement('option');
+                o.value = v; o.textContent = v === '__custom__' ? 'custom…' : v; val.append(o); });
             val.value = e.custom ? '__custom__' : e.value;
             val.addEventListener('change', () => {
                 if (val.value === '__custom__') { e.custom = true; } else { e.custom = false; e.value = val.value; }
@@ -1818,12 +1825,33 @@ function renderCtKwargs(container) {
     }
     const add = document.createElement('button');
     add.className = 'se-btn'; add.textContent = '+ Add';
-    add.addEventListener('click', () => {
-        seValues.ctKwargEntries.push({ type: 'custom', key: '', value: '', force: false });
-        seSyncKwEntries();
-        renderEditorFields(container);
-    });
-    g.append(add);
+    // R10-10: classic's Add menu — offer typed defaults, not just a blank row
+    const addMenu = document.createElement('span');
+    addMenu.className = 'se-addmenu'; addMenu.hidden = true;
+    const mkItem = (label, make, show) => {
+        if (!show) return;
+        const it = document.createElement('button');
+        it.className = 'se-btn'; it.textContent = label;
+        it.onclick = () => {
+            seValues.ctKwargEntries.push(make());
+            seSyncKwEntries();
+            addMenu.hidden = true;
+            renderEditorFields(container);
+        };
+        addMenu.append(it);
+    };
+    const m = seFormModel || {};
+    mkItem('Enable Thinking', () => ({ type: 'enable_thinking', value: 'true', force: false }),
+        !S.isDiffusion(m) && !m.thinking_forced
+        && !entries.some(e => e.type === 'enable_thinking'));
+    mkItem('Reasoning Effort', () => ({ type: 'reasoning_effort',
+        value: (m.reasoning_effort_default || 'low'), custom: false, customValue: '', force: false }),
+        !S.isDiffusion(m)
+        && !entries.some(e => e.type === 'reasoning_effort'
+            || (e.type === 'custom' && (e.key || '').trim() === 'reasoning_effort')));
+    mkItem('Custom', () => ({ type: 'custom', key: '', value: '', force: false }), true);
+    add.addEventListener('click', () => { addMenu.hidden = !addMenu.hidden; });
+    g.append(add, addMenu);
     seSyncKwEntries();   // R10-6: keep the edited list live on the tab
 }
 
