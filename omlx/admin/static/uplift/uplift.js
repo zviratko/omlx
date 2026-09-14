@@ -935,8 +935,9 @@ function updateModeLabels() {
         ? 'uploads run for real; the token stays in this browser and never reaches the oMLX server'
         : 'Uploads run in the shadow sandbox; the token stays in this browser and never reaches the real server.';
     const gs = $('gs-sub');
+    // R10-2: this is the real dashboard now — live mode needs no banner.
     if (gs && Date.now() - gsSavedAt > 5000) gs.textContent = live
-        ? 'saves go LIVE to real oMLX' : 'shadow-editable · real oMLX untouched';
+        ? '' : 'shadow-editable · real oMLX untouched';
     const hm = $('hm-sub');
     if (hm && hm.dataset.count) hm.textContent =
         `${hm.dataset.count} helpers · integrations editable${live ? ' (live)' : ' (shadow)'}`;
@@ -953,7 +954,7 @@ async function pollGatewayInfo() {
             : 'gw↑down';
         chip.classList.toggle('state-ok', !!d.ok);
         chip.title = `gateway → ${d.upstream}: ${d.ok ? 'reachable' : (d.last_error || 'unreachable')}\n` +
-                     (GW_LIVE ? 'LIVE writes: changes modify real oMLX\n'
+                     (GW_LIVE ? ''
                               : `shadow overrides: ${Object.keys(d.overrides || {}).length} · `) +
                      `sim ${d.sim_rate}/s`;
     } catch (_) { chip.textContent = 'gw?'; chip.classList.remove('state-ok'); }
@@ -3298,7 +3299,7 @@ async function gsSaveNow(fields) {
         if (GS._shadow) GS_ORIG._shadow = body;
         gsSavedAt = Date.now();
         $('gs-sub').textContent = GW_LIVE
-            ? 'saved ✓ (live — written to real oMLX)'
+            ? 'saved ✓'
             : 'saved ✓ (shadow — real oMLX untouched)';
         toast('Settings saved (' + Object.keys(fields).length + ' field'
               + (Object.keys(fields).length > 1 ? 's' : '') + ')');
