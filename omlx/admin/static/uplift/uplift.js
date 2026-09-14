@@ -134,7 +134,7 @@ document.addEventListener('keydown', e => {
 });
 
 /* ---------------- theme & motion ---------------- */
-const THEME_CYCLE = ['auto', 'light', 'dark', 'enhanced'];
+const THEME_CYCLE = ['auto', 'light', 'dark', 'enhanced', 'cockpit'];
 function applyPrefs() {
     const t = prefs.theme;
     let eff = t;
@@ -144,16 +144,42 @@ function applyPrefs() {
         matchMedia('(prefers-reduced-motion: reduce)').matches;
     document.documentElement.dataset.motion = motionOff ? 'off' : 'auto';
     $('btn-motion').style.opacity = motionOff ? 0.4 : 1;
+    if (typeof syncThemeMenu === 'function') syncThemeMenu();
     rerenderChartsTheme();
 }
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyPrefs);
 
 const motionOff = () => document.documentElement.dataset.motion === 'off';
-$('btn-theme').onclick = () => {
-    prefs.theme = THEME_CYCLE[(THEME_CYCLE.indexOf(prefs.theme) + 1) % THEME_CYCLE.length];
-    C.savePrefs(localStorage, prefs); applyPrefs();
-    toast('Theme: ' + prefs.theme);
-};
+/* Theme picker: dropdown menu (hover opens like the navbar dropdowns);
+   the current selection is marked. The old click-to-cycle is gone. */
+function syncThemeMenu() {
+    const want = prefs.theme || 'auto';
+    for (const a of $('dd-theme-menu').querySelectorAll('a'))
+        a.classList.toggle('active', a.dataset.theme === want);
+}
+for (const a of $('dd-theme-menu').querySelectorAll('a'))
+    a.addEventListener('click', e => {
+        e.preventDefault();
+        prefs.theme = a.dataset.theme;
+        C.savePrefs(localStorage, prefs); applyPrefs();
+        $('dd-theme-menu').hidden = true;
+        toast('Theme: ' + prefs.theme);
+    });
+{
+    const wrap = $('dd-theme'), menu = $('dd-theme-menu');
+    let t = null;
+    $('btn-theme').onclick = e => { e.preventDefault(); clearTimeout(t); menu.hidden = !menu.hidden; };
+    wrap.addEventListener('mouseenter', () => { clearTimeout(t); menu.hidden = false; });
+    wrap.addEventListener('mouseleave', () => { clearTimeout(t); t = setTimeout(() => { menu.hidden = true; }, 250); });
+}
+document.addEventListener('click', e => {
+    const menu = $('dd-theme-menu');
+    if (!menu.hidden && !menu.contains(e.target) && !$('btn-theme').contains(e.target))
+        menu.hidden = true;
+});
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') $('dd-theme-menu').hidden = true;
+});
 $('btn-motion').onclick = () => {
     prefs.motion = document.documentElement.dataset.motion === 'off' ? 'auto' : 'off';
     C.savePrefs(localStorage, prefs); applyPrefs();
@@ -1794,7 +1820,7 @@ async function renderModelAdmin(force) {
         const nmain = document.createElement('span'); nmain.className = 'nmain';
         const fav = document.createElement('button');
         fav.className = 'lamp favlamp' + (m.is_favorite ? ' on' : '');
-        fav.textContent = 'FAV'; fav.title = m.is_favorite ? 'Unfavorite' : 'Favorite';
+        fav.textContent = 'FAVOURITE'; fav.title = m.is_favorite ? 'Unfavorite' : 'Favorite';
         tapBtn(fav, () => flagWrite(m.id, { is_favorite: !m.is_favorite },
             () => putModelSettings(m.id, { is_favorite: !m.is_favorite })));
         const uid = cell(m.id); uid.className = 'uid';
@@ -2479,7 +2505,9 @@ async function gsSave(fields) {
 
 function gsBadge() {
     const b = document.createElement('span');
-    b.className = 'spill load'; b.textContent = GS_LABELS.badge;
+    // unified indicator-chip geometry (.rqchip matches the cockpit lamps:
+    // same height/stroke everywhere), never clipped by the label cell
+    b.className = 'rqchip'; b.textContent = GS_LABELS.badge;
     b.title = 'Applied after oMLX restart';
     return b;
 }

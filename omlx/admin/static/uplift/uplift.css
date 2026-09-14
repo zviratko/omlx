@@ -41,6 +41,75 @@
     --red: #c9243b;             /* DELETE cover rail (defined in :root; explicit per theme) */
     --bad: #c9243b;
 }
+/* ---- COCKPIT: 1970s instrument-panel ground (dark blue-black metal),
+   paper-white content, amber instruments, green power lamps. Emphasis is
+   WHITE on dark (manual doctrine); red only in the top strip and danger.
+   Flair: bracket corner frames on panels, scan-line texture on the page
+   ground, hatch-filled instrument bars — one [70s] motif family. ---- */
+[data-theme="cockpit"] {
+    --bg: #07090e;              /* panel metal, blue-black */
+    --card: #0c1017;            /* instrument well */
+    --row2: #131a24;            /* alternating readout line */
+    --field: #05070b;           /* deep recessed dial well */
+    --edge: #2b3648;            /* steel bezel */
+    --ink: #f2efe6;             /* paper white on metal */
+    --dim: #9fb0c8;             /* steel grey-blue, AA on card */
+    --accent: #ffb830;          /* instrument amber */
+    --chart-1: #f2efe6;
+    --chart-2: #ffb830;
+    --grid: #222c3c;
+    --heat: #ffb830;
+    --frame: #7d92b5;
+    --red: #e8443a;             /* [70s] hot caution red */
+    --bad: #e8443a;
+    --good: #57e38a;            /* power green, cockpit lamps */
+}
+html[data-theme="cockpit"] { color-scheme: dark; }
+/* scan-line texture on the page ground only (never behind text blocks) */
+[data-theme="cockpit"] body {
+    background: repeating-linear-gradient(0deg,
+        var(--bg) 0px, var(--bg) 3px, #090c12 3px, #090c12 4px);
+}
+/* bracket-device corner frames on every panel (the manual's own enclosure) */
+[data-theme="cockpit"] .card { outline: 0; border-top-color: var(--frame); }
+[data-theme="cockpit"] .card::after {
+    content: ""; position: absolute; inset: 3px; pointer-events: none;
+    background:
+        linear-gradient(var(--frame), var(--frame)) top left / 12px 1px,
+        linear-gradient(var(--frame), var(--frame)) top left / 1px 12px,
+        linear-gradient(var(--frame), var(--frame)) top right / 12px 1px,
+        linear-gradient(var(--frame), var(--frame)) top right / 1px 12px,
+        linear-gradient(var(--frame), var(--frame)) bottom left / 12px 1px,
+        linear-gradient(var(--frame), var(--frame)) bottom left / 1px 12px,
+        linear-gradient(var(--frame), var(--frame)) bottom right / 12px 1px,
+        linear-gradient(var(--frame), var(--frame)) bottom right / 1px 12px;
+    background-repeat: no-repeat;
+}
+[data-theme="cockpit"] .card h2 { color: var(--dim); letter-spacing: 0.14em; }
+/* instrument bar: hatched amber needle-scale instead of a flat line */
+[data-theme="cockpit"] .meter { height: 12px; border: 1px solid var(--dim);
+    background: var(--field); padding: 1px; }
+[data-theme="cockpit"] .meter > div {
+    background: repeating-linear-gradient(45deg,
+        var(--accent) 0 4px, #7a5a14 4px 6px);
+    height: 100%;
+}
+[data-theme="cockpit"] .meter.bad > div {
+    background: repeating-linear-gradient(45deg,
+        var(--red) 0 4px, #6e1e19 4px 6px);
+}
+/* physical instrument buttons: pushed steel, white when pressed */
+[data-theme="cockpit"] .se-btn { border-color: var(--frame); }
+[data-theme="cockpit"] .icon-btn:hover, [data-theme="cockpit"] select:hover {
+    background: var(--ink); color: var(--bg); }
+/* amber glow on the live telemetry strip */
+[data-theme="cockpit"] .logo .dot { background: var(--good); box-shadow: 0 0 8px rgba(87, 227, 138, .6); }
+[data-theme="cockpit"] .logo .dot.bad { background: var(--red); box-shadow: 0 0 8px rgba(232, 68, 58, .6); }
+/* amber glow for the caution chip */
+[data-theme="cockpit"] .rqchip { box-shadow: 0 0 6px rgba(255, 184, 48, .35); }
+/* charts sit in their steel bezel */
+[data-theme="cockpit"] .chart-box { border: 1px solid var(--edge); background: var(--field); }
+
 [data-theme="enhanced"] {
     --bg: #000000;              /* pure black, maximum contrast */
     --card: #000000;
@@ -237,9 +306,11 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
 .badge.Complete   { background: var(--ink); border-color: var(--ink); color: var(--bg); }
 .badge.Error      { background: var(--red); border-color: var(--red); color: #fff; }
 /* Settings editor + admin table buttons: sharp rectangles, value-shift hover */
-.se-btn { background: transparent; border: 1px solid var(--edge); color: var(--ink);
+.se-btn { background: transparent; border: 1px solid var(--dim); color: var(--ink);
     border-radius: 0; padding: 4px 10px; font: 400 11px/1.4 var(--mono); cursor: pointer; }
-.se-btn:hover { background: var(--ink); color: var(--bg); }
+.se-btn:hover { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.se-btn:disabled { border-color: var(--edge); color: var(--dim); cursor: default; }
+.se-btn:disabled:hover { background: transparent; color: var(--dim); }
 .se-row { display: flex; justify-content: space-between; align-items: center; gap: 10px;
     font: 300 12px/1.4 var(--mono); margin-bottom: 8px; }
 .se-row input, .se-row select { width: 110px; }
@@ -378,6 +449,8 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
 }
 .dd-menu a:last-child { border-bottom: 0; }
 .dd-menu a:hover { background: var(--ink); color: var(--bg); }
+.dd-menu--right { left: auto; right: -1px; min-width: 130px; }
+.dd-menu a.active { background: var(--ink); color: var(--bg); }
 
 /* ---- Sortable table heads ---- */
 .admin-table .urow.head span.sortable { cursor: pointer; }
@@ -398,9 +471,9 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
    Separate zone gets separate space (manual: roles get their own space). -- */
 .admin-table .settings-box {
     display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end;
-    background: var(--edge); padding: 4px 6px; min-width: 0;
+    background: var(--field); border: 1px solid var(--dim); padding: 4px 6px; min-width: 0;
 }
-[data-theme="enhanced"] .admin-table .settings-box { background: #141414; }
+[data-theme="enhanced"] .admin-table .settings-box { background: #0a0a0a; border-color: #8a8a8a; }
 .admin-table .schip {
     font: 400 9px/1 var(--mono); letter-spacing: 0.06em;
     border: 1px solid var(--dim); color: var(--dim); padding: 3px 5px;
@@ -525,13 +598,19 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
     border: 1px solid var(--edge); color: var(--dim); background: transparent;
     border-radius: 0;
 }
-.admin-table .lamp:hover { border-color: var(--dim); color: var(--ink); }
-.admin-table .lamp.on { border-color: #57d97a; color: #57d97a; }
-[data-theme="light"] .admin-table .lamp.on { color: #0a6b2c; border-color: #0a6b2c; }
-[data-theme="enhanced"] .admin-table .lamp.on { box-shadow: 0 0 8px rgba(87, 217, 122, 0.5); }
+/* unlit = grey outline; LIT = solid green fill with dark text — a lit
+   cockpit lamp, max contrast on any ground (green outlines on grey were
+   unreadable). Glow marks powered instruments on dark themes. */
+.admin-table .lamp:hover { border-color: var(--ink); color: var(--ink); }
+.admin-table .lamp.on { background: #57d97a; border-color: #57d97a; color: #06130a; }
+[data-theme="light"] .admin-table .lamp.on { background: #0a6b2c; border-color: #0a6b2c; color: #ffffff; }
+[data-theme="enhanced"] .admin-table .lamp.on { background: #7dffa0; border-color: #7dffa0;
+    color: #02120a; box-shadow: 0 0 8px rgba(125, 255, 160, 0.55); }
+[data-theme="cockpit"] .admin-table .lamp.on { background: #57e38a; border-color: #57e38a;
+    color: #04140b; box-shadow: 0 0 8px rgba(87, 227, 138, 0.55); }
 .admin-table .lampstack { display: flex; flex-direction: column; gap: 3px;
     flex: 0 0 auto; margin-right: auto; }
-.admin-table .favlamp { width: 34px; }
+.admin-table .favlamp { width: auto; padding: 0 7px; }
 /* ---- LOADED/IDLE rocker switch + API copy button (state column) --------- */
 .admin-table .statewrap { display: inline-flex; align-items: center; gap: 6px;
     justify-content: flex-end; }
@@ -543,8 +622,11 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
     background: transparent; color: var(--dim); border: 0; border-radius: 0;
 }
 .admin-table .lsw-seg + .lsw-seg { border-left: 1px solid var(--edge); }
-.admin-table .lsw-seg.on { color: #57d97a; }
+.admin-table .lsw-seg.on { background: #57d97a; color: #06130a; }
 .admin-table .lsw-seg.lit { color: var(--ink); }
+[data-theme="light"] .admin-table .lsw-seg.on { background: #0a6b2c; color: #ffffff; }
+[data-theme="enhanced"] .admin-table .lsw-seg.on { background: #7dffa0; color: #02120a; }
+[data-theme="cockpit"] .admin-table .lsw-seg.on { background: #57e38a; color: #04140b; }
 .admin-table .lsw-seg.load { color: var(--accent); min-width: 82px; }
 .admin-table .lsw-seg:disabled { cursor: default; }
 /* ---- DELETE cover: red header rail over SETTINGS / MODEL breakers ------- */
@@ -557,9 +639,20 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
     width: 100%; padding: 12px 2px 4px; font: 500 10px/1.4 var(--sans);
     text-transform: uppercase; letter-spacing: 0.12em; color: var(--dim);
 }
-/* RESTART badge: auto width + padding — the fixed 84px .spill is narrower
-   than the label text, which made it overflow onto the label text */
-.urow.settings .spill { width: auto; padding: 0 6px; margin-top: 4px; }
+/* RESTART REQUIRED = unified indicator chip: SAME geometry as the model-row
+   lamps (16px tall, 1px stroke, 9px mono caps) for UI-wide consistency;
+   nowrap so it is never clipped mid-word. The settings label cell is a
+   wrapping column now, so the chip drops to its own line when the column
+   is narrow — fits at any font metrics (Safari fallback fonts included). */
+.rqchip {
+    display: inline-flex; align-items: center; justify-content: center;
+    height: 16px; padding: 0 6px; flex: 0 0 auto; margin-top: 4px;
+    font: 500 9px/1 var(--mono); letter-spacing: 0.08em; white-space: nowrap;
+    border: 1px solid var(--accent); color: var(--accent); background: transparent;
+}
+.urow.settings .uname { white-space: normal; overflow: visible; text-overflow: clip;
+    display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.urow.settings .uname > small { white-space: normal; }
 /* controls sit in recessed field wells, distinct from the panel ground */
 .urow.settings input, .urow.settings select, .urow.settings textarea {
     font: 400 11px/1.4 var(--mono); color: var(--ink);

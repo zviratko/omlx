@@ -218,7 +218,7 @@ function milestonesBetween(prev, next) {
 /* Settings: validated against known-good values; corrupt/absent => defaults. */
 const PREFS_KEY = '***';
 const PREFS_DEFAULTS = { theme: 'auto', motion: 'auto', intervalMs: 1000, dense: false };
-const THEMES = ['auto', 'light', 'dark', 'enhanced'];
+const THEMES = ['auto', 'light', 'dark', 'enhanced', 'cockpit'];
 function loadPrefs(storage) {
     let p = {};
     try { p = JSON.parse(storage.getItem(PREFS_KEY)) || {}; } catch (_) { /* storage may be denied */ }

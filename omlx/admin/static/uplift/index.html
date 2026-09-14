@@ -35,7 +35,16 @@
     <span class="chip" id="chip-gateway" title="Mock gateway status">—</span>
     <span class="spacer"></span>
     <button class="icon-btn" id="btn-motion" title="Toggle animations">✦</button>
-    <button class="icon-btn" id="btn-theme" title="Cycle theme: auto / day / night / enhanced">◐</button>
+    <span class="dd" id="dd-theme">
+        <button class="icon-btn" id="btn-theme" title="Theme">◐ <span class="dd-caret">▾</span></button>
+        <span class="dd-menu dd-menu--right" id="dd-theme-menu" hidden>
+            <a href="#" data-theme="auto">Auto</a>
+            <a href="#" data-theme="light">Day</a>
+            <a href="#" data-theme="dark">Night</a>
+            <a href="#" data-theme="enhanced">Enhanced</a>
+            <a href="#" data-theme="cockpit">Cockpit</a>
+        </span>
+    </span>
     <button class="icon-btn" id="btn-layout" title="Layout settings">⚙</button>
     <a class="icon-btn" href="/admin/dashboard" title="Classic dashboard" style="text-decoration:none">⌂</a>
 </header>
