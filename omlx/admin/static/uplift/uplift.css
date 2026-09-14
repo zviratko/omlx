@@ -572,12 +572,16 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
 .editor-body { display: flex; gap: 12px; flex: 1; min-height: 0; }
 .editor-body .editor-scroll { flex: 0 1 830px; min-width: 0; }
 #se-changes.ed { flex: 0 0 320px; align-self: stretch; max-height: none;
-    overflow: auto; border: 1px solid var(--edge); background: var(--field); }
+    overflow: auto; scrollbar-gutter: stable;
+    border: 1px solid var(--edge); background: var(--field); }
 .modal.editor .editor-head { padding: 10px 14px; font-size: 12px; }
 .modal.editor .editor-scroll { padding: 8px 14px; }
 .modal.editor .editor-bar { padding: 8px 14px; }
 .modal.editor .editor-scroll { overflow: auto; min-height: 0; flex: 1;
-    padding-right: 4px; }
+    /* R10-3: room for always-visible (classic) scrollbars; overlay
+       scrollbars simply float in this gutter. gutter:stable avoids the
+       layout jump when a pane starts/stops scrolling. */
+    padding-right: 18px; scrollbar-gutter: stable; }
 .modal.editor .editor-head { font: 500 13px/1.3 var(--mono); color: var(--ink);
     border-bottom: 1px solid var(--ink); padding-bottom: 10px; word-break: break-all; }
 .modal.editor input, .modal.editor select, .modal.editor textarea {
@@ -601,7 +605,8 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
     padding: 20px; gap: 12px;
 }
 .modal.nasa h3 { font: 500 13px/1.2 var(--sans); text-transform: uppercase; letter-spacing: 0.1em; }
-.prune-list { overflow: auto; border-top: 1px solid var(--ink); border-bottom: 1px solid var(--edge); }
+.prune-list { overflow: auto; scrollbar-gutter: stable; padding-right: 6px;
+    border-top: 1px solid var(--ink); border-bottom: 1px solid var(--edge); }
 .prune-list label.row {
     display: flex; align-items: center; gap: 8px; padding: 7px 4px;
     font: 400 12px/1.3 var(--mono); border-bottom: 1px solid var(--edge); cursor: pointer;
@@ -836,7 +841,7 @@ label.se-row.restartq input, label.se-row.restartq select, label.se-row.restartq
 .savebar-row { display: flex; justify-content: flex-end; align-items: center;
     gap: 8px; padding: 8px 10px; }
 .changelist { border-bottom: 1px solid var(--edge); padding: 8px 10px;
-    max-height: 180px; overflow: auto; background: var(--field); }
+    max-height: 180px; overflow: auto; scrollbar-gutter: stable; background: var(--field); }
 .changelist .ch-head { font: 600 12px/1 var(--sans); letter-spacing: 0.12em;
     text-transform: uppercase; color: var(--bg); background: var(--ink);
     margin: -8px -10px 8px; padding: 8px 10px; }
