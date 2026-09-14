@@ -3455,6 +3455,32 @@ function renderGlobalSettings() {
         gsSelect('ui_language', Object.entries(L.lang), gsGet('ui','language')),
         { flat: 'ui_language' }));
 
+    // ---- Claude Code (classic renders this on Status; Uplift keeps it with settings)
+    body.append(gsTitle('Claude Code'));
+    const ccLocal = (gsGet('claude_code','mode') || 'local') !== 'cloud';
+    body.append(gsRow('claude_code', L.cc.mode, L.cc.mode_hint,
+        gsSelect('claude_code_mode', [['local', L.cc.local], ['cloud', L.cc.cloud]],
+                 ccLocal ? 'local' : 'cloud'), { flat: 'claude_code_mode' }));
+    if (ccLocal) {
+        const dl = document.createElement('datalist'); dl.id = 'cc-models';
+        body.append(dl);
+        fetchJson(`${API}/admin/api/models`).then(d => {
+            for (const m of d.models || []) {
+                const o2 = document.createElement('option');
+                o2.value = m.name || m.id || ''; dl.append(o2);
+            }
+        }).catch(() => { /* picker list optional */ });
+        body.append(gsRow('claude_code', L.cc.opus, '',
+            gsText('claude_code','opus_model','claude_code_opus_model', L,
+                   { placeholder: L.cc.ph, list: 'cc-models' })));
+        body.append(gsRow('claude_code', L.cc.sonnet, '',
+            gsText('claude_code','sonnet_model','claude_code_sonnet_model', L,
+                   { placeholder: L.cc.ph, list: 'cc-models' })));
+        body.append(gsRow('claude_code', L.cc.haiku, '',
+            gsText('claude_code','haiku_model','claude_code_haiku_model', L,
+                   { placeholder: L.cc.ph, list: 'cc-models' })));
+    }
+
     // ---- Auth
     body.append(gsTitle('Auth'));
     body.append(gsRow('auth', L.auth.api_key, L.auth.api_key_hint,
@@ -3491,32 +3517,6 @@ function renderGlobalSettings() {
         aliasInp.value.split('\n').map(s => s.trim()).filter(Boolean));
     body.append(gsRow('server', L.server.aliases, L.server.aliases_hint, aliasInp,
         { flat: 'server_aliases' }));
-
-    // ---- Claude Code (classic renders this on Status; Uplift keeps it with settings)
-    body.append(gsTitle('Claude Code'));
-    const ccLocal = (gsGet('claude_code','mode') || 'local') !== 'cloud';
-    body.append(gsRow('claude_code', L.cc.mode, L.cc.mode_hint,
-        gsSelect('claude_code_mode', [['local', L.cc.local], ['cloud', L.cc.cloud]],
-                 ccLocal ? 'local' : 'cloud'), { flat: 'claude_code_mode' }));
-    if (ccLocal) {
-        const dl = document.createElement('datalist'); dl.id = 'cc-models';
-        body.append(dl);
-        fetchJson(`${API}/admin/api/models`).then(d => {
-            for (const m of d.models || []) {
-                const o2 = document.createElement('option');
-                o2.value = m.name || m.id || ''; dl.append(o2);
-            }
-        }).catch(() => { /* picker list optional */ });
-        body.append(gsRow('claude_code', L.cc.opus, '',
-            gsText('claude_code','opus_model','claude_code_opus_model', L,
-                   { placeholder: L.cc.ph, list: 'cc-models' })));
-        body.append(gsRow('claude_code', L.cc.sonnet, '',
-            gsText('claude_code','sonnet_model','claude_code_sonnet_model', L,
-                   { placeholder: L.cc.ph, list: 'cc-models' })));
-        body.append(gsRow('claude_code', L.cc.haiku, '',
-            gsText('claude_code','haiku_model','claude_code_haiku_model', L,
-                   { placeholder: L.cc.ph, list: 'cc-models' })));
-    }
 
     // ---- Model
     body.append(gsTitle('Model'));
@@ -3565,6 +3565,33 @@ function renderGlobalSettings() {
         gsSelect('idle_timeout_seconds', L.model.idle_opts,
                  gsGet('idle_timeout','idle_timeout_seconds') ?? '')));
 
+    // ---- Generation Defaults
+    body.append(gsTitle('Generation Defaults'));
+    const temp = gsText('sampling','temperature','sampling_temperature', L,
+        { range: true, min: 0, max: 2, step: 0.1 });
+    body.append(gsRow('gen', L.gen.temperature, L.gen.temperature_hint, temp,
+        { flat: 'sampling_temperature' }));
+    const topp = gsText('sampling','top_p','sampling_top_p', L,
+        { range: true, min: 0, max: 1, step: 0.05 });
+    body.append(gsRow('gen', L.gen.top_p, L.gen.top_p_hint, topp,
+        { flat: 'sampling_top_p' }));
+    body.append(gsRow('gen', L.gen.top_k, L.gen.top_k_hint,
+        gsText('sampling','top_k','sampling_top_k', L, { number: true, min: 0 })));
+    body.append(gsRow('gen', L.gen.max_tokens, '',
+        gsText('sampling','max_tokens','sampling_max_tokens', L,
+               { number: true, min: 1, max: 131072 }),
+        { flat: 'sampling_max_tokens' }));
+    body.append(gsRow('gen', L.gen.max_ctx, L.gen.max_ctx_hint,
+        gsText('sampling','max_context_window','sampling_max_context_window', L,
+               { number: true, min: 1, max: 2097152 })));
+    body.append(gsRow('gen', L.gen.max_policy, L.gen.max_policy_hint,
+        gsText('sampling','max_context_window_policy',
+               'sampling_max_context_window_policy', L,
+               { number: true, min: 1, max: 2097152, placeholder: 'None' })));
+    body.append(gsRow('gen', L.gen.rep_pen, L.gen.rep_pen_hint,
+        gsText('sampling','repetition_penalty','sampling_repetition_penalty', L,
+               { number: true, min: 1, step: 0.05 })));
+
     // ---- Resource Management
     body.append(gsTitle('Resource Management'));
     body.append(gsRow('res', L.res.max_conc, L.res.max_conc_hint,
@@ -3610,33 +3637,6 @@ function renderGlobalSettings() {
     body.append(gsRow('cache', L.cache.hot_max, L.cache.hot_max_hint,
         gsText('cache','hot_cache_max_size','hot_cache_max_size', L,
                { placeholder: '8GB' })));
-
-    // ---- Generation Defaults
-    body.append(gsTitle('Generation Defaults'));
-    const temp = gsText('sampling','temperature','sampling_temperature', L,
-        { range: true, min: 0, max: 2, step: 0.1 });
-    body.append(gsRow('gen', L.gen.temperature, L.gen.temperature_hint, temp,
-        { flat: 'sampling_temperature' }));
-    const topp = gsText('sampling','top_p','sampling_top_p', L,
-        { range: true, min: 0, max: 1, step: 0.05 });
-    body.append(gsRow('gen', L.gen.top_p, L.gen.top_p_hint, topp,
-        { flat: 'sampling_top_p' }));
-    body.append(gsRow('gen', L.gen.top_k, L.gen.top_k_hint,
-        gsText('sampling','top_k','sampling_top_k', L, { number: true, min: 0 })));
-    body.append(gsRow('gen', L.gen.max_tokens, '',
-        gsText('sampling','max_tokens','sampling_max_tokens', L,
-               { number: true, min: 1, max: 131072 }),
-        { flat: 'sampling_max_tokens' }));
-    body.append(gsRow('gen', L.gen.max_ctx, L.gen.max_ctx_hint,
-        gsText('sampling','max_context_window','sampling_max_context_window', L,
-               { number: true, min: 1, max: 2097152 })));
-    body.append(gsRow('gen', L.gen.max_policy, L.gen.max_policy_hint,
-        gsText('sampling','max_context_window_policy',
-               'sampling_max_context_window_policy', L,
-               { number: true, min: 1, max: 2097152, placeholder: 'None' })));
-    body.append(gsRow('gen', L.gen.rep_pen, L.gen.rep_pen_hint,
-        gsText('sampling','repetition_penalty','sampling_repetition_penalty', L,
-               { number: true, min: 1, step: 0.05 })));
 
     // ---- MCP
     body.append(gsTitle('MCP'));
