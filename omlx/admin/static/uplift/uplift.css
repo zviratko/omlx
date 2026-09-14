@@ -402,7 +402,7 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
 .admin-table .urow { display: grid; gap: 10px; padding: 8px 2px;
     border-bottom: 1px solid var(--edge); font: 400 12px/1.4 var(--mono);
     align-items: center; }
-.admin-table .urow.admin { grid-template-columns: minmax(0,3fr) 110px 158px 90px minmax(0,5fr); }
+.admin-table .urow.admin { grid-template-columns: minmax(0,3fr) 110px 104px 90px minmax(0,5fr); }
 .admin-table .urow.usage { grid-template-columns: minmax(0,4fr) minmax(0,2fr) 120px auto; }
 .admin-table .urow.settings { grid-template-columns: minmax(0,2fr) minmax(0,5fr); }
 .admin-table .urow.head { color: var(--dim); border-top: 1px solid var(--ink); }
@@ -412,7 +412,34 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
 .admin-table .urow.head span:first-child { text-align: left; }
 .admin-table .uname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     text-align: left !important; }
-/* name cell is now a column: main line + \u231e alias tree lines */
+/* ---- Model boxes: every model + its aliases live inside one fully framed
+   box; boxes alternate ground shades; alias lines get their own distinct
+   shade and hang off a visible trunk that splits from the main model. ---- */
+#model-admin .mbox { border: 1px solid var(--edge); margin-bottom: 6px;
+    background: var(--card); }
+#model-admin .mbox:nth-of-type(even) { background: var(--row2); }
+#model-admin .mbox .urow.admin { border-bottom: 0; }
+#model-admin .mbox .settings-box { background: var(--field); }
+/* trunk: vertical line dropping from the main row, splitting into aliases */
+#model-admin .alias-tree { margin: 0 10px 8px 26px; padding: 6px 0 2px 0;
+    border-left: 2px solid var(--frame); }
+#model-admin .alias-line { position: relative; display: flex; align-items: center;
+    gap: 8px; margin: 0 0 4px; padding: 3px 8px; min-width: 0;
+    border: 1px solid var(--edge); background: var(--field);
+    font: 400 12px/1.4 var(--mono); }
+#model-admin .alias-line::before { content: ""; position: absolute;
+    left: -13px; top: 50%; width: 12px; border-top: 2px solid var(--frame); }
+#model-admin .alias-line span { text-align: left !important; }
+#model-admin .alias-line .alias-name { color: var(--ink); }
+.copybtn { background: transparent; border: 1px solid var(--edge); color: var(--dim);
+    width: 20px; height: 18px; padding: 0; flex: 0 0 auto; cursor: pointer;
+    font: 400 11px/1 var(--mono); border-radius: 0;
+    display: inline-flex; align-items: center; justify-content: center; }
+.copybtn:hover { color: var(--bg); background: var(--ink); border-color: var(--ink); }
+.copybtn:disabled { cursor: default; color: var(--accent); border-color: var(--accent);
+    background: transparent; }
+
+/* legacy flat alias lines (kept for other hosts) */
 .admin-table .uname { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .admin-table .uname .nmain { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .admin-table .uname .nmain .uid { overflow: hidden; text-overflow: ellipsis;
@@ -483,6 +510,22 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
 [data-theme="light"] .admin-table .schip.on { border-color: var(--red); color: var(--red); }
 .admin-table .rowacts { display: flex; gap: 4px; justify-content: flex-end; flex-wrap: wrap; }
 .se-btn.act { height: 22px; padding: 0 8px; font-size: 10px; }
+
+/* ---- Model settings editor: popup modal, roomy, monospace everywhere ---- */
+.modal.nasa.editor { width: min(900px, 100%); max-height: 90vh; }
+.modal.editor .editor-scroll { overflow: auto; min-height: 0; flex: 1;
+    padding-right: 4px; }
+.modal.editor .editor-head { font: 500 13px/1.3 var(--mono); color: var(--ink);
+    border-bottom: 1px solid var(--ink); padding-bottom: 10px; word-break: break-all; }
+.modal.editor input, .modal.editor select, .modal.editor textarea {
+    font: 400 12px/1.4 var(--mono); color: var(--ink);
+    background: var(--field); border: 1px solid var(--edge);
+    padding: 6px 8px; border-radius: 0; }
+.modal.editor textarea { width: 100%; min-height: 84px; }
+.modal.editor .editor-bar { display: flex; align-items: center; gap: 10px;
+    border-top: 1px solid var(--ink); padding-top: 10px; }
+.modal.editor .se-row textarea { width: 260px; }
+.editor-overlay { z-index: 70; }
 
 /* ---- NASA modal (prune confirmation) ---- */
 .modal-overlay {
@@ -561,7 +604,7 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
    framed panel with an inverted signage header strip; rows alternate
    shades inside the panel; controls sit in recessed field wells. */
 #gs-body.gs-wrap {
-    columns: 340px 3; column-gap: 18px;
+    columns: 2; column-gap: 18px;
     max-width: 1200px; margin: 0 auto;
 }
 .gs-box {
@@ -629,12 +672,6 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
 [data-theme="cockpit"] .admin-table .lsw-seg.on { background: #57e38a; color: #04140b; }
 .admin-table .lsw-seg.load { color: var(--accent); min-width: 82px; }
 .admin-table .lsw-seg:disabled { cursor: default; }
-/* ---- DELETE cover: red header rail over SETTINGS / MODEL breakers ------- */
-.admin-table .delcover { display: inline-flex; flex-direction: column; gap: 2px;
-    border: 1px solid var(--red); padding: 2px 4px 3px; flex: 0 0 auto; }
-.admin-table .delcover-h { font: 500 8px/1 var(--mono); letter-spacing: 0.14em;
-    color: var(--red); text-align: center; }
-.admin-table .delcover-b { display: flex; gap: 4px; justify-content: center; }
 .admin-table .sec-div {
     width: 100%; padding: 12px 2px 4px; font: 500 10px/1.4 var(--sans);
     text-transform: uppercase; letter-spacing: 0.12em; color: var(--dim);
@@ -650,6 +687,9 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
     font: 500 9px/1 var(--mono); letter-spacing: 0.08em; white-space: nowrap;
     border: 1px solid var(--accent); color: var(--accent); background: transparent;
 }
+.rqmark { display: inline-flex; align-items: center; justify-content: center;
+    width: 13px; height: 13px; background: var(--red); color: #fff;
+    font: 700 10px/1 var(--mono); margin-right: 5px; flex: 0 0 auto; }
 .urow.settings .uname { white-space: normal; overflow: visible; text-overflow: clip;
     display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
 .urow.settings .uname > small { white-space: normal; }
@@ -686,6 +726,40 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
 /* MISSING state = caution amber (the one sanctioned secondary, same
    value as .spill.load), PRESENT = normal, EXTERNAL = dim */
 .admin-table .spill.miss { border-color: var(--accent); color: var(--accent); }
+
+/* ---- Dirty-state readouts + SAVE bar (Server Settings + model editor) --- */
+.urow.settings.dirty input, .urow.settings.dirty select, .urow.settings.dirty textarea,
+label.se-row.dirty input, label.se-row.dirty select, label.se-row.dirty textarea {
+    border-color: var(--accent); }
+.urow.settings.restartq input, .urow.settings.restartq select, .urow.settings.restartq textarea,
+label.se-row.restartq input, label.se-row.restartq select, label.se-row.restartq textarea {
+    border-color: var(--red); }
+.diff-out { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px;
+    font: 400 10px/1.3 var(--mono); flex: 0 0 auto; }
+.diff-out .diff-o { border: 1px solid var(--edge); color: var(--dim);
+    padding: 2px 5px; max-width: 140px; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; }
+.diff-out .diff-n { border: 1px solid var(--accent); color: var(--accent);
+    padding: 2px 5px; max-width: 140px; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; }
+/* section header carries the state of its rows: amber = unsaved edits,
+   red = queued changes that need a RESTART SERVER */
+.gs-box-title { cursor: pointer; }
+.gs-box-title.sec-dirty { background: var(--accent); color: #141414;
+    border-bottom-color: var(--accent); }
+.gs-box-title.sec-restart { background: var(--red); color: #fff;
+    border-bottom-color: var(--red); }
+/* persistent save bar under the settings form */
+.savebar { display: flex; justify-content: flex-end; align-items: center; gap: 8px;
+    border: 1px solid var(--edge); background: var(--card); padding: 8px 10px;
+    margin-top: 4px; }
+.savebtn { font-weight: 500; letter-spacing: 0.06em; }
+.savebtn.queued { background: var(--accent); border-color: var(--accent); color: #141414; }
+.savebtn.restart-mode { background: var(--red); border-color: var(--red); color: #fff; }
+.modal.editor .editor-bar .savebtn.restart-mode { background: var(--red);
+    border-color: var(--red); color: #fff; }
+.modal.editor .editor-bar .savebtn.queued { background: var(--accent);
+    border-color: var(--accent); color: #141414; }
 
 /* ---- MarkItDown special box (its own zone above the helper list) --------- */
 .mk-box { border: 1px solid var(--ink); padding: 14px; display: flex;

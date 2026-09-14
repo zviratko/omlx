@@ -153,14 +153,16 @@ const motionOff = () => document.documentElement.dataset.motion === 'off';
 /* Theme picker: dropdown menu (hover opens like the navbar dropdowns);
    the current selection is marked. The old click-to-cycle is gone. */
 function syncThemeMenu() {
+    // NB data-pick, NOT data-theme: [data-theme="light"] token blocks would
+    // match the anchor itself and poison its own --ink (invisible Day text)
     const want = prefs.theme || 'auto';
     for (const a of $('dd-theme-menu').querySelectorAll('a'))
-        a.classList.toggle('active', a.dataset.theme === want);
+        a.classList.toggle('active', a.dataset.pick === want);
 }
 for (const a of $('dd-theme-menu').querySelectorAll('a'))
     a.addEventListener('click', e => {
         e.preventDefault();
-        prefs.theme = a.dataset.theme;
+        prefs.theme = a.dataset.pick;
         C.savePrefs(localStorage, prefs); applyPrefs();
         $('dd-theme-menu').hidden = true;
         toast('Theme: ' + prefs.theme);
@@ -1058,6 +1060,42 @@ async function pollRequests() {
 
 /* ---------------- model manager (Models tab) ---------------- */
 let seModel = null, seValues = {};   // seValues = live form state (modelspec shape)
+let seOrig = {};                     // baseline snapshot for dirty tracking
+/* Fields that only take effect when the engine is (re)built: changing one
+   of these on a LOADED model shows RESTART MODEL in the editor Save button
+   (server semantics: PUT replies requires_reload for exactly these). */
+const SE_RESTART_KEYS = new Set([
+    'model_type_override', 'index_cache_freq', 'dflash_enabled',
+    'dflash_draft_model', 'dflash_draft_quant_enabled',
+    'dflash_draft_quant_weight_bits', 'dflash_draft_quant_activation_bits',
+    'dflash_draft_quant_group_size', 'dflash_max_ctx', 'dflash_in_memory_cache',
+    'dflash_in_memory_cache_max_entries', 'dflash_in_memory_cache_max_bytes',
+    'dflash_ssd_cache', 'dflash_ssd_cache_max_bytes', 'trust_remote_code',
+    'mtp_enabled', 'vlm_mtp_enabled', 'vlm_mtp_draft_model',
+    'vlm_mtp_draft_block_size']);
+function seDirtyKeys() {
+    const out = [];
+    for (const k of Object.keys(seValues)) {
+        if (k === 'ctKwargEntries') continue;
+        if (JSON.stringify(seValues[k]) !== JSON.stringify(seOrig[k])) out.push(k);
+    }
+    return out;
+}
+function seNeedsRestart() {
+    return seDirtyKeys().some(k => SE_RESTART_KEYS.has(k));
+}
+function seUpdateSaveBtn() {
+    const b = document.getElementById('se-save'); if (!b) return;
+    const n = seDirtyKeys().length;
+    const restart = seNeedsRestart() &&
+        !!(seFormModel && (seFormModel.loaded || seFormModel.is_loading));
+    b.classList.toggle('queued', n > 0);
+    b.classList.toggle('restart-mode', restart);
+    b.textContent = n ? (restart ? '▶ RESTART MODEL (' + n + ')' : 'SAVE (' + n + ')')
+                      : 'SAVE';
+    b.title = restart
+        ? 'Some queued settings apply only after the model is reloaded' : '';
+}
 
 /* ---- spec-driven settings form (parity with classic _modal_model_settings) ---- */
 /* seValues holds the modelspec form state (UpliftModelSpec.buildState shape).
@@ -1117,6 +1155,27 @@ function seBind(kind, key, opts) {
         else if (kind === 'number') seValues[key] = input.value === '' ? null : Number(input.value);
         else if (kind === 'select') seValues[key] = input.value;
         else seValues[key] = input.value;
+        // dirty marking: changed values get the |orig → new| readout and
+        // the Save button counts them
+        const lab2 = input.closest('label.se-row');
+        if (lab2) {
+            const changed = JSON.stringify(seValues[key]) !== JSON.stringify(seOrig[key]);
+            lab2.classList.toggle('dirty', changed);
+            lab2.classList.toggle('restartq', changed && SE_RESTART_KEYS.has(key));
+            let rd = lab2.querySelector('.diff-out');
+            if (changed) {
+                if (!rd) {
+                    rd = document.createElement('span'); rd.className = 'diff-out';
+                    const o = document.createElement('span'); o.className = 'diff-o';
+                    const nn = document.createElement('span'); nn.className = 'diff-n';
+                    rd.append(o, document.createTextNode('→'), nn);
+                    lab2.append(rd);
+                }
+                rd.querySelector('.diff-o').textContent = gsDisplay(seOrig[key]);
+                rd.querySelector('.diff-n').textContent = gsDisplay(seValues[key]);
+            } else if (rd) rd.remove();
+        }
+        seUpdateSaveBtn();
         if (opts && opts.onChange) opts.onChange(seValues);
     });
     label.append(name, input);
@@ -1199,14 +1258,16 @@ function renderEditorFields(container) {
         if (seValues.enableToolResultLimit)
             g.append(seBind('number', 'max_tool_result_tokens',
                 { label: 'Tool result token limit', min: 1, step: 1 }));
+        const ggWrap = seBind('textarea', 'guided_grammar');
+        ggWrap.classList.add('se-wide');
+        const ggInp = ggWrap.querySelector('textarea');
         g.append(seBind('bool', 'guided_grammar_enabled', { label: 'Guided Grammar',
             hint: 'Apply an EBNF grammar by default for this model.',
-            onChange: renderEditorFields.bind(null, container) }));
-        if (seValues.guided_grammar_enabled) {
-            const gg = seBind('textarea', 'guided_grammar');
-            gg.classList.add('se-wide');
-            g.append(gg);
-        }
+            // toggle must NOT reflow the form: the grammar box is always
+            // present, just visibly disabled while the feature is off
+            onChange: v => { ggInp.disabled = !v.guided_grammar_enabled; } }));
+        ggInp.disabled = !seValues.guided_grammar_enabled;
+        g.append(ggWrap);
         g.append(seBind('bool', 'enableIndexCache', { label: 'Index Cache',
             hint: 'Skip redundant indexer computation in DSA layers (DeepSeek V3/GLM-5).',
             onChange: renderEditorFields.bind(null, container) }));
@@ -1486,14 +1547,17 @@ function renderCtKwargs(container) {
 
 function editorNode() {
     const panel = document.createElement('div');
-    panel.className = 'row-editor';
+    panel.className = 'modal nasa editor';
     const head = document.createElement('div');
     head.className = 'editor-head';
     head.textContent = (seFormModel && seFormModel.model_alias ? seFormModel.model_alias + ' \u2192 ' : '') + seModel;
     const profilesHost = document.createElement('div');
     profilesHost.className = 'se-profiles';
+    const scroll = document.createElement('div');
+    scroll.className = 'editor-scroll';
     const fields = document.createElement('div');
     fields.id = 'se-fields';
+    scroll.append(profilesHost, fields);
     const bar = document.createElement('div');
     bar.className = 'editor-bar';
     const save = document.createElement('button');
@@ -1503,7 +1567,7 @@ function editorNode() {
     const msg = document.createElement('span');
     msg.className = 'stat-sub'; msg.id = 'se-msg';
     bar.append(save, close, msg);
-    panel.append(head, profilesHost, fields, bar);
+    panel.append(head, scroll, bar);
     save.onclick = saveEditor;
     close.onclick = () => closeEditor();
     return panel;
@@ -1511,6 +1575,7 @@ function editorNode() {
 function closeEditor() {
     seModel = null; seFormModel = null;
     renderModelAdmin(); // rows were frozen while the editor was open
+    document.querySelectorAll('.editor-overlay').forEach(n => n.remove());
     document.querySelectorAll('.row-editor').forEach(n => n.remove());
     document.querySelectorAll('.urow.expanded').forEach(r => r.classList.remove('expanded'));
     const fb = $('model-editor-fallback');
@@ -1536,20 +1601,23 @@ async function openEditor(model) {
     } catch (_) { entry = null; }
     seFormModel = entry || { id: model };
     seValues = window.UpliftModelSpec.buildState(seFormModel, settings);
+    seOrig = JSON.parse(JSON.stringify(seValues));
     // is_hidden/is_favorite/is_default/pinned are toggled from the models ROW
     // (classic _models.html), never in the settings modal — parity: not here.
+    // popup modal, not an inline accordion: stable size for long forms
     const panel = editorNode();
     renderEditorFields(panel.querySelector('#se-fields'));
     seLoadProfiles(model, panel.querySelector('.se-profiles'));
-    if (row) {
-        row.classList.add('expanded');
-        row.after(panel);
-        panel.scrollIntoView({ block: 'nearest' });
-    } else {
-        $('se-orphan').textContent = `Model ${model} not listed`;
-        $('model-editor-fallback').hidden = false;
-        $('model-editor-fallback').querySelector('.card-body').append(panel);
-    }
+    if (!row) $('se-msg') && ($('se-msg').textContent = `Model ${model} not listed`);
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay editor-overlay';
+    overlay.append(panel);
+    document.body.append(overlay);
+    panel.tabIndex = -1;
+    panel.focus();
+    overlay.addEventListener('keydown', e => {
+        if (e.key === 'Escape') closeEditor();
+    });
 }
 
 /* ---- per-model profiles (sidebar of the classic editor) ---- */
@@ -1666,7 +1734,7 @@ async function seLoadProfiles(model, host) {
 
 async function saveEditor() {
     if (!seModel) return;
-    const panel = document.querySelector('.row-editor');
+    const panel = document.querySelector('.modal.editor');
     if (!panel) return;
     const msg = panel.querySelector('#se-msg');
     const errors = window.UpliftModelSpec.validate(seValues);
@@ -1686,6 +1754,23 @@ async function saveEditor() {
         const note = r.requires_reload ? 'saved ✓ reload required' : savedNote;
         msg.textContent = note;
         toast(`Settings saved: ${seModel}`);
+        if (r.requires_reload) {
+            // same flow as Server Settings: SAVE becomes the reload action
+            seOrig = JSON.parse(JSON.stringify(seValues));
+            if (seFormModel) seFormModel.loaded = true;
+            const b = document.getElementById('se-save');
+            if (b) { b.classList.add('restart-mode'); b.classList.remove('queued');
+                     b.textContent = '▶ RESTART MODEL';
+                     b.onclick = async () => {
+                        b.disabled = true;
+                        try { await postModelAction(seModel, 'unload');
+                              await postModelAction(seModel, 'load');
+                              toast(`Reloaded ${seModel} with new settings`);
+                              closeEditor(); }
+                        catch (e) { toast(`Reload failed: ${e.message}`); b.disabled = false; }
+                     }; }
+            return;   // keep the popup open so RESTART MODEL stays visible
+        }
         setTimeout(closeEditor, 1200);
     } catch (err) {
         msg.textContent = `error: ${err.message}`;
@@ -1813,6 +1898,7 @@ async function renderModelAdmin(force) {
     }
     table.append(head);
     for (const m of shown) {
+        const mbox = document.createElement('div'); mbox.className = 'mbox';
         const row = document.createElement('div'); row.className = 'urow admin';
         row.dataset.mid = m.id;
         const name = document.createElement('span');
@@ -1824,9 +1910,8 @@ async function renderModelAdmin(force) {
         tapBtn(fav, () => flagWrite(m.id, { is_favorite: !m.is_favorite },
             () => putModelSettings(m.id, { is_favorite: !m.is_favorite })));
         const uid = cell(m.id); uid.className = 'uid';
-        nmain.append(fav, uid);
+        nmain.append(fav, uid, copyBtn(m.id, 'Copy model id'));
         name.append(nmain);
-        for (const al of aliasLines(m)) name.append(al);
         // PINNED / DEFAULT cockpit lamp stack: every row shows both lamps
         const lamps = document.createElement('span'); lamps.className = 'lampstack';
         const lamp = (label, lit, title, fn) => {
@@ -1873,16 +1958,7 @@ async function renderModelAdmin(force) {
             if (m.loaded) tapBtn(idl, () => postModelAction(m.id, 'unload'));
             sw.append(lo, idl);
         }
-        const api = document.createElement('button');
-        api.className = 'se-btn act'; api.textContent = 'API';
-        api.title = 'Copy the API model name to clipboard';
-        api.onclick = async () => {
-            const nm = (m.settings && m.settings.model_alias) || m.id;
-            await copyText(nm);
-            api.textContent = 'COPIED'; api.disabled = true;
-            setTimeout(() => { api.textContent = 'API'; api.disabled = false; }, 1200);
-        };
-        state.append(sw, api);
+        state.append(sw);
         const size = cell(m.loaded ? (m.actual_size_formatted || C.fmtBytes(m.actual_size || m.estimated_size))
                         : C.fmtBytes(m.estimated_size));
         size.className = 'usize';
@@ -1921,48 +1997,63 @@ async function renderModelAdmin(force) {
                 () => putModelSettings(m.id, { is_hidden: !m.is_hidden })),
             m.is_hidden ? 'Unhide' : 'Hide from pickers'));
         actions.append(btn('edit', () => openEditor(m.id), 'Edit settings', true));
-        actions.append(delCover(
-            () => confirmDialog('Delete settings',
-                `Remove the stored configuration of ${m.id}? The model stays on disk; its `
-                + 'settings return to server defaults when saved again. This cannot be undone.',
-                () => deleteStoredSettings(m.id), `Settings deleted: ${m.id}`),
-            () => confirmDialog('Delete model',
-                `Delete ${m.id} from disk? A loaded instance is unloaded first, then the `
-                + 'model directory and its stored settings are removed. This cannot be undone.',
-                () => deleteModelFromDisk(m.id), `Deleted ${m.id}`),
-            false, 'Delete model from disk'));
+        actions.append(btn('del settings', () => confirmDialog('Delete settings',
+            `Remove the stored configuration of ${m.id}? The model stays on disk; its `
+            + 'settings return to server defaults when saved again. This cannot be undone.',
+            () => deleteStoredSettings(m.id), `Settings deleted: ${m.id}`),
+            'Delete stored settings (model stays on disk)', true));
+        actions.append(btn('del model', () => confirmDialog('Delete model',
+            `Delete ${m.id} from disk? A loaded instance is unloaded first, then the `
+            + 'model directory and its stored settings are removed. This cannot be undone.',
+            () => deleteModelFromDisk(m.id), `Deleted ${m.id}`), 'Delete model from disk'));
         box.append(lamps, actions);
         row.append(name, typeC, state, size, box);
-        table.append(row);
+        mbox.append(row);
+        const tree = aliasTree(m);       // aliases hang off the trunk below
+        if (tree) mbox.append(tree);
+        table.append(mbox);
     }
     if (missing.length) {
         const sep = cell('Missing \u2014 stored settings, model not on disk');
         sep.className = 'sec-div';
         table.append(sep);
         for (const e of missing) {
+            const mbox = document.createElement('div'); mbox.className = 'mbox missing';
             const row = document.createElement('div'); row.className = 'urow admin';
-            const name = cell(e.id); name.className = 'uname';
-            if (e.alias) {                       // same \u231e tree line form
-                const al = document.createElement('span'); al.className = 'alias-line';
-                const mk = cell('\u231e ' + e.alias); mk.className = 'alias-name';
-                al.append(mk); name.append(al);
-            }
+            const name = document.createElement('span'); name.className = 'uname';
+            const nmain = document.createElement('span'); nmain.className = 'nmain';
+            const uid = cell(e.id); uid.className = 'uid';
+            nmain.append(uid, copyBtn(e.id, 'Copy model id'));
+            name.append(nmain);
             const st = cell(orphan.has(e.id) ? 'MISSING' : 'EXTERNAL');
             if (orphan.has(e.id)) st.className = 'spill miss';   // caution amber
             else st.className = 'dim';
             const box = document.createElement('span'); box.className = 'settings-box';
             const acts = document.createElement('span'); acts.className = 'rowacts';
-            acts.append(delCover(
-                () => confirmDialog('Delete settings',
-                    `Remove stored configuration for ${e.id}? The model is not on disk; `
-                    + 'its settings record is deleted. This cannot be undone.',
-                    async () => { await deleteStoredSettings(e.id); },
-                    `Deleted settings for ${e.id}`),
-                null, true,
-                'Nothing on disk to delete \u2014 only the settings record exists'));
+            const ds = document.createElement('button');
+            ds.className = 'se-btn act danger'; ds.textContent = 'del settings';
+            ds.title = 'Delete stored settings for this missing model';
+            ds.onclick = () => confirmDialog('Delete settings',
+                `Remove stored configuration for ${e.id}? The model is not on disk; `
+                + 'its settings record is deleted. This cannot be undone.',
+                async () => { await deleteStoredSettings(e.id); },
+                `Deleted settings for ${e.id}`);
+            const dm = document.createElement('button');
+            dm.className = 'se-btn act danger'; dm.textContent = 'del model';
+            dm.disabled = true;
+            dm.title = 'Nothing on disk to delete \u2014 only the settings record exists';
+            acts.append(ds, dm);
             box.append(acts);
             row.append(name, cell('\u2014'), st, cell('\u2014'), box);
-            table.append(row);
+            mbox.append(row);
+            if (e.alias) {
+                const tree = document.createElement('div'); tree.className = 'alias-tree';
+                const al = document.createElement('div'); al.className = 'alias-line';
+                const mk = cell(e.alias); mk.className = 'alias-name';
+                al.append(mk, copyBtn(e.alias, 'Copy alias "' + e.alias + '"'));
+                tree.append(al); mbox.append(tree);
+            }
+            table.append(mbox);
         }
     }
 }
@@ -2040,42 +2131,41 @@ function aliasDiffChips(prof, base) {
     }
     return out;
 }
-function aliasLines(m) {
-    const out = [];
+function copyBtn(textToCopy, title) {
+    const b = document.createElement('button');
+    b.className = 'copybtn'; b.textContent = '\u29c9'; b.title = title;
+    b.onclick = async (e) => {
+        e.stopPropagation();
+        await copyText(textToCopy);
+        b.textContent = '\u2713'; b.disabled = true;
+        setTimeout(() => { b.textContent = '\u29c9'; b.disabled = false; }, 1200);
+    };
+    return b;
+}
+/* Aliases branch off the model on a visible trunk line: an .alias-tree box
+   hanging below the main row inside the same model box. */
+function aliasTree(m) {
+    const lines = [];
     const line = (alias, chips) => {
-        const l = document.createElement('span'); l.className = 'alias-line';
-        const mk = cell('\u231e ' + alias); mk.className = 'alias-name';
+        const l = document.createElement('div'); l.className = 'alias-line';
+        const mk = cell(alias); mk.className = 'alias-name';
         mk.title = 'Serves this model on the API under the name "' + alias + '"';
-        l.append(mk);
+        l.append(mk, copyBtn(alias, 'Copy alias "' + alias + '"'));
         for (const txt of chips) {
             const chip = document.createElement('span');
             chip.className = 'schip'; chip.textContent = txt; l.append(chip);
         }
-        out.push(l);
+        lines.push(l);
     };
     if (m.settings && m.settings.model_alias) line(m.settings.model_alias, []);
     for (const p of (m.exposed_profiles || []))
         line(p.api_name || p.name, aliasDiffChips(p.settings, m.settings));
-    return out;
+    if (!lines.length) return null;
+    const t = document.createElement('div'); t.className = 'alias-tree';
+    lines.forEach(l => t.append(l));
+    return t;
 }
-/* DELETE cover: red header rail over two breakers, SETTINGS | MODEL. */
-function delCover(onSettings, onModel, modelDisabled, modelTitle) {
-    const wrap = document.createElement('span'); wrap.className = 'delcover';
-    const h = document.createElement('span'); h.className = 'delcover-h';
-    h.textContent = 'DELETE';
-    const bar = document.createElement('span'); bar.className = 'delcover-b';
-    const s = document.createElement('button');
-    s.className = 'se-btn act danger'; s.textContent = 'SETTINGS';
-    s.title = 'Delete stored settings (model stays on disk)';
-    s.onclick = onSettings;
-    const mdl = document.createElement('button');
-    mdl.className = 'se-btn act danger'; mdl.textContent = 'MODEL';
-    mdl.title = modelTitle || 'Delete model from disk';
-    mdl.disabled = !!modelDisabled;
-    if (!modelDisabled) mdl.onclick = onModel;
-    bar.append(s, mdl); wrap.append(h, bar);
-    return wrap;
-}
+
 async function deleteStoredSettings(model) {
     return trackWrite(async () => {
         const res = await fetch(`${API}/admin/api/models/${encodeURIComponent(model)}/settings`,
@@ -2459,17 +2549,130 @@ const GS_MAP = {
 const GS_PAYLOAD_SKIP = new Set(['base_path', 'api_key']);
 
 let GS = null;   // merged working copy (upstream + shadow)
-
-function gsGet(sec, field) {
-    const sh = GS._shadow || {};
-    const flat = Object.keys(GS_MAP).find(k =>
-        GS_MAP[k][0] === sec && GS_MAP[k][1] === field);
-    if (flat && flat in sh) return sh[flat];
-    const v = (GS[sec] || {})[field];
-    return v;
+/* Dirty tracking for the deferred-SAVE flow: GS_ORIG is the snapshot at page
+   load / last save; gsDirty holds queued-but-unsaved flat->value edits.
+   Fields whose change only takes effect after a server restart are flagged
+   red (!) and force the sticky SAVE button into RESTART SERVER once the
+   queue is saved. Which fields restart: mirrors the classic template's
+   restart badges (server host/port/auto-start, max concurrent requests,
+   cache enable, MCP config, distributed + CA bundle, proxy endpoints). */
+let GS_ORIG = {};
+const gsDirty = {};
+let gsRestartPending = false;   // queued edits were saved; server restart still owed
+const GS_RESTART_FIELDS = new Set([
+    'host', 'port', 'auto_start_on_launch', 'max_concurrent_requests',
+    'cache_enabled', 'mcp_config', 'distributed_inference_enabled',
+    'network_ca_bundle', 'hf_endpoint', 'ms_endpoint']);
+function gsQueueSave(flat, val) {           // edit -> queue, no fetch yet
+    gsDirty[flat] = val;
+    markFieldDirty(flat, val);
+    gsUpdateSaveBtn();
+    gsMarkSections();
 }
-
-async function gsSave(fields) {
+function gsFlatOf(sec, field) {
+    return Object.keys(GS_MAP).find(k => GS_MAP[k][0] === sec && GS_MAP[k][1] === field);
+}
+function gsOrigFlat(flat) {
+    const map = GS_MAP[flat];
+    if (!map) return GS_ORIG[flat];
+    return (GS_ORIG[map[0]] || {})[map[1]];
+}
+function gsValFlat(flat) {
+    const map = GS_MAP[flat];
+    if (map) return gsGet(map[0], map[1]);
+    return GS._shadow ? GS._shadow[flat] : undefined;
+}
+function gsDisplay(v) {
+    if (v === null || v === undefined || v === '') return '—';
+    return String(Array.isArray(v) ? v.join(',') : v);
+}
+function markFieldDirty(flat, val) {
+    const orig = gsOrigFlat(flat);
+    const cur = flat in gsDirty ? gsDirty[flat] : val;
+    const row = document.querySelector('#gs-body [data-flat="' + flat + '"]');
+    if (!row) return;
+    const changed = JSON.stringify(orig) !== JSON.stringify(cur);
+    row.classList.toggle('dirty', changed);
+    row.classList.toggle('restartq', changed && GS_RESTART_FIELDS.has(flat));
+    let rd = row.querySelector('.diff-out');
+    if (changed) {
+        if (!rd) {
+            rd = document.createElement('span');
+            rd.className = 'diff-out';
+            const o = document.createElement('span'); o.className = 'diff-o';
+            const n = document.createElement('span'); n.className = 'diff-n';
+            rd.append(o, document.createTextNode('→'), n);
+            const ctl = row.querySelector('.gctl');
+            if (ctl) ctl.append(rd); else row.append(rd);
+        }
+        rd.querySelector('.diff-o').textContent = gsDisplay(orig);
+        rd.querySelector('.diff-n').textContent = gsDisplay(cur);
+    } else if (rd) rd.remove();
+}
+function gsMarkSections() {
+    for (const box of document.querySelectorAll('#gs-body .gs-box')) {
+        const rows = [...box.querySelectorAll('[data-flat].dirty')];
+        const head = box.querySelector('.gs-box-title');
+        if (!head) continue;
+        const anyRestart = rows.some(r => r.classList.contains('restartq'));
+        head.classList.toggle('sec-dirty', rows.length > 0 && !anyRestart);
+        head.classList.toggle('sec-restart', anyRestart);
+    }
+}
+function gsSaveBtn() { return document.getElementById('gs-save'); }
+function gsUpdateSaveBtn() {
+    const b = gsSaveBtn(); if (!b) return;
+    const n = Object.keys(gsDirty).length;
+    const restartQ = gsRestartPending ||
+        Object.keys(gsDirty).some(k => GS_RESTART_FIELDS.has(k));
+    b.classList.toggle('queued', n > 0);
+    // the red RESTART state only arms after a save that left a restart owed;
+    // while edits are merely queued the button stays amber SAVE (user's flow:
+    // click SAVE -> saved -> button becomes RESTART SERVER)
+    b.classList.toggle('restart-mode', gsRestartPending);
+    b.textContent = n
+        ? (restartQ ? '▶ SAVE + RESTART (' + n + ')' : 'SAVE (' + n + ')')
+        : (gsRestartPending ? '▶ RESTART SERVER' : 'SAVE');
+    b.title = n ? (restartQ
+        ? 'Some queued changes need a server restart to take effect. First click saves; the button then becomes RESTART SERVER.'
+        : 'Apply ' + n + ' queued change' + (n > 1 ? 's' : ''))
+        : 'No queued changes';
+}
+async function gsCommit() {
+    const fields = Object.assign({}, gsDirty);
+    const okAll = await gsSaveNow(fields);
+    if (okAll) {
+        Object.keys(gsDirty).forEach(k => delete gsDirty[k]);
+        // a save that touched restart-requiring fields leaves the server
+        // owing a restart: arm the red RESTART SERVER button (user flow)
+        if (Object.keys(fields).some(k => GS_RESTART_FIELDS.has(k))) gsRestartPending = true;
+    }
+    // re-render inputs from the new baseline; keeps still-queued edits shown
+    renderGlobalSettings();
+    gsUpdateSaveBtn();
+}
+async function gsRestartServer() {
+    const b = gsSaveBtn(); if (!b) return;
+    b.disabled = true;
+    try {
+        const d = await postJson(`${API}/admin/api/server/restart`, {});
+        gsRestartPending = false;   // restart requested; button goes back to SAVE
+        toast(d.restarting === false && d.detail
+            ? ('restart: ' + d.detail) : 'Restart requested — server respawns in ~5 s');
+        $('banner').classList.add('show');
+        $('banner-text').textContent = 'Server restarting — dashboard reconnecting…';
+    } catch (e) { toast('restart failed: ' + e.message); }
+    b.disabled = false;
+    gsUpdateSaveBtn();
+}
+function gsSaveOrRestart() {                 // one button, two states
+    const b = gsSaveBtn(); if (!b) return;
+    if (b.classList.contains('restart-mode')) {
+        if (Object.keys(gsDirty).length) { gsCommit().then(gsUpdateSaveBtn); return; }
+        gsRestartServer();
+    } else gsCommit();
+}
+async function gsSaveNow(fields) {
     // classic saveGlobalSettings(): send the FULL mapped payload built from
     // the working copy (GET response + shadow), not just changed fields —
     // omitted keys would never be written by a live save (P1A-6).
@@ -2488,26 +2691,41 @@ async function gsSave(fields) {
         });
         if (!r.ok) { toast('save failed: HTTP ' + r.status); return false; }
         GS._shadow = body;
-        // Update the merged working copy too, so conditional rows refresh
-        // without waiting for the next poll (in live mode _shadow stays
-        // request-local and GET would otherwise show pre-save values).
         for (const k of Object.keys(fields)) {
             const map = GS_MAP[k];
             if (map) GS[map[0]][map[1]] = fields[k];
         }
+        // saved: the response values become the new baseline
+        GS_ORIG = JSON.parse(JSON.stringify(GS));
+        if (GS._shadow) GS_ORIG._shadow = body;
         gsSavedAt = Date.now();
         $('gs-sub').textContent = GW_LIVE
             ? 'saved ✓ (live — written to real oMLX)'
             : 'saved ✓ (shadow — real oMLX untouched)';
+        toast('Settings saved (' + Object.keys(fields).length + ' field'
+              + (Object.keys(fields).length > 1 ? 's' : '') + ')');
         return true;
     } catch (err) { toast('save failed: ' + err.message); return false; }
 }
+
+function gsGet(sec, field) {
+    const sh = GS._shadow || {};
+    const flat = Object.keys(GS_MAP).find(k =>
+        GS_MAP[k][0] === sec && GS_MAP[k][1] === field);
+    if (flat && flat in sh) return sh[flat];
+    const v = (GS[sec] || {})[field];
+    return v;
+}
+
 
 function gsBadge() {
     const b = document.createElement('span');
     // unified indicator-chip geometry (.rqchip matches the cockpit lamps:
     // same height/stroke everywhere), never clipped by the label cell
-    b.className = 'rqchip'; b.textContent = GS_LABELS.badge;
+    b.className = 'rqchip';
+    const bang = document.createElement('span');
+    bang.className = 'rqmark'; bang.textContent = '!';
+    b.append(bang, document.createTextNode(' ' + GS_LABELS.badge));
     b.title = 'Applied after oMLX restart';
     return b;
 }
@@ -2516,7 +2734,15 @@ function gsRow(sec, labelTxt, hint, control, opts) {
     opts = opts || {};
     const row = document.createElement('div');
     row.className = 'urow settings';
+    if (opts.flat) row.dataset.flat = opts.flat;
     const lab = cell(labelTxt); lab.className = 'uname';
+    if (opts.flat && GS_RESTART_FIELDS.has(opts.flat) && !opts.badge) {
+        // permanent red ! on fields whose change needs a server restart
+        const m = document.createElement('span');
+        m.className = 'rqmark'; m.textContent = '!';
+        m.title = 'Applied after oMLX restart';
+        lab.append(m);
+    }
     if (hint) {
         const h = document.createElement('small');
         h.className = 'dim'; h.textContent = hint;
@@ -2542,19 +2768,18 @@ function gsText(sec, field, flat, L, extra) {
     if (extra && extra.range) {
         const out = document.createElement('span');
         out.className = 'gval'; out.textContent = String(v);
-        inp.oninput = () => { out.textContent = inp.value; };
-        inp.onchange = async () => { await gsSave({ [flat]: Number(inp.value) }); };
+        inp.oninput = () => { out.textContent = inp.value; gsQueueSave(flat, Number(inp.value)); };
+        inp.onchange = () => gsQueueSave(flat, Number(inp.value));
         const wrap = document.createElement('span');
         wrap.className = 'grange'; wrap.append(inp, out);
         return wrap;
     }
-    inp.onchange = async () => {
+    inp.onchange = () => {
         let val = inp.value;
         if (extra && extra.number) val = val === '' ? null : Number(val);
         if (extra && extra.bool) val = inp.checked;
-        if (await gsSave({ [flat]: val })) {
-            if (extra && extra.reload) renderGlobalSettings();
-        }
+        gsQueueSave(flat, val);
+        if (extra && extra.reload) renderGlobalSettings();
     };
     return inp;
 }
@@ -2562,7 +2787,7 @@ function gsText(sec, field, flat, L, extra) {
 function gsToggle(flat, on) {
     const t = document.createElement('input');
     t.type = 'checkbox'; t.checked = !!on;
-    t.onchange = () => gsSave({ [flat]: t.checked });
+    t.onchange = () => gsQueueSave(flat, t.checked);
     return t;
 }
 
@@ -2573,9 +2798,9 @@ function gsSelect(flat, options, cur) {
         o.value = v; o.textContent = t; sel.append(o);
     }
     sel.value = cur == null ? '' : String(cur);
-    sel.onchange = async () => {
-        if (await gsSave({ [flat]: sel.value === '' ? null : sel.value }))
-            renderGlobalSettings();   // refresh conditional rows (x-show parity)
+    sel.onchange = () => {
+        gsQueueSave(flat, sel.value === '' ? null : sel.value);
+        renderGlobalSettings();       // refresh conditional rows (x-show parity)
     };
     return sel;
 }
@@ -2590,7 +2815,17 @@ async function pollGlobalSettings() {
     let d;
     try { d = await fetchJson(`${API}/admin/api/global-settings`); }
     catch (err) { emptyMsg($('gs-body'), 'global-settings not served (' + err.message + ')'); return; }
+    // never clobber queued edits with a background poll; merge server state
+    // under the dirty overrides so inputs stay put until SAVE
+    if (Object.keys(gsDirty).length) {
+        for (const [flat, val] of Object.entries(gsDirty)) {
+            const map = GS_MAP[flat];
+            if (map && d[map[0]]) d[map[0]][map[1]] = val;
+            if (d._shadow) d._shadow[flat] = val;
+        }
+    }
     GS = d;   // gateway already overlaid the shadow; resave accumulates
+    if (!Object.keys(gsDirty).length) GS_ORIG = JSON.parse(JSON.stringify(d));
     renderGlobalSettings();
 }
 
@@ -2608,49 +2843,52 @@ function renderGlobalSettings() {
     // ---- Language
     body.append(gsTitle('Language'));
     body.append(gsRow('ui', 'Interface language', '',
-        gsSelect('ui_language', Object.entries(L.lang), gsGet('ui','language'))));
+        gsSelect('ui_language', Object.entries(L.lang), gsGet('ui','language')),
+        { flat: 'ui_language' }));
 
     // ---- Auth
     body.append(gsTitle('Auth'));
     body.append(gsRow('auth', L.auth.api_key, L.auth.api_key_hint,
         gsText('auth','api_key','api_key', L, { type: 'password',
-            placeholder: L.auth.api_key_placeholder, reload: true })));
+            placeholder: L.auth.api_key_placeholder, reload: true }),
+        { flat: 'api_key' }));
     const bpIn = document.createElement('input');
     bpIn.type = 'text'; bpIn.value = GS.base_path || '';
     bpIn.disabled = true;
     bpIn.title = 'Set at launch (--base-path); read-only';
     body.append(gsRow('auth', L.auth.base_path, L.auth.base_path_hint, bpIn));
     body.append(gsRow('auth', L.auth.skip, L.auth.skip_hint + ' ' + L.auth.skip_warning,
-        gsToggle('skip_api_key_verification', gsGet('auth','skip_api_key_verification'))));
+        gsToggle('skip_api_key_verification', gsGet('auth','skip_api_key_verification')),
+        { flat: 'skip_api_key_verification' }));
 
     // ---- Server
     body.append(gsTitle('Server'));
     body.append(gsRow('server', L.server.host, '',
         gsText('server','host','host', L, { placeholder: L.server.host_placeholder }),
-        { badge: true }));
+        { badge: true, flat: 'host' }));
     body.append(gsRow('server', L.server.port, '',
-        gsText('server','port','port', L, { number: true }), { badge: true }));
+        gsText('server','port','port', L, { number: true }), { badge: true, flat: 'port' }));
     body.append(gsRow('server', L.server.log_level, '',
-        gsSelect('log_level', L.server.levels, gsGet('server','log_level'))));
+        gsSelect('log_level', L.server.levels, gsGet('server','log_level')),
+        { flat: 'log_level' }));
     body.append(gsRow('server', L.server.auto_start, L.server.auto_start_hint,
         gsToggle('auto_start_on_launch', gsGet('server','auto_start_on_launch')),
-        { badge: true }));
+        { badge: true, flat: 'auto_start_on_launch' }));
     // server_aliases: one alias per line (classic editor keeps a list; same payload)
     const aliasInp = document.createElement('textarea');
     aliasInp.rows = 2; aliasInp.spellcheck = false;
     aliasInp.value = (gsGet('server','server_aliases') || []).join('\n');
-    aliasInp.onchange = async () => {
-        const list = aliasInp.value.split('\n').map(s => s.trim()).filter(Boolean);
-        await gsSave({ server_aliases: list });
-    };
-    body.append(gsRow('server', L.server.aliases, L.server.aliases_hint, aliasInp));
+    aliasInp.onchange = () => gsQueueSave('server_aliases',
+        aliasInp.value.split('\n').map(s => s.trim()).filter(Boolean));
+    body.append(gsRow('server', L.server.aliases, L.server.aliases_hint, aliasInp,
+        { flat: 'server_aliases' }));
 
     // ---- Claude Code (classic renders this on Status; Uplift keeps it with settings)
     body.append(gsTitle('Claude Code'));
     const ccLocal = (gsGet('claude_code','mode') || 'local') !== 'cloud';
     body.append(gsRow('claude_code', L.cc.mode, L.cc.mode_hint,
         gsSelect('claude_code_mode', [['local', L.cc.local], ['cloud', L.cc.cloud]],
-                 ccLocal ? 'local' : 'cloud')));
+                 ccLocal ? 'local' : 'cloud'), { flat: 'claude_code_mode' }));
     if (ccLocal) {
         const dl = document.createElement('datalist'); dl.id = 'cc-models';
         body.append(dl);
@@ -2687,11 +2925,11 @@ function renderGlobalSettings() {
         rm.style.display = dirs.length > 1 ? '' : 'none';
         rm.onclick = async () => {
             const nd = dirs.filter((_, j) => j !== i);
-            if (await gsSave({ model_dirs: nd })) renderGlobalSettings();
+            if (await gsSaveNow({ model_dirs: nd })) renderGlobalSettings();
         };
         inp.onchange = async () => {
             const nd = dirs.slice(); nd[i] = inp.value;
-            if (await gsSave({ model_dirs: nd })) renderGlobalSettings();
+            if (await gsSaveNow({ model_dirs: nd })) renderGlobalSettings();
         };
         one.append(inp, rm);
         dl.append(one);
@@ -2699,16 +2937,18 @@ function renderGlobalSettings() {
     const add = document.createElement('button');
     add.className = 'se-btn act'; add.textContent = '+ add directory';
     add.onclick = async () => {
-        if (await gsSave({ model_dirs: dirs.concat('') })) renderGlobalSettings();
+        if (await gsSaveNow({ model_dirs: dirs.concat('') })) renderGlobalSettings();
     };
     dl.append(add);
     body.append(gsRow('model', L.model.dirs, '', dl));
     body.append(gsRow('model', L.model.fallback, L.model.fallback_desc,
         gsText('model','model_fallback','model_fallback', L)));
     body.append(gsRow('model', L.model.hide_helper, L.model.hide_helper_desc,
-        gsToggle('hide_helper_models', gsGet('model','hide_helper_models'))));
+        gsToggle('hide_helper_models', gsGet('model','hide_helper_models')),
+        { flat: 'hide_helper_models' }));
     body.append(gsRow('model', L.model.hf_cache, L.model.hf_cache_desc,
-        gsToggle('hf_cache_enabled', gsGet('huggingface','hf_cache_enabled'))));
+        gsToggle('hf_cache_enabled', gsGet('huggingface','hf_cache_enabled')),
+        { flat: 'hf_cache_enabled' }));
     const hfp = cell((GS.huggingface || {}).hf_cache_path || '—');
     hfp.className = 'dim';
     body.append(gsRow('model', 'HF cache path', '', hfp));
@@ -2733,7 +2973,8 @@ function renderGlobalSettings() {
     body.append(gsRow('res', L.res.fairness, L.res.fairness_desc,
         gsToggle('decode_fairness', gsGet('scheduler','decode_fairness'))));
     body.append(gsRow('res', L.res.guard, L.res.guard_desc,
-        gsToggle('memory_prefill_memory_guard', gsGet('memory','prefill_memory_guard'))));
+        gsToggle('memory_prefill_memory_guard', gsGet('memory','prefill_memory_guard')),
+        { flat: 'memory_prefill_memory_guard' }));
     const tierSel = gsSelect('memory_guard_tier', L.res.tiers,
                              gsGet('memory','memory_guard_tier'));
     body.append(gsRow('res', L.res.tier, '', tierSel));
@@ -2747,9 +2988,11 @@ function renderGlobalSettings() {
     // ---- Cache
     body.append(gsTitle('Cache'));
     body.append(gsRow('cache', L.cache.enabled, L.cache.enabled_hint,
-        gsToggle('cache_enabled', gsGet('cache','enabled'))));
+        gsToggle('cache_enabled', gsGet('cache','enabled')),
+        { flat: 'cache_enabled', badge: true }));
     body.append(gsRow('cache', L.cache.hot_only, L.cache.hot_only_hint,
-        gsToggle('hot_cache_only', gsGet('cache','hot_cache_only'))));
+        gsToggle('hot_cache_only', gsGet('cache','hot_cache_only')),
+        { flat: 'hot_cache_only' }));
     body.append(gsRow('cache', L.cache.ssd_dir, '',
         gsText('cache','ssd_cache_dir','ssd_cache_dir', L)));
     body.append(gsRow('cache', L.cache.ssd_max, L.cache.ssd_max_hint,
@@ -2763,15 +3006,18 @@ function renderGlobalSettings() {
     body.append(gsTitle('Generation Defaults'));
     const temp = gsText('sampling','temperature','sampling_temperature', L,
         { range: true, min: 0, max: 2, step: 0.1 });
-    body.append(gsRow('gen', L.gen.temperature, L.gen.temperature_hint, temp));
+    body.append(gsRow('gen', L.gen.temperature, L.gen.temperature_hint, temp,
+        { flat: 'sampling_temperature' }));
     const topp = gsText('sampling','top_p','sampling_top_p', L,
         { range: true, min: 0, max: 1, step: 0.05 });
-    body.append(gsRow('gen', L.gen.top_p, L.gen.top_p_hint, topp));
+    body.append(gsRow('gen', L.gen.top_p, L.gen.top_p_hint, topp,
+        { flat: 'sampling_top_p' }));
     body.append(gsRow('gen', L.gen.top_k, L.gen.top_k_hint,
         gsText('sampling','top_k','sampling_top_k', L, { number: true, min: 0 })));
     body.append(gsRow('gen', L.gen.max_tokens, '',
         gsText('sampling','max_tokens','sampling_max_tokens', L,
-               { number: true, min: 1, max: 131072 })));
+               { number: true, min: 1, max: 131072 }),
+        { flat: 'sampling_max_tokens' }));
     body.append(gsRow('gen', L.gen.max_ctx, L.gen.max_ctx_hint,
         gsText('sampling','max_context_window','sampling_max_context_window', L,
                { number: true, min: 1, max: 2097152 })));
@@ -2787,24 +3033,28 @@ function renderGlobalSettings() {
     body.append(gsTitle('MCP'));
     body.append(gsRow('mcp', L.mcp.path, '',
         gsText('mcp','config_path','mcp_config', L, { placeholder: L.mcp.ph }),
-        { badge: true }));
+        { badge: true, flat: 'mcp_config' }));
     body.append(gsRow('mcp', L.mcp.expose, L.mcp.expose_hint,
-        gsToggle('mcp_expose_tools', gsGet('mcp','expose_tools'))));
+        gsToggle('mcp_expose_tools', gsGet('mcp','expose_tools')),
+        { flat: 'mcp_expose_tools' }));
 
     // ---- Usage & Network
     body.append(gsTitle('Usage & Network'));
     body.append(gsRow('usage', L.usage.history, L.usage.history_hint,
-        gsToggle('usage_history', gsGet('usage','usage_history'))));
+        gsToggle('usage_history', gsGet('usage','usage_history')),
+        { flat: 'usage_history' }));
     body.append(gsRow('net', L.net.hf_ep, L.net.hf_ep_hint,
         gsText('huggingface','endpoint','hf_endpoint', L,
-               { placeholder: 'https://huggingface.co' })));
+               { placeholder: 'https://huggingface.co' }),
+        { flat: 'hf_endpoint', badge: true }));
     body.append(gsRow('net', L.net.ms_ep, L.net.ms_ep_hint,
         gsText('modelscope','endpoint','ms_endpoint', L,
                { placeholder: 'https://www.modelscope.cn' })));
     body.append(gsRow('net', L.net.http_proxy, L.net.proxy_hint,
         gsText('network','http_proxy','network_http_proxy', L)));
     body.append(gsRow('net', L.net.https_proxy, L.net.proxy_hint,
-        gsText('network','https_proxy','network_https_proxy', L)));
+        gsText('network','https_proxy','network_https_proxy', L),
+        { flat: 'network_https_proxy' }));
     body.append(gsRow('net', L.net.no_proxy, L.net.no_proxy_hint,
         gsText('network','no_proxy','network_no_proxy', L)));
     body.append(gsRow('net', L.net.ca_bundle, L.net.ca_hint,
@@ -2814,7 +3064,8 @@ function renderGlobalSettings() {
     body.append(gsTitle('Advanced'));
     body.append(gsRow('adv', L.adv.distributed_enabled, L.adv.distributed_hint,
         gsToggle('distributed_inference_enabled',
-                 gsGet('server','distributed_inference_enabled'))));
+                 gsGet('server','distributed_inference_enabled')),
+        { flat: 'distributed_inference_enabled', badge: true }));
     body.append(gsRow('adv', L.adv.burst, L.adv.burst_hint,
         gsSelect('burst_decode_mode', L.adv.burst_opts,
                  gsGet('server','burst_decode_mode'))));
@@ -2827,7 +3078,8 @@ function renderGlobalSettings() {
         gsText('server','max_audio_upload_size','max_audio_upload_size', L,
                { number: true, min: 1 })));
     body.append(gsRow('adv', L.adv.ane, L.adv.ane_hint,
-        gsToggle('ane_compile_cache', gsGet('cache','ane_compile_cache'))));
+        gsToggle('ane_compile_cache', gsGet('cache','ane_compile_cache')),
+        { flat: 'ane_compile_cache' }));
     body.append(gsRow('adv', L.adv.wt, L.adv.wt_hint,
         gsToggle('hot_cache_write_through', gsGet('cache','hot_cache_write_through'))));
     body.append(gsRow('adv', L.adv.blocks, L.adv.blocks_hint,
@@ -2854,6 +3106,7 @@ function renderGlobalSettings() {
     // group staged children into bordered section boxes inside a capped
     // multi-column flow (gs-wrap); each gs-title starts a new box
     const wrap = $('gs-body');
+    const wasDirty = Object.assign({}, gsDirty);
     wrap.textContent = '';
     wrap.classList.add('gs-wrap');
     let box = null, bbody = null;
@@ -2874,6 +3127,40 @@ function renderGlobalSettings() {
             wrap.append(n);
         }
     }
+    // section header click scrolls to the SAVE bar (item 10); header also
+    // carries the section dirty/restart state color (item 8)
+    for (const h of wrap.querySelectorAll('.gs-box-title')) {
+        h.classList.add('clickable');
+        h.onclick = () => {
+            const bar = document.getElementById('gs-savebar');
+            if (bar) { bar.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                       const b = gsSaveBtn(); if (b) b.focus(); }
+        };
+    }
+    // persistent SAVE / RESTART SERVER bar below the form (item 9/10)
+    let bar = document.getElementById('gs-savebar');
+    if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'gs-savebar';
+        bar.className = 'savebar';
+        const b = document.createElement('button');
+        b.id = 'gs-save'; b.className = 'se-btn savebtn'; b.textContent = 'SAVE';
+        b.onclick = gsSaveOrRestart;
+        const clr = document.createElement('button');
+        clr.id = 'gs-discard'; clr.className = 'se-btn'; clr.textContent = 'Discard';
+        clr.onclick = () => {
+            Object.keys(gsDirty).forEach(k => delete gsDirty[k]);
+            renderGlobalSettings(); gsUpdateSaveBtn();
+        };
+        bar.append(clr, b);
+        wrap.parentElement.append(bar);
+    }
+    // re-apply still-queued dirty marks after re-render
+    for (const flat of Object.keys(wasDirty)) markFieldDirty(flat, wasDirty[flat]);
+    gsMarkSections();
+    gsUpdateSaveBtn();
+    const clrB = document.getElementById('gs-discard');
+    if (clrB) clrB.style.display = Object.keys(gsDirty).length ? '' : 'none';
 }
 
 async function postJson(url, body) {
