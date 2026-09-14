@@ -41,7 +41,7 @@
         'dflash_in_memory_cache_max_entries', 'dflash_in_memory_cache_max_bytes',
         'dflash_ssd_cache', 'dflash_ssd_cache_max_bytes',
         'dflash_draft_window_size', 'dflash_draft_sink_size', 'dflash_block_size',
-        'dflash_verify_mode', 'mtp_enabled', 'qwen35_ane_prefill_shared_fraction',
+        'dflash_verify_mode', 'mtp_enabled', 'mtp_num_draft_tokens', 'qwen35_ane_prefill_shared_fraction',
         'vlm_mtp_enabled', 'vlm_mtp_draft_model', 'vlm_mtp_draft_block_size',
     ]);
     const DIFFUSION_UNSUPPORTED_CT_KWARGS = new Set([
@@ -186,6 +186,7 @@
             vlm_mtp_enabled: s.vlm_mtp_enabled || false,
             vlm_mtp_draft_model: s.vlm_mtp_draft_model || '',
             vlm_mtp_draft_block_size: s.vlm_mtp_draft_block_size ?? null,
+            mtp_num_draft_tokens: s.mtp_num_draft_tokens ?? null,
             trust_remote_code: s.trust_remote_code || false,
             ctKwargEntries: buildCtKwargEntries(s.chat_template_kwargs, s.forced_ct_kwargs, diffusion),
             is_diffusion_model: diffusion,
@@ -349,6 +350,8 @@
                 ? parseInt(ms.dflash_block_size) : null,
             dflash_verify_mode: ms.dflash_enabled ? (ms.dflash_verify_mode || 'adaptive') : null,
             mtp_enabled: !!ms.mtp_enabled,
+            mtp_num_draft_tokens: ms.mtp_enabled && ms.mtp_num_draft_tokens
+                ? Math.max(1, parseInt(ms.mtp_num_draft_tokens) || 1) : null,
             vlm_mtp_enabled: !!ms.vlm_mtp_enabled,
             vlm_mtp_draft_model: ms.vlm_mtp_enabled ? (ms.vlm_mtp_draft_model || null) : null,
             vlm_mtp_draft_block_size: ms.vlm_mtp_enabled && ms.vlm_mtp_draft_block_size

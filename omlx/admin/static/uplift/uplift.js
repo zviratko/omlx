@@ -1677,6 +1677,12 @@ function renderEditorFields(container) {
                     ? "Drafts several tokens per step with the model's built-in MTP head."
                     : (m.mtp_compatibility_reason || 'Not compatible with this model'),
                 onChange: renderEditorFields.bind(null, container) }));
+            if (seValues.mtp_enabled)
+                sub(g).append(seBind('number', 'mtp_num_draft_tokens', {
+                    label: 'Max draft tokens per cycle', min: 1, step: 1,
+                    hint: 'Speculative depth. Empty = model default (usually 3); '
+                        + 'an adaptive controller picks 1..max from acceptance rates. '
+                        + 'Set 1 to fix depth-1 cycles.' }));
         }
         const drafterType = (m.config_model_type || '').toLowerCase().replace(/-/g, '_');
         if (seValues.vlm_mtp_enabled !== undefined &&
