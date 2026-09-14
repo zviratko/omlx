@@ -1492,12 +1492,48 @@ function renderEditorFields(container) {
             hint: 'EBNF / regex / JSON-schema grammar applied to generation when enabled.' });
         ggWrap.classList.add('se-wide');
         const ggInp = ggWrap.querySelector('textarea');
+        // R10-9: preset examples. Shape is server-pluggable later: keep it
+        // a list of {id, display_name, grammar} so a route can replace this.
+        const GRAMMAR_PRESETS = [
+            { id: 'json-object', display_name: 'JSON object envelope', grammar:
+                'root   ::= "{" ws "\\"name\\"" ws ":" ws string ws "," ws "score" ws ":" ws number ws "}"\n'
+              + 'string ::= "\\"" [^"\\\\]* "\\"\\" | "\\\\" any "\\\\" any\n'
+              + 'number ::= "-"? [0-9]+ ("." [0-9]+)?\nws       ::= " "*' },
+            { id: 'regex-date', display_name: 'Regex: ISO date', grammar:
+                'root ::= [0-9] [0-9] [0-9] [0-9] "-" [0-1] [0-9] "-" [0-3] [0-9]' },
+            { id: 'ebnf-calc', display_name: 'EBNF: math expression', grammar:
+                'root     ::= expr\nexpr     ::= term (("+" / "-") term)*\nterm     ::= atom (("*" / "/") atom)*\natom     ::= [0-9]+ / "(" expr ")"' },
+        ];
+        const presetSel = document.createElement('select');
+        presetSel.title = 'Insert an example grammar';
+        const ph = document.createElement('option');
+        ph.value = ''; ph.textContent = 'Insert example…';
+        presetSel.append(ph, ...GRAMMAR_PRESETS.map(p => {
+            const o = document.createElement('option');
+            o.value = p.id; o.textContent = p.display_name; return o; }));
+        presetSel.onchange = () => {
+            const p = GRAMMAR_PRESETS.find(x => x.id === presetSel.value);
+            presetSel.value = '';
+            if (!p) return;
+            // go through the widgets' own events so dirty-marking and tab
+            // override bookkeeping happen exactly like manual editing
+            if (ggInp.disabled) {
+                const en = document.querySelector(
+                    '#se-fields [data-key="guided_grammar_enabled"] input[type=checkbox]');
+                if (en && !en.checked) en.click();   // flips seValues + enables textarea
+            }
+            ggInp.value = p.grammar;
+            ggInp.dispatchEvent(new Event('input', { bubbles: true }));
+        };
         g.append(seBind('bool', 'guided_grammar_enabled', { label: 'Guided Grammar',
             hint: 'Apply an EBNF grammar by default for this model.',
             // toggle must NOT reflow the form: the grammar box is always
             // present, just visibly disabled while the feature is off
             onChange: v => { ggInp.disabled = !v.guided_grammar_enabled; } }));
         ggInp.disabled = !seValues.guided_grammar_enabled;
+        // R10-9: example dropdown docks inside the grammar field's control
+        // box (below the textarea) so toggle + textarea + presets read as one unit
+        ggWrap.querySelector('.se-ctl').append(presetSel);
         g.append(ggWrap);
         g.append(seBind('bool', 'enableIndexCache', { label: 'Index Cache',
             hint: 'Skip redundant indexer computation in DSA layers (DeepSeek V3/GLM-5).',
