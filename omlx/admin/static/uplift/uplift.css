@@ -38,6 +38,7 @@
     --grid: #c3bdb0;
     --heat: #c9243b;
     --frame: #767268;
+    --red: #c9243b;             /* DELETE cover rail (defined in :root; explicit per theme) */
     --bad: #c9243b;
 }
 [data-theme="enhanced"] {
@@ -330,7 +331,7 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
 .admin-table .urow { display: grid; gap: 10px; padding: 8px 2px;
     border-bottom: 1px solid var(--edge); font: 400 12px/1.4 var(--mono);
     align-items: center; }
-.admin-table .urow.admin { grid-template-columns: minmax(0,3fr) 110px 84px 90px minmax(0,5fr); }
+.admin-table .urow.admin { grid-template-columns: minmax(0,3fr) 110px 158px 90px minmax(0,5fr); }
 .admin-table .urow.usage { grid-template-columns: minmax(0,4fr) minmax(0,2fr) 120px auto; }
 .admin-table .urow.settings { grid-template-columns: minmax(0,2fr) minmax(0,5fr); }
 .admin-table .urow.head { color: var(--dim); border-top: 1px solid var(--ink); }
@@ -338,7 +339,16 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .admin-table .urow.head span { text-align: right; }
 .admin-table .urow.head span:first-child { text-align: left; }
-.admin-table .uname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left !important; }
+.admin-table .uname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    text-align: left !important; }
+/* name cell is now a column: main line + \u231e alias tree lines */
+.admin-table .uname { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.admin-table .uname .nmain { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.admin-table .uname .nmain .uid { overflow: hidden; text-overflow: ellipsis;
+    text-align: left !important; }
+.admin-table .alias-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.admin-table .alias-line span { text-align: left !important; white-space: nowrap; }
+.admin-table .alias-name { color: var(--dim); }
 .admin-table .rowacts { display: flex; gap: 4px; justify-content: flex-end; }
 .t2 { color: var(--accent) !important; -webkit-text-fill-color: currentColor; }
 .dim { color: var(--dim); }
@@ -506,16 +516,43 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
 .urow.settings .uname small { display: block; color: var(--dim);
     font: 300 10px/1.35 var(--sans); margin-top: 2px; }
 [data-theme="light"] .urow.settings .uname small { color: #4a463e; }  /* AA on beige rows */
-/* fav star left of model name; DEFAULT badge right of size, left of box */
-.admin-table .favstar { color: var(--accent); }
-/* DEFAULT badge lives INSIDE the settings box, pinned to its left edge */
-.admin-table .defbadge {
-    width: auto; padding: 0 6px; font: 500 10px/1.4 var(--mono);
-    letter-spacing: 0.08em; color: #57d97a; border: 1px solid #57d97a;
-    background: transparent; white-space: nowrap; align-self: center;
-    flex: 0 0 auto; margin-right: auto;
+/* ---- Cockpit lamps: every row shows PINNED / DEFAULT / FAV; lit = active
+   (green), unlit = grey inactive. Clicking a lamp toggles the property. ---- */
+.admin-table .lamp {
+    display: inline-flex; align-items: center; justify-content: center;
+    height: 16px; padding: 0 6px; flex: 0 0 auto; cursor: pointer;
+    font: 400 9px/1 var(--mono); letter-spacing: 0.08em;
+    border: 1px solid var(--edge); color: var(--dim); background: transparent;
+    border-radius: 0;
 }
-[data-theme="light"] .admin-table .defbadge { color: #0a6b2c; border-color: #0a6b2c; }
+.admin-table .lamp:hover { border-color: var(--dim); color: var(--ink); }
+.admin-table .lamp.on { border-color: #57d97a; color: #57d97a; }
+[data-theme="light"] .admin-table .lamp.on { color: #0a6b2c; border-color: #0a6b2c; }
+[data-theme="enhanced"] .admin-table .lamp.on { box-shadow: 0 0 8px rgba(87, 217, 122, 0.5); }
+.admin-table .lampstack { display: flex; flex-direction: column; gap: 3px;
+    flex: 0 0 auto; margin-right: auto; }
+.admin-table .favlamp { width: 34px; }
+/* ---- LOADED/IDLE rocker switch + API copy button (state column) --------- */
+.admin-table .statewrap { display: inline-flex; align-items: center; gap: 6px;
+    justify-content: flex-end; }
+.admin-table .lsw { display: inline-flex; border: 1px solid var(--edge); flex: 0 0 auto; }
+.admin-table .lsw-seg {
+    display: inline-flex; align-items: center; justify-content: center;
+    height: 18px; min-width: 44px; padding: 0 5px; cursor: pointer;
+    font: 400 10px/1 var(--mono); letter-spacing: 0.06em;
+    background: transparent; color: var(--dim); border: 0; border-radius: 0;
+}
+.admin-table .lsw-seg + .lsw-seg { border-left: 1px solid var(--edge); }
+.admin-table .lsw-seg.on { color: #57d97a; }
+.admin-table .lsw-seg.lit { color: var(--ink); }
+.admin-table .lsw-seg.load { color: var(--accent); min-width: 82px; }
+.admin-table .lsw-seg:disabled { cursor: default; }
+/* ---- DELETE cover: red header rail over SETTINGS / MODEL breakers ------- */
+.admin-table .delcover { display: inline-flex; flex-direction: column; gap: 2px;
+    border: 1px solid var(--red); padding: 2px 4px 3px; flex: 0 0 auto; }
+.admin-table .delcover-h { font: 500 8px/1 var(--mono); letter-spacing: 0.14em;
+    color: var(--red); text-align: center; }
+.admin-table .delcover-b { display: flex; gap: 4px; justify-content: center; }
 .admin-table .sec-div {
     width: 100%; padding: 12px 2px 4px; font: 500 10px/1.4 var(--sans);
     text-transform: uppercase; letter-spacing: 0.12em; color: var(--dim);

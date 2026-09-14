@@ -1789,21 +1789,74 @@ async function renderModelAdmin(force) {
     for (const m of shown) {
         const row = document.createElement('div'); row.className = 'urow admin';
         row.dataset.mid = m.id;
-        const name = cell(m.id);
+        const name = document.createElement('span');
         name.className = 'uname'; name.title = m.model_path || m.id;
-        if (m.settings && m.settings.model_alias)   // "Alias → real name"
-            name.prepend(cell(m.settings.model_alias + ' \u2192 '));
-        if (m.pinned) name.prepend(cell('PIN \u00b7 '));
-        if (m.is_favorite) {          // star icon left of the model name
-            const star = cell('\u2605\u00a0');
-            star.className = 'favstar'; star.title = 'Favorite';
-            name.prepend(star);
-        }
+        const nmain = document.createElement('span'); nmain.className = 'nmain';
+        const fav = document.createElement('button');
+        fav.className = 'lamp favlamp' + (m.is_favorite ? ' on' : '');
+        fav.textContent = 'FAV'; fav.title = m.is_favorite ? 'Unfavorite' : 'Favorite';
+        tapBtn(fav, () => flagWrite(m.id, { is_favorite: !m.is_favorite },
+            () => putModelSettings(m.id, { is_favorite: !m.is_favorite })));
+        const uid = cell(m.id); uid.className = 'uid';
+        nmain.append(fav, uid);
+        name.append(nmain);
+        for (const al of aliasLines(m)) name.append(al);
+        // PINNED / DEFAULT cockpit lamp stack: every row shows both lamps
+        const lamps = document.createElement('span'); lamps.className = 'lampstack';
+        const lamp = (label, lit, title, fn) => {
+            const b = document.createElement('button');
+            b.className = 'lamp' + (lit ? ' on' : '');
+            b.textContent = label; b.title = title;
+            tapBtn(b, fn);
+            return b;
+        };
+        lamps.append(
+            lamp('PINNED', !!m.pinned, m.pinned ? 'Unpin from top' : 'Pin to top',
+                () => flagWrite(m.id, { pinned: !m.pinned },
+                    () => postModelAction(m.id, m.pinned ? 'unpin' : 'pin'))),
+            lamp('DEFAULT', !!m.is_default,
+                m.is_default ? 'Clear default model' : 'Make default model',
+                () => {
+                    if (!m.is_default) for (const o of adminModels)
+                        if (o.id !== m.id && o.is_default) flagSet(o.id, { is_default: false });
+                    return flagWrite(m.id, { is_default: !m.is_default },
+                        () => putModelSettings(m.id, { is_default: !m.is_default }));
+                }));
         const typeC = cell(m.model_type || '\u2014'); typeC.className = 'dim';
-        // State: fixed-size text pill, uniform width across the three states
+        // State: LOADED/IDLE rocker switch + API-name copy button. Clicking
+        // the inactive half runs the transition (LOADED loads, IDLE unloads).
         const state = document.createElement('span');
-        state.className = 'spill ' + (m.loaded ? 'on' : (m.is_loading ? 'load' : 'off'));
-        state.textContent = m.is_loading ? 'LOADING' : (m.loaded ? 'LOADED' : 'IDLE');
+        state.className = 'statewrap';
+        const sw = document.createElement('span'); sw.className = 'lsw';
+        if (m.is_loading) {
+            const seg = document.createElement('span');
+            seg.className = 'lsw-seg load'; seg.textContent = 'LOADING';
+            sw.append(seg);
+        } else {
+            const lo = document.createElement('button');
+            lo.className = 'lsw-seg' + (m.loaded ? ' on' : '');
+            lo.textContent = 'LOADED';
+            lo.title = m.loaded ? 'Model is loaded' : 'Load this model';
+            lo.disabled = !!m.loaded;
+            if (!m.loaded) tapBtn(lo, () => postModelAction(m.id, 'load'));
+            const idl = document.createElement('button');
+            idl.className = 'lsw-seg' + (m.loaded ? ' lit' : '');
+            idl.textContent = 'IDLE';
+            idl.title = m.loaded ? 'Unload this model' : 'Model is idle';
+            idl.disabled = !m.loaded;
+            if (m.loaded) tapBtn(idl, () => postModelAction(m.id, 'unload'));
+            sw.append(lo, idl);
+        }
+        const api = document.createElement('button');
+        api.className = 'se-btn act'; api.textContent = 'API';
+        api.title = 'Copy the API model name to clipboard';
+        api.onclick = async () => {
+            const nm = (m.settings && m.settings.model_alias) || m.id;
+            await copyText(nm);
+            api.textContent = 'COPIED'; api.disabled = true;
+            setTimeout(() => { api.textContent = 'API'; api.disabled = false; }, 1200);
+        };
+        state.append(sw, api);
         const size = cell(m.loaded ? (m.actual_size_formatted || C.fmtBytes(m.actual_size || m.estimated_size))
                         : C.fmtBytes(m.estimated_size));
         size.className = 'usize';
@@ -1837,44 +1890,22 @@ async function renderModelAdmin(force) {
             };
             return b;
         };
-        actions.append(btn(m.pinned ? 'unpin' : 'pin',
-            () => flagWrite(m.id, { pinned: !m.pinned },
-                () => postModelAction(m.id, m.pinned ? 'unpin' : 'pin')),
-            m.pinned ? 'Unpin from top' : 'Pin to top'));
-        actions.append(btn(m.is_favorite ? 'unfav' : 'fav',
-            () => flagWrite(m.id, { is_favorite: !m.is_favorite },
-                () => putModelSettings(m.id, { is_favorite: !m.is_favorite })),
-            m.is_favorite ? 'Unfavorite' : 'Favorite'));
         actions.append(btn(m.is_hidden ? 'show' : 'hide',
             () => flagWrite(m.id, { is_hidden: !m.is_hidden },
                 () => putModelSettings(m.id, { is_hidden: !m.is_hidden })),
             m.is_hidden ? 'Unhide' : 'Hide from pickers'));
-        if (!m.is_default) actions.append(btn('def',
-            () => flagWrite(m.id, { is_default: true },
-                () => putModelSettings(m.id, { is_default: true })),
-            'Make default model'));
-        actions.append(btn('reset settings', () => confirmDialog('Reset settings',
-            `Reset all settings of ${m.id} to server defaults? Alias, overrides and `
-            + 'flags return to defaults. This cannot be undone.',
-            () => resetSettings(m.id), `Settings reset: ${m.id}`), 'Reset settings to defaults', true));
         actions.append(btn('edit', () => openEditor(m.id), 'Edit settings', true));
-        if (m.loaded) actions.append(btn('unload', () => postModelAction(m.id, 'unload')));
-        else actions.append(btn('load', () => postModelAction(m.id, 'load')));
-        actions.append(btn('delete settings', () => confirmDialog('Delete settings',
-            `Remove the stored configuration of ${m.id}? The model stays on disk; its `
-            + 'settings return to server defaults when saved again. This cannot be undone.',
-            () => deleteStoredSettings(m.id), `Settings deleted: ${m.id}`),
-            'Delete stored settings (model stays on disk)', true));
-        actions.append(btn('delete', () => confirmDialog('Delete model',
-            `Delete ${m.id} from disk? A loaded instance is unloaded first, then the `
-            + 'model directory and its stored settings are removed. This cannot be undone.',
-            () => deleteModelFromDisk(m.id), `Deleted ${m.id}`), 'Delete model from disk', true));
-        box.append(actions);
-        if (m.is_default) {          // green DEFAULT: left-aligned inside the box
-            const defb = cell('DEFAULT');
-            defb.className = 'defbadge'; defb.title = 'Default model';
-            box.prepend(defb);
-        }
+        actions.append(delCover(
+            () => confirmDialog('Delete settings',
+                `Remove the stored configuration of ${m.id}? The model stays on disk; its `
+                + 'settings return to server defaults when saved again. This cannot be undone.',
+                () => deleteStoredSettings(m.id), `Settings deleted: ${m.id}`),
+            () => confirmDialog('Delete model',
+                `Delete ${m.id} from disk? A loaded instance is unloaded first, then the `
+                + 'model directory and its stored settings are removed. This cannot be undone.',
+                () => deleteModelFromDisk(m.id), `Deleted ${m.id}`),
+            false, 'Delete model from disk'));
+        box.append(lamps, actions);
         row.append(name, typeC, state, size, box);
         table.append(row);
     }
@@ -1885,25 +1916,25 @@ async function renderModelAdmin(force) {
         for (const e of missing) {
             const row = document.createElement('div'); row.className = 'urow admin';
             const name = cell(e.id); name.className = 'uname';
-            if (e.alias) name.prepend(cell(e.alias + ' \u2192 '));   // same Alias → name form
+            if (e.alias) {                       // same \u231e tree line form
+                const al = document.createElement('span'); al.className = 'alias-line';
+                const mk = cell('\u231e ' + e.alias); mk.className = 'alias-name';
+                al.append(mk); name.append(al);
+            }
             const st = cell(orphan.has(e.id) ? 'MISSING' : 'EXTERNAL');
             if (orphan.has(e.id)) st.className = 'spill miss';   // caution amber
             else st.className = 'dim';
             const box = document.createElement('span'); box.className = 'settings-box';
             const acts = document.createElement('span'); acts.className = 'rowacts';
-            const ds = document.createElement('button');
-            ds.className = 'se-btn act'; ds.textContent = 'delete settings';
-            ds.title = 'Delete stored settings for this missing model';
-            ds.onclick = () => confirmDialog('Delete settings',
-                `Remove stored configuration for ${e.id}? The model is not on disk; `
-                + 'its settings record is deleted. This cannot be undone.',
-                async () => { await deleteStoredSettings(e.id); },
-                `Deleted settings for ${e.id}`);
-            const dd = document.createElement('button');
-            dd.className = 'se-btn act'; dd.textContent = 'delete';
-            dd.disabled = true;
-            dd.title = 'Nothing on disk to delete \u2014 only the settings record exists';
-            acts.append(ds, dd); box.append(acts);
+            acts.append(delCover(
+                () => confirmDialog('Delete settings',
+                    `Remove stored configuration for ${e.id}? The model is not on disk; `
+                    + 'its settings record is deleted. This cannot be undone.',
+                    async () => { await deleteStoredSettings(e.id); },
+                    `Deleted settings for ${e.id}`),
+                null, true,
+                'Nothing on disk to delete \u2014 only the settings record exists'));
+            box.append(acts);
             row.append(name, cell('\u2014'), st, cell('\u2014'), box);
             table.append(row);
         }
@@ -1944,62 +1975,80 @@ function confirmDialog(title, msg, act, okMsg) {
     ok.focus();
 }
 
-/* EVERY ModelSettingsRequest field sent as explicit null = clear-to-defaults
-   (server semantics: sent-null clears, omitted keeps). Parity: the full 79-key
-   set mirrors routes.py ModelSettingsRequest (globalspec gate guards drift);
-   is_pinned rides a separate PUT — it lives in the engine pool, not settings. */
-function settingsResetPayload() {
-    const p = {};
-    const nullKeys = [
-        'model_alias', 'model_type_override', 'max_context_window', 'max_tokens',
-        'temperature', 'top_p', 'top_k', 'repetition_penalty', 'min_p',
-        'presence_penalty', 'force_sampling', 'max_tool_result_tokens',
-        'chat_template_kwargs', 'forced_ct_kwargs', 'ttl_seconds', 'index_cache_freq',
-        'enable_thinking', 'preserve_thinking', 'qwen4_ple_ssd_offload',
-        'deepseek_v41_engram_ssd_offload', 'deepseek_v41_ced_prefill_enabled',
-        'thinking_budget_enabled', 'thinking_budget_tokens', 'mtp_num_draft_tokens',
-        'turboquant_kv_enabled', 'turboquant_kv_bits', 'turboquant_skip_last',
-        'qwen35_ane_prefill_enabled', 'qwen35_ane_prefill_sequence_length',
-        'qwen35_ane_prefill_tail_padding_min_tokens', 'qwen35_ane_prefill_fraction',
-        'qwen35_ane_prefill_shared_fraction', 'qwen35_ane_prefill_fused_down',
-        'qwen35_ane_prefill_max_layers', 'qwen35_ane_prefill_dual_ane',
-        'qwen35_ane_prefill_gdn', 'qwen35_ane_prefill_gdn_fraction',
-        'qwen35_ane_prefill_gdn_max_layers', 'qwen35_ane_prefill_cpu_enabled',
-        'qwen35_ane_prefill_cpu_fraction', 'qwen35_ane_prefill_cpu_down_fraction',
-        'qwen35_ane_prefill_cpu_gdn_fraction', 'qwen35_ane_prefill_cpu_threads',
-        'qwen35_ane_prefill_cpu_shared_resource', 'qwen35_oq_a8_enabled',
-        'qwen35_oq_a8_min_tokens', 'moe_expert_offload_enabled',
-        'moe_expert_offload_resident_fraction', 'specprefill_enabled',
-        'specprefill_draft_model', 'specprefill_keep_pct', 'specprefill_threshold',
-        'dflash_enabled', 'dflash_draft_model', 'dflash_draft_quant_enabled',
-        'dflash_draft_quant_weight_bits', 'dflash_draft_quant_activation_bits',
-        'dflash_draft_quant_group_size', 'dflash_max_ctx', 'dflash_in_memory_cache',
-        'dflash_in_memory_cache_max_entries', 'dflash_in_memory_cache_max_bytes',
-        'dflash_ssd_cache', 'dflash_ssd_cache_max_bytes', 'dflash_draft_window_size',
-        'dflash_draft_sink_size', 'dflash_block_size', 'dflash_verify_mode',
-        'mtp_enabled', 'vlm_mtp_enabled', 'vlm_mtp_draft_model',
-        'vlm_mtp_draft_block_size', 'reasoning_parser', 'guided_grammar_enabled',
-        'guided_grammar', 'trust_remote_code',
-        'is_default', 'is_hidden', 'is_favorite'];
-    for (const k of nullKeys) p[k] = null;
-    // these fields 400 on null upstream (routes.py validates them); their
-    // defaults are concrete values — mirror omlx/model_settings.py exactly.
-    p.qwen35_ane_prefill_sequence_length = 2048;
-    p.qwen35_ane_prefill_tail_padding_min_tokens = 0;
-    p.qwen35_ane_prefill_max_layers = 64;
-    p.qwen35_ane_prefill_gdn_max_layers = 48;
-    p.qwen35_ane_prefill_gdn_fraction = 0.5;
-    p.qwen35_ane_prefill_cpu_threads = 8;
-    p.qwen35_ane_prefill_cpu_fraction = 0.135;
-    p.qwen35_ane_prefill_cpu_down_fraction = 0.0;
-    p.qwen35_ane_prefill_cpu_gdn_fraction = 0.0;
-    p.qwen35_oq_a8_min_tokens = 128;
-    return p;
+/* Cockpit row controls: lamp/rocker tap handler, clipboard fallback, alias
+   tree lines, DELETE cover. "Reset settings" is gone — DELETE > SETTINGS
+   (drops the record; behaviour returns to server defaults) covers it. */
+function tapBtn(b, fn, noRerender) {
+    b.onclick = async () => {
+        b.disabled = true;    // no double-toggle while the write is in flight
+        try { await fn(); } catch (err) {
+            toast(`${b.textContent || 'action'} failed: ${err.message}`);
+            b.disabled = false; return;
+        }
+        if (!noRerender) renderModelAdmin(true); else b.disabled = false;
+    };
 }
-async function resetSettings(model) {
-    await putModelSettings(model, settingsResetPayload());
-    // pin rides the same endpoint; clear it explicitly to reach full defaults
-    try { await putModelSettings(model, { is_pinned: null }); } catch (_) {}
+function copyText(t) {   // plain-http LAN origins lack navigator.clipboard
+    if (navigator.clipboard && window.isSecureContext)
+        return navigator.clipboard.writeText(t);
+    const ta = document.createElement('textarea');
+    ta.value = t; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.append(ta); ta.select();
+    try { document.execCommand('copy'); } finally { ta.remove(); }
+    return Promise.resolve();
+}
+/* Properties of an alias/exposed profile that diverge from the model's own
+   settings — rendered as indicator chips next to the alias tree line. */
+function aliasDiffChips(prof, base) {
+    const SHORT = { temperature: 'TEMP', top_p: 'TOP_P', top_k: 'TOP_K',
+        max_tokens: 'MAX', max_context_window: 'CTX', enable_thinking: 'THINK',
+        reasoning_effort: 'R', mtp_enabled: 'MTP', dflash_enabled: 'DFLASH',
+        turboquant_kv_enabled: 'TQ', ttl_seconds: 'TTL', trust_remote_code: 'TRC' };
+    const out = [];
+    const b = base || {};
+    for (const [k, v] of Object.entries(prof || {})) {
+        if (v === null || v === undefined || v === false) continue;
+        if (b[k] === v) continue;
+        const label = SHORT[k] || k.toUpperCase();
+        out.push(label + (v === true ? '' : ' ' + v));
+    }
+    return out;
+}
+function aliasLines(m) {
+    const out = [];
+    const line = (alias, chips) => {
+        const l = document.createElement('span'); l.className = 'alias-line';
+        const mk = cell('\u231e ' + alias); mk.className = 'alias-name';
+        mk.title = 'Serves this model on the API under the name "' + alias + '"';
+        l.append(mk);
+        for (const txt of chips) {
+            const chip = document.createElement('span');
+            chip.className = 'schip'; chip.textContent = txt; l.append(chip);
+        }
+        out.push(l);
+    };
+    if (m.settings && m.settings.model_alias) line(m.settings.model_alias, []);
+    for (const p of (m.exposed_profiles || []))
+        line(p.api_name || p.name, aliasDiffChips(p.settings, m.settings));
+    return out;
+}
+/* DELETE cover: red header rail over two breakers, SETTINGS | MODEL. */
+function delCover(onSettings, onModel, modelDisabled, modelTitle) {
+    const wrap = document.createElement('span'); wrap.className = 'delcover';
+    const h = document.createElement('span'); h.className = 'delcover-h';
+    h.textContent = 'DELETE';
+    const bar = document.createElement('span'); bar.className = 'delcover-b';
+    const s = document.createElement('button');
+    s.className = 'se-btn act danger'; s.textContent = 'SETTINGS';
+    s.title = 'Delete stored settings (model stays on disk)';
+    s.onclick = onSettings;
+    const mdl = document.createElement('button');
+    mdl.className = 'se-btn act danger'; mdl.textContent = 'MODEL';
+    mdl.title = modelTitle || 'Delete model from disk';
+    mdl.disabled = !!modelDisabled;
+    if (!modelDisabled) mdl.onclick = onModel;
+    bar.append(s, mdl); wrap.append(h, bar);
+    return wrap;
 }
 async function deleteStoredSettings(model) {
     return trackWrite(async () => {
