@@ -561,6 +561,8 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
 }
 .admin-table .schip.on { border-color: var(--accent); color: var(--accent); }
 [data-theme="light"] .admin-table .schip.on { border-color: var(--red); color: var(--red); }
+/* R10-13: TRUST REMOTE CODE lit red when enabled — the scary flag */
+.admin-table .schip.danger { border-color: var(--red); color: var(--red); }
 .admin-table .rowacts { display: flex; gap: 4px; justify-content: flex-end; flex-wrap: wrap; }
 .se-btn.act { height: 22px; padding: 0 8px; font-size: 10px; }
 

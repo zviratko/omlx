@@ -2622,13 +2622,23 @@ async function renderModelAdmin(force) {
         const box = document.createElement('span');
         box.className = 'settings-box';
         const s = m.settings || {};
+        // R10-13: fixed chip set. SET values render with their value;
+        // toggles render ON/OFF; unset keys show a dimmed label + em dash
+        // (inherited from server defaults). TRUST REMOTE CODE is red when on.
         const bits = [];
-        if (s.temperature !== null && s.temperature !== undefined) bits.push(['TEMP ' + s.temperature, '']);
-        if (s.max_tokens) bits.push(['MAX ' + s.max_tokens, '']);
-        if (s.dflash_enabled) bits.push(['DFLASH', 'on']);
-        if (s.mtp_enabled) bits.push(['MTP', 'on']);
-        if (s.turboquant_kv_enabled) bits.push(['TQ', 'on']);
-        if (s.reasoning_effort && s.reasoning_effort !== 'auto') bits.push(['R:' + s.reasoning_effort, '']);
+        const val = (label, v) => bits.push([v === null || v === undefined
+            ? label + ' —' : label + ' ' + v,
+            v === null || v === undefined ? 'dim' : '']);
+        const tog = (label, on) => bits.push([label + (on ? ' ON' : ' OFF'), on ? 'on' : 'dim']);
+        val('CTX', s.max_context_window);
+        val('MAX', s.max_tokens);
+        tog('THINK', !!s.enable_thinking);
+        tog('MTP', !!(s.mtp_enabled || s.vlm_mtp_enabled));
+        tog('GRAMMAR', !!s.guided_grammar_enabled);
+        bits.push(['TRC ' + (s.trust_remote_code ? 'ON' : 'OFF'),
+            s.trust_remote_code ? 'danger' : 'dim']);
+        tog('SPECPREFILL', !!s.specprefill_enabled);
+        tog('DFLASH', !!s.dflash_enabled);
         if (m.is_hidden) bits.push(['HIDDEN', '']);
         for (const [txt, cls] of bits) {
             const chip = document.createElement('span');
