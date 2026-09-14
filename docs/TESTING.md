@@ -53,7 +53,11 @@ Engram storage and prefetch lifecycle: `python -m pytest tests/test_deepseek_v41
 V4.1 expert reads, MXFP4/MXFP8 and mixed-bit affine arithmetic, repeated
 evictions, sorted routes, load/inference thread separation, Engram coexistence,
 draft-weight exclusion, and memory estimates. The load probe rejects whole
-expert reads from shared shards. Run alongside `test_deepseek_v41_offload.py`,
+expert reads from shared shards and any expert slab read through the Engram
+mapping. Further cases check that consumed read buffers are released within the
+in-flight byte window and pin the serial LRU order under concurrent reads,
+expert-boundary chunking of sorted routes, and the fit-to-budget residency
+helper against the admission arithmetic. Run alongside `test_deepseek_v41_offload.py`,
 `test_moe_expert_offload.py`, and the engine-pool/model-settings suites.
 `node tests/moe_expert_offload_ui.test.cjs` checks the actual dashboard
 save/reopen payload and speculative-decoding toggle exclusion.
@@ -63,3 +67,13 @@ save/reopen payload and speculative-decoding toggle exclusion.
 evictions. `tests/test_moe_offload_compat.py` covers the model-type allowlist,
 checkpoint completeness, dense-model exclusion, API/runtime rejection, and
 PLE/Engram metadata after expert savings.
+
+# macOS port persistence tests
+
+Run the `AppConfigTests`, `ServerProcessIntegrationTests`, `ServerScreenVMStorageDiffTests`, `AppServicesPathTests`, and `MenubarControllerPortTests` targets with `xcodebuild test`. For process tests, set `TEST_RUNNER_OMLX_INTEGRATION=1`, `TEST_RUNNER_OMLX_PYTHON_OVERRIDE` to a Python interpreter with oMLX dependencies, `TEST_RUNNER_PYTHONPATH` to the repository root, and `TEST_RUNNER_OMLX_BASE_PATH` to a fresh temporary directory so the test host does not start the user's configured server. Leave `TEST_RUNNER_OMLX_DEV_SERVER_SCRIPT` unset to exercise the real Python API and CLI with empty model directories. Setting it to `apps/omlx-mac/Scripts/dev_server.py` instead runs the lightweight process fixture.
+
+The port cases cover offline Apply, recovery from an occupied port, web API saves followed by manual and automatic restarts, native Apply while running, client endpoint synchronization, and persistence across subsequent starts. Each child uses a temporary settings directory and an OS-selected port, and teardown stops the children. Endpoint-only persistence also checks that unrelated settings and corrupt files are preserved.
+
+# Accuracy benchmark worker tests
+
+Run `python -m pytest -q tests/test_eval_worker_pool.py tests/test_eval.py tests/test_accuracy_benchmark.py tests/test_admin_external_accuracy_diagnostics.py tests/test_accuracy_upload.py`. Worker tests cover slot refilling, thinking-mode retries, sequential code scoring without blocking generation, and repeated cancellation during scoring. Real HumanEval, MBPP, and LiveCodeBench subprocess cases verify normal completion, cancellation draining, and temporary-file cleanup with a controlled engine; no model checkpoint is required.
