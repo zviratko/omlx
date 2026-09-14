@@ -1061,6 +1061,14 @@ async function pollRequests() {
 
 /* ---------------- model manager (Models tab) ---------------- */
 let seModel = null, seValues = {};   // seValues = live form state (modelspec shape)
+let GRAMMAR_PARSERS = null;          // R10-7: cached /admin/api/grammar/parsers payload
+async function loadGrammarParsers() {
+    if (GRAMMAR_PARSERS) return;
+    try {
+        const d = await fetchJson(`${API}/admin/api/grammar/parsers`);
+        if (Array.isArray(d)) GRAMMAR_PARSERS = d;
+    } catch (_) { /* offline/upstream missing: fall back to model-reported list */ }
+}
 let seOrig = {};                     // baseline snapshot for dirty tracking
 /* Fields that only take effect when the engine is (re)built: changing one
    of these on a LOADED model shows RESTART MODEL in the editor Save button
@@ -1452,9 +1460,18 @@ function renderEditorFields(container) {
         // NOTE: preserve_thinking has NO widget in the classic modal (it only
         // appears in the diffusion unsupported-field lists) — parity: none here.
         if (seValues.reasoning_parser !== undefined || m.reasoning_parsers) {
-            const rp = (m.reasoning_parsers || ['']).map(v => ({ value: v }));
-            if (!rp.some(o => o.value === (seValues.reasoning_parser || '')))
-                rp.push({ value: seValues.reasoning_parser || '' });
+            // R10-7: classic fills this list from /admin/api/grammar/parsers
+            // (xgrammar builtin registry); model-reported list is usually empty.
+            const seen = new Set();
+            const rp = [{ value: '', label: 'None' }];
+            const add = (value, label) => {
+                if (!value || seen.has(value)) return;
+                seen.add(value); rp.push({ value, label: label != null ? label : value });
+            };
+            (GRAMMAR_PARSERS || []).forEach(p => add(p.value,
+                p.label + (p.models && p.models.length ? ' (' + p.models.join(', ') + ')' : '')));
+            (m.reasoning_parsers || []).forEach(v => add(v));
+            add(seValues.reasoning_parser || '');
             g.append(seBind('select', 'reasoning_parser', { label: 'Reasoning Parser', options: rp }));
         }
         g.append(seBind('bool', 'enableThinkingBudget', { label: 'Thinking Budget',
@@ -1469,7 +1486,9 @@ function renderEditorFields(container) {
         if (seValues.enableToolResultLimit)
             g.append(seBind('number', 'max_tool_result_tokens',
                 { label: 'Tool result token limit', min: 1, step: 1 }));
-        const ggWrap = seBind('textarea', 'guided_grammar');
+        const ggWrap = seBind('textarea', 'guided_grammar', {
+            label: 'Guided Grammar',
+            hint: 'EBNF / regex / JSON-schema grammar applied to generation when enabled.' });
         ggWrap.classList.add('se-wide');
         const ggInp = ggWrap.querySelector('textarea');
         g.append(seBind('bool', 'guided_grammar_enabled', { label: 'Guided Grammar',
@@ -1803,6 +1822,7 @@ function closeEditor() {
 async function openEditor(model) {
     closeEditor();
     seModel = model;
+    await loadGrammarParsers().catch(() => {});   // R10-7: fill the reasoning-parser list (classic does the same)
     let row = [...document.querySelectorAll('#model-admin .urow:not(.head)')]
         .find(r => r.dataset.mid === model);
     if (!row) { await renderModelAdmin(true);
