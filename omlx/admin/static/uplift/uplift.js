@@ -1496,6 +1496,24 @@ function renderEditorFields(container) {
         if (seValues.enableThinkingBudget)
             sub(g).append(seBind('number', 'thinking_budget_tokens',
                 { label: 'Thinking budget (tokens)', min: 1, step: 1 }));
+        // cache_reasoning_output: tri-state (null = auto: cache when history
+        // preserves <think>). Upstream #3525; classic modal has no widget —
+        // additive, same keys as the API.
+        {
+            const cv = seValues.cache_reasoning_output;
+            g.append(seBind('select', 'cache_reasoning_output', {
+                label: 'Cache Reasoning Output',
+                hint: 'Cache <think> output for the next turn. Auto = only when history keeps it.',
+                options: [{ value: '', label: 'Auto' },
+                          { value: 'true', label: 'Always' },
+                          { value: 'false', label: 'Never' }],
+            }));
+            const sel = g.lastChild.querySelector('select');
+            sel.value = cv === true ? 'true' : cv === false ? 'false' : '';
+            sel.addEventListener('change', () => {
+                seValues.cache_reasoning_output =
+                    sel.value === '' ? null : sel.value === 'true'; });
+        }
         g.append(seBind('bool', 'enableToolResultLimit', { label: 'Limit Tool Result Tokens',
             hint: 'Truncate large tool results (e.g. file reads) to a token limit.',
             onChange: renderEditorFields.bind(null, container) }));
