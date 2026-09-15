@@ -2623,9 +2623,11 @@ async function renderModelAdmin(force) {
             return b;
         };
         lamps.append(
-            lamp('PINNED', !!m.pinned, m.pinned ? 'Unpin from top' : 'Pin to top',
+            lamp('PINNED', !!m.pinned, m.pinned ? 'Unpin (allow unload)' : 'Keep loaded (pin)',
+                // R10-B1: classic-compat write path — is_pinned via PUT
+                // settings (the pin/unpin POSTs were mock-only sugar)
                 () => flagWrite(m.id, { pinned: !m.pinned },
-                    () => postModelAction(m.id, m.pinned ? 'unpin' : 'pin'))),
+                    () => putModelSettings(m.id, { is_pinned: !m.pinned }))),
             lamp('DEFAULT', !!m.is_default,
                 m.is_default ? 'Clear default model' : 'Make default model',
                 () => {
