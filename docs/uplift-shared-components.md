@@ -6,6 +6,7 @@ anything `needs-change` is a NOT-YET until the user signs it off.
 | Component | Status | How |
 |---|---|---|
 | `omlx/admin/routes.py` | additive-changed | New `/admin/uplift` + `/admin/uplift/{path}` GET routes (redirect-to-slash, cookie auth via `require_admin`, traversal guard, `no-store` on HTML). No existing route, template, or schema touched. |
+| `omlx/admin/static/uplift/uplift.js` | additive-changed | R11 self-hosted mode: when `location.pathname` starts with `/admin/uplift`, API base defaults to same-origin (no gateway), chip reads `direct`, mode labels state real writes. Standalone hosting (:11436) keeps the `:11437` gateway default; `?api=` overrides both. |
 | `omlx/admin/static/uplift/*` | untouched by classic | Uplift's own bundle (index.html, uplift.js, core.js, modelspec.js, uplift.css, vendor/uPlot). Lives under the static dir but classic never references these paths. |
 | `omlx/admin/templates/**` | untouched | Uplift serves static HTML; no Jinja template changes. |
 | `omlx/admin/i18n/*` | untouched so far | Uplift is EN-only until P1B-1/2 wire `t()`. New keys will be additive files/keys only; classic's existing keys stay byte-identical. |
@@ -18,6 +19,12 @@ anything `needs-change` is a NOT-YET until the user signs it off.
 
 - Classic stays at `/admin/dashboard`; Uplift lives at `/admin/uplift/`.
   Both served by one oMLX process at the same time; no redirects between them.
+- Segregation evidence (kocour, 2026-09-16): all 91 classic static assets
+  (everything under `admin/static` except `uplift/`) served 200 and
+  byte-compared equal to the on-disk store after the uplift route + self-
+  hosted mode landed; classic dashboard renders with its own title and JS.
+  Uplift's native load fires zero requests to the mock gateway (:11437)
+  and zero to classic's bundle beyond shared static dir reads.
 - Removing `omlx/admin/static/uplift/` (or the two routes) leaves classic
   fully functional — the routes only 404 then; nothing else imports them.
 - Deleting the route block is the whole uninstall for the server side.
