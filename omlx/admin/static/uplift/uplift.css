@@ -924,6 +924,26 @@ label.se-row.restartq input, label.se-row.restartq select, label.se-row.restartq
 .row-editor .se-section { margin: 12px 0 4px; color: var(--dim); font-size: 11px;
     text-transform: uppercase; letter-spacing: .18em; border-bottom: 1px solid var(--line); }
 .row-editor .se-wide { grid-column: 1 / -1; }
+/* R10-5: editor sections are framed boxes — inverted header strip plus a
+   tinted body, alternating shade per box (same language as the settings
+   page gs-boxes). The modal is .modal.editor, not .row-editor. */
+.modal.editor .se-box { border: 1px solid var(--edge); margin: 0 0 14px;
+    break-inside: avoid; }
+.modal.editor .se-box:nth-of-type(even) { background: var(--row2); }
+.modal.editor .se-box h5.se-section { margin: 0; padding: 6px 10px;
+    background: var(--card); border-bottom: 1px solid var(--edge);
+    color: var(--dim); font-size: 11px; text-transform: uppercase;
+    letter-spacing: .18em; }
+.modal.editor .se-box-body { padding: 10px 12px; }
+.modal.editor .se-wide { grid-column: 1 / -1; }
+/* stacked layout for wide fields: label row above, control spans the row */
+.modal.editor .se-wide { grid-template-columns: 1fr; }
+.modal.editor .se-wide .se-ctl { justify-content: stretch; }
+.modal.editor .se-wide textarea { width: 100%; }
+.modal.editor .se-wide textarea + select, .modal.editor .se-wide select { margin-top: 4px; }
+/* R10-5: grammar textarea — big and mono, it holds EBNF */
+.modal.editor .se-box-body textarea { min-height: 200px;
+    font: 400 12px/1.5 var(--mono); }
 .row-editor .se-hint { color: var(--dim); font-size: 10px; grid-column: 1 / -1; }
 .row-editor .se-kwarg { display: grid; grid-template-columns: 1fr 1fr auto; gap: 6px; }
 .row-editor .se-kwarg input, .row-editor .se-kwarg select { width: auto; }

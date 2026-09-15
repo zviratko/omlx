@@ -1362,9 +1362,17 @@ function seBind(kind, key, opts) {
 }
 
 function seSection(title) {
+    // R10-5: sections read as framed boxes (same language as the settings
+    // page gs-boxes / model list rows): inverted header strip, tinted body.
+    const box = document.createElement('div');
+    box.className = 'se-box';
     const h = document.createElement('h5');
     h.className = 'se-section'; h.textContent = title;
-    return h;
+    const body = document.createElement('div');
+    body.className = 'se-box-body';
+    box.append(h, body);
+    box.__body = body;
+    return box;
 }
 
 function renderEditorFields(container) {
@@ -1380,7 +1388,11 @@ function renderEditorFields(container) {
         seOrig = tab.origVals || Object.assign({}, seBaseVals);
     }
     container.textContent = '';
-    const grid = () => { const g = document.createElement('div'); g.className = 'pair'; container.append(g); return g; };
+    let sect = null;
+    // R10-5: sections are framed boxes; grid() appends into the open one.
+    const section = (title) => { sect = seSection(title); container.append(sect); return sect.__body; };
+    const grid = () => { const g = document.createElement('div'); g.className = 'pair';
+        (sect ? sect.__body : container).append(g); return g; };
     // R10-14: a toggle's child controls go into an indented sub-block so
     // the parent/child relationship reads visually; nestable.
     const sub = (parent) => { const d = document.createElement('div');
@@ -1419,7 +1431,7 @@ function renderEditorFields(container) {
         ban.append(hint);
         container.append(ban);
     }
-    container.append(seSection('Basic Settings'));
+    section('Sampling');
     let g = grid();
     if (seIsBaseTab() || !seTab().template)
         g.append(seBind('text', 'model_alias', { label: 'Display Name' }));
@@ -1427,8 +1439,6 @@ function renderEditorFields(container) {
         label: 'Model Type',
         options: [{ value: '', label: 'Auto-detect' },
                   ...S.MODEL_TYPE_OPTIONS.map(v => ({ value: v }))] }));
-    g.append(seBind('number', 'max_context_window', { label: 'Ctx Window', step: 1 }));
-    g.append(seBind('number', 'max_tokens', { label: 'Max Tokens', step: 1 }));
     const sampling = [
         ['temperature', 0, 2, 0.05, 'Temperature'], ['top_p', 0, 1, 0.05, 'Top P'],
         ['top_k', 0, null, 1, 'Top K'], ['repetition_penalty', 0.5, 2, 0.01, 'Repetition Penalty'],
@@ -1443,10 +1453,9 @@ function renderEditorFields(container) {
     }
     g.append(seBind('bool', 'force_sampling', { label: 'Force Sampling',
         hint: 'Override request sampling parameters with configured values' }));
-    g.append(seBind('number', 'ttl_seconds', { label: 'TTL (Seconds)', step: 1 }));
 
-    /* ---- advanced ---- */
-    container.append(seSection('Advanced Settings'));
+    /* ---- thinking & reasoning (R10-5 split out of Advanced) ---- */
+    section('Thinking & Reasoning');
     g = grid();
     if (!S.isDiffusion(m)) {
         if (m.thinking_default !== undefined && m.thinking_default !== null || seValues.enable_thinking != null) {
@@ -1493,6 +1502,11 @@ function renderEditorFields(container) {
         if (seValues.enableToolResultLimit)
             sub(g).append(seBind('number', 'max_tool_result_tokens',
                 { label: 'Tool result token limit', min: 1, step: 1 }));
+    }
+    /* ---- grammar (R10-5: own section, wide mono textarea) ---- */
+    section('Grammar');
+    g = grid();
+    if (!S.isDiffusion(m)) {
         const ggWrap = seBind('textarea', 'guided_grammar', {
             label: 'Guided Grammar',
             hint: 'EBNF / regex / JSON-schema grammar applied to generation when enabled.' });
@@ -1545,6 +1559,15 @@ function renderEditorFields(container) {
         // box (below the textarea) so toggle + textarea + presets read as one unit
         ggWrap.querySelector('.se-ctl').append(presetSel);
         gsb.append(ggWrap);
+    }
+
+    /* chat-template kwargs (subset: key/value rows, add/remove) */
+    if (!S.isDiffusion(m)) renderCtKwargs(section('Chat Template Kwargs'));
+
+    /* ---- acceleration (kept: engine-level, not spec decode) ---- */
+    section('Acceleration');
+    g = grid();
+    if (!S.isDiffusion(m)) {
         g.append(seBind('bool', 'enableIndexCache', { label: 'Index Cache',
             hint: 'Skip redundant indexer computation in DSA layers (DeepSeek V3/GLM-5).',
             onChange: renderEditorFields.bind(null, container) }));
@@ -1552,15 +1575,6 @@ function renderEditorFields(container) {
             sub(g).append(seBind('number', 'index_cache_freq',
                 { label: 'Frequency (every Nth layer keeps indexer)', min: 1, step: 1 }));
     }
-    g.append(seBind('bool', 'trust_remote_code', { label: 'Trust Remote Code',
-            hint: 'Lets the model repo run arbitrary Python at load. Only enable for trusted repos.' }));
-
-    /* chat-template kwargs (subset: key/value rows, add/remove) */
-    if (!S.isDiffusion(m)) renderCtKwargs(container);
-
-    /* ---- acceleration ---- */
-    container.append(seSection('Acceleration'));
-    g = grid();
     if (seValues.turboquant_kv_enabled !== undefined && !S.isDiffusion(m)) {
         g.append(seBind('bool', 'turboquant_kv_enabled', { label: 'TurboQuant KV Cache',
             hint: 'Compress KV cache using vector quantization. Lower bits = more compression.',
@@ -1604,8 +1618,8 @@ function renderEditorFields(container) {
     }
     if (m.ane_prefill_backend && !S.isDiffusion(m)) renderAne(container, g);
 
-    /* ---- experimental (spec decode) ---- */
-    container.append(seSection('Experimental Features'));
+    /* ---- speculative decode (R10-5 rename) ---- */
+    section('Speculative Decoding');
     g = grid();
     const models = adminModels.length ? adminModels : [];
     const S_ = window.UpliftModelSpec;
@@ -1702,6 +1716,15 @@ function renderEditorFields(container) {
             }
         }
     }
+
+    /* ---- context & limits (R10-5: pulled out of Basic/Advanced) ---- */
+    section('Context & Limits');
+    g = grid();
+    g.append(seBind('number', 'max_context_window', { label: 'Ctx Window', step: 1 }));
+    g.append(seBind('number', 'max_tokens', { label: 'Max Tokens', step: 1 }));
+    g.append(seBind('number', 'ttl_seconds', { label: 'TTL (Seconds)', step: 1 }));
+    g.append(seBind('bool', 'trust_remote_code', { label: 'Trust Remote Code',
+        hint: 'Lets the model repo run arbitrary Python at load. Only enable for trusted repos.' }));
 }
 
 /* ANE prompt processing (classic modal renders a Qwen variant and, for
@@ -1774,9 +1797,8 @@ function seSyncKwEntries() {
     delete t.workVals.forced_ct_kwargs;
 }
 
-function renderCtKwargs(container) {
+function renderCtKwargs(container) {   // R10-5: container is the section body
     const S = window.UpliftModelSpec;
-    container.append(seSection('Chat Template Kwargs'));
     const hint = document.createElement('div');
     hint.className = 'se-hint';
     hint.textContent = 'Parameters passed to chat template. Force: API requests cannot override this value.';
@@ -2678,6 +2700,7 @@ async function renderModelAdmin(force) {
             b.onclick = async () => {
                 b.disabled = true;    // no double-toggle while the write is in flight
                 try { await fn(); } catch (err) {
+                    console.error(`${label} failed:`, err);   // stack in devtools
                     toast(`${label} failed: ${err.message}`); b.disabled = false; return; }
                 if (!noRerender) renderModelAdmin(true); else b.disabled = false;
             };
