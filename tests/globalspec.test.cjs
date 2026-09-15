@@ -85,11 +85,23 @@ test('ModelSettingsRequest fields stay reachable in the Uplift editor', () => {
     assert.ok(m, 'ModelSettingsRequest class found in routes.py');
     const fields = [...m[1].matchAll(/^ {4}([a-z_0-9]+)\s*:/gm)].map(x => x[1]);
     const ms = uplift + modelspec;
-    // is_pinned is toggled from the model row (pin/unpin action, uplift.js),
-    // not the editor modal. mtp_num_draft_tokens is not exposed by the
-    // classic modal either.
-    const allow = new Set(['is_pinned', 'mtp_num_draft_tokens']);
+    // is_pinned is toggled from the model row (is_pinned via PUT settings,
+    // classic parity), not the editor modal. mtp_num_draft_tokens gained a
+    // widget (R10-15) and must now be reachable too.
+    const allow = new Set(['is_pinned']);
     const missing = fields.filter(f => !allow.has(f) && !ms.includes(f));
     assert.deepStrictEqual(missing, [],
         `model-settings fields missing from Uplift editor: ${missing.join(', ')}`);
+});
+
+// P1A-7 interop: Uplift-style global-settings round-trip against the REAL
+// oMLX must leave settings.json untouched. Skips (exit 2) when no local
+// oMLX answers, so CI without a running server stays green.
+test('global-settings round-trip is a no-op on the real server', { timeout: 30000 }, () => {
+    const { spawnSync } = require('child_process');
+    const script = require('path').join(__dirname, 'ui', 'p1a7_interop.py');
+    const r = spawnSync('python3', [script], { encoding: 'utf8', timeout: 25000 });
+    const out = (r.stdout || '') + (r.stderr || '');
+    if (r.status === 2) { console.log('interop SKIP:', out.trim()); return; }
+    assert.strictEqual(r.status, 0, 'interop round-trip failed:\n' + out);
 });
