@@ -3405,6 +3405,63 @@ async def update_model_settings(
 # =============================================================================
 
 
+@router.get("/api/model-settings-index")
+async def model_settings_index(is_admin: bool = Depends(require_admin)):
+    """Stored model-settings ids vs models discovered on disk.
+
+    Powers the Uplift Models manager "stored/missing" counts, the Missing
+    section, and the prune dialog. Additive for Uplift (R11); classic does
+    not use it. Mirrors the standalone gateway's response shape:
+    {stored, known, orphans, entries:[{id, alias}]}.
+    """
+    settings_manager = _require_settings_manager()
+    engine_pool = _get_engine_pool()
+    if engine_pool is None:
+        raise HTTPException(status_code=503, detail="Server not initialized")
+    all_settings = settings_manager.get_all_settings()
+    known = set(engine_pool.get_model_ids())
+    alias_of = {
+        mid: ms.model_alias
+        for mid, ms in all_settings.items()
+        if getattr(ms, "model_alias", None)
+    }
+    # An id a live model points at via alias is not an orphan.
+    orphans = sorted(set(all_settings) - known - set(alias_of.values()))
+    entries = sorted(
+        ({"id": mid, "alias": alias_of.get(mid)} for mid in all_settings),
+        key=lambda e: e["id"],
+    )
+    return {
+        "stored": len(all_settings),
+        "known": len(known),
+        "orphans": orphans,
+        "entries": entries,
+    }
+
+
+class PruneModelSettingsRequest(BaseModel):
+    ids: list[str]
+
+
+@router.post("/api/prune-model-settings")
+async def prune_model_settings(
+    req: PruneModelSettingsRequest,
+    is_admin: bool = Depends(require_admin),
+):
+    """Delete stored settings for model ids no longer on disk.
+
+    Additive for Uplift (R11). Mirrors the gateway shape:
+    {removed, removed_templates}. Only ids the caller lists are deleted;
+    templates are left alone (conservative — user can delete them in the
+    Templates page).
+    """
+    settings_manager = _require_settings_manager()
+    if not req.ids:
+        raise HTTPException(status_code=400, detail="ids required")
+    removed = [mid for mid in dict.fromkeys(req.ids) if settings_manager.delete_settings(mid)]
+    return {"removed": removed, "removed_templates": []}
+
+
 def _require_settings_manager():
     mgr = _get_settings_manager()
     if mgr is None:
