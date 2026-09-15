@@ -79,3 +79,21 @@ async def test_prune_rejects_empty_ids():
                 admin_routes.PruneModelSettingsRequest(ids=[]), is_admin=True
             )
     assert ei.value.status_code == 400
+
+
+async def test_get_model_settings_shape_and_404():
+    s = _ms("live")
+    s.temperature = 0.55
+    mgr = MagicMock()
+    mgr.get_settings.return_value = s
+    pool = MagicMock()
+    pool.get_entry.side_effect = lambda mid: object() if mid == "live" else None
+    with patch.object(admin_routes, "_get_settings_manager", return_value=mgr), \
+         patch.object(admin_routes, "_get_engine_pool", return_value=pool):
+        out = await admin_routes.get_model_settings("live", is_admin=True)
+        assert out["id"] == "live"
+        assert out["settings"]["temperature"] == 0.55
+        assert None not in out["settings"].values()
+        with pytest.raises(HTTPException) as ei:
+            await admin_routes.get_model_settings("ghost", is_admin=True)
+    assert ei.value.status_code == 404

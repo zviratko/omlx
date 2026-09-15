@@ -2606,6 +2606,25 @@ async def reload_models(is_admin: bool = Depends(require_admin)):
     raise HTTPException(status_code=500, detail=message)
 
 
+@router.get("/api/models/{model_id}/settings")
+async def get_model_settings(
+    model_id: str,
+    is_admin: bool = Depends(require_admin),
+):
+    """Stored settings for one model: {id, settings}.
+
+    Additive for Uplift (R11) — the editor prefills from this; classic
+    embeds settings in /api/models instead. None values are stripped
+    (to_dict), so absent keys mean "global default".
+    """
+    settings_manager = _require_settings_manager()
+    engine_pool = _get_engine_pool()
+    if engine_pool is not None and engine_pool.get_entry(model_id) is None:
+        raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+    settings = settings_manager.get_settings(model_id)
+    return {"id": model_id, "settings": settings.to_dict()}
+
+
 @router.put("/api/models/{model_id}/settings")
 async def update_model_settings(
     model_id: str,
