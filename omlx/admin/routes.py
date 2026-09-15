@@ -1744,6 +1744,61 @@ async def admin_static(path: str):
 
 
 # =============================================================================
+# Uplift dashboard (opt-in, additive; classic dashboard untouched)
+# =============================================================================
+
+uplift_dir = static_dir / "uplift"
+
+_UPLIFT_MEDIA_TYPES = {
+    ".html": "text/html",
+    ".css": "text/css",
+    ".js": "application/javascript",
+    ".json": "application/json",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".ico": "image/x-icon",
+    ".woff2": "font/woff2",
+    ".woff": "font/woff",
+    ".ttf": "font/ttf",
+    ".map": "application/json",
+}
+
+
+def _uplift_file(path: str) -> FileResponse:
+    """Serve one file from the uplift static dir with traversal guard."""
+    file_path = (uplift_dir / path)
+    if not file_path.is_file() or not file_path.resolve().is_relative_to(
+        uplift_dir.resolve()
+    ):
+        raise HTTPException(status_code=404, detail="Uplift file not found")
+    media_type = _UPLIFT_MEDIA_TYPES.get(
+        file_path.suffix, "application/octet-stream"
+    )
+    headers = (
+        {"Cache-Control": "no-store"} if file_path.suffix == ".html" else None
+    )
+    return FileResponse(file_path, media_type=media_type, headers=headers)
+
+
+@router.get("/uplift", include_in_schema=False)
+async def uplift_page_redirect():
+    """Canonicalise so relative asset URLs (./uplift.css) resolve."""
+    return RedirectResponse(url="/admin/uplift/", status_code=307)
+
+
+@router.get("/uplift/", include_in_schema=False)
+async def uplift_page(is_admin: bool = Depends(require_admin)):
+    """Serve the Uplift dashboard (opt-in companion to the classic one)."""
+    return _uplift_file("index.html")
+
+
+@router.get("/uplift/{path:path}", include_in_schema=False)
+async def uplift_static(path: str, is_admin: bool = Depends(require_admin)):
+    """Serve Uplift dashboard assets (JS/CSS/vendor)."""
+    return _uplift_file(path or "index.html")
+
+
+# =============================================================================
 # Authentication API Routes
 # =============================================================================
 

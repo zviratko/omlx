@@ -21,6 +21,8 @@ cp "$SRC/vendor/"* "$DEST/vendor/"
 BUILD="$(date +%s)"
 sed -i '' "s/BUILD/$BUILD/g" "$DEST/index.html"
 echo "Deployed to: $DEST (cache stamp $BUILD)"
+# Note: DEST is the keg's admin/static/uplift dir itself, so the native
+# /admin/uplift/ route serves the exact bytes deployed here — no second copy.
 
 # Helper static server (serves index.html; the keg's own /admin/static route
 # has no .html media type, and we must not patch routes.py without a restart).
