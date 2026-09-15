@@ -2194,7 +2194,9 @@ function seNextAutoName() {
     let i = 1;
     const used = new Set(seTabs.filter(t => t.name).map(t => (t.name || '').toLowerCase()));
     while (used.has('model-profile-' + i)) i++;
-    return 'Model profile ' + i;
+    // Must satisfy server validate_profile_name ^[a-z0-9][a-z0-9_-]{0,31}$ —
+    // "Model profile 1" (space + caps) was rejected on save.
+    return 'model-profile-' + i;
 }
 function seAddTab(t) {
     seTabs.push(t); seCaptureTab();          // capture previous tab first
