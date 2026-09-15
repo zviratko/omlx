@@ -9,7 +9,12 @@ const $ = id => document.getElementById(id);
    and layers simulated data. Override with ?api= (e.g. =http://127.0.0.1:11435
    to bypass, or empty when served by oMLX itself in future hosting). */
 const qp = new URLSearchParams(location.search);
-const API_DEFAULT = location.protocol + '//' + location.hostname + ':11437';
+// Served by oMLX itself (/admin/uplift/)? Talk to our own origin — the
+// dashboard that hosts us IS the API. Only the standalone helper server
+// (:11436) needs the mock gateway default. ?api= still overrides both.
+const NATIVE = location.pathname.startsWith('/admin/uplift');
+const API_DEFAULT = NATIVE ? ''
+    : location.protocol + '//' + location.hostname + ':11437';
 const API = qp.has('api') ? qp.get('api') : API_DEFAULT;
 
 const prefs = C.loadPrefs(localStorage);
@@ -923,7 +928,8 @@ function restartPolling() {
 }
 
 /* ---------------- gateway status chip ---------------- */
-let GW_LIVE = false;   // true when the gateway runs in --live-writes mode
+// Native hosting writes go straight to real oMLX — same truth as LIVE mode.
+let GW_LIVE = typeof NATIVE !== 'undefined' && NATIVE;   // true when the gateway runs in --live-writes mode
 let gsSavedAt = 0;     // last save banner timestamp (updateModeLabels keeps it briefly)
 /* Every page that claims 'shadow' must say so truthfully per gateway mode. */
 function updateModeLabels() {
@@ -946,7 +952,12 @@ function updateModeLabels() {
 }
 async function pollGatewayInfo() {
     const chip = $('chip-gateway');
-    if (API !== API_DEFAULT) { chip.textContent = 'direct'; chip.title = 'API ' + (API || location.origin); return; }
+    // R11: native hosting = same-origin API, no gateway involved at all.
+    if (NATIVE || API !== API_DEFAULT) {
+        chip.textContent = 'direct'; chip.title = 'API ' + (API || location.origin);
+        if (NATIVE) updateModeLabels();   // labels must say the truth for real writes
+        return;
+    }
     try {
         const d = await fetchJson(`${API}/admin/api/mock/info`);
         GW_LIVE = !!d.live_writes;
