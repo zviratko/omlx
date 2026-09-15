@@ -100,6 +100,19 @@ test('prefs: corrupt storage falls back to defaults', () => {
     assert.deepStrictEqual(C.loadPrefs(store), { theme: 'light', motion: 'off', intervalMs: 2000, dense: true });
 });
 
+// F-014: tableSort must survive the loadPrefs whitelist round-trip.
+test('prefs: table sort persists across reload', () => {
+    const items = {};
+    const store = { getItem: k => items[k], setItem: (k, v) => items[k] = v };
+    C.savePrefs(store, { theme: 'night', tableSort: { key: 'name', dir: -1 } });
+    assert.deepStrictEqual(C.loadPrefs(store).tableSort, { key: 'name', dir: -1 });
+    // garbage sort entries fall back to undefined (defaults take over)
+    items[C.PREFS_KEY] = JSON.stringify({ tableSort: { key: 42, dir: 'up' } });
+    assert.strictEqual(C.loadPrefs(store).tableSort, undefined);
+    items[C.PREFS_KEY] = JSON.stringify({ tableSort: 'nope' });
+    assert.strictEqual(C.loadPrefs(store).tableSort, undefined);
+});
+
 test('formatters', () => {
     assert.strictEqual(C.fmtCompact(1234567), '1.23M');
     assert.strictEqual(C.fmtCompact(999), '999');

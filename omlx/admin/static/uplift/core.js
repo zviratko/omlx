@@ -222,12 +222,19 @@ const THEMES = ['auto', 'light', 'dark', 'enhanced', 'cockpit'];
 function loadPrefs(storage) {
     let p = {};
     try { p = JSON.parse(storage.getItem(PREFS_KEY)) || {}; } catch (_) { /* storage may be denied */ }
-    return {
+    const out = {
         theme: THEMES.includes(p.theme) ? p.theme : PREFS_DEFAULTS.theme,
         motion: ['auto', 'off'].includes(p.motion) ? p.motion : PREFS_DEFAULTS.motion,
         intervalMs: [500, 1000, 2000, 5000].includes(p.intervalMs) ? p.intervalMs : PREFS_DEFAULTS.intervalMs,
         dense: p.dense === true,
     };
+    // F-014: tableSort was dropped by this whitelist, so a saved column
+    // sort silently reset to ascending on every reload.
+    if (p.tableSort && typeof p.tableSort.key === 'string'
+        && (p.tableSort.dir === 1 || p.tableSort.dir === -1)) {
+        out.tableSort = { key: p.tableSort.key, dir: p.tableSort.dir };
+    }
+    return out;
 }
 function savePrefs(storage, prefs) {
     try { storage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch (_) { /* ignore */ }
