@@ -3655,7 +3655,10 @@ function gsSelect(flat, options, cur) {
     }
     sel.value = cur == null ? '' : String(cur);
     sel.onchange = () => {
-        gsQueueSave(flat, sel.value === '' ? null : sel.value);
+        // numeric baseline (e.g. idle_timeout_seconds): keep the payload numeric
+        let v = sel.value === '' ? null : sel.value;
+        if (v !== null && typeof cur === 'number') v = Number(v);
+        gsQueueSave(flat, v);
         renderGlobalSettings();       // refresh conditional rows (x-show parity)
     };
     return sel;
@@ -3716,13 +3719,16 @@ function renderGlobalSettings() {
         }).catch(() => { /* picker list optional */ });
         body.append(gsRow('claude_code', L.cc.opus, '',
             gsText('claude_code','opus_model','claude_code_opus_model', L,
-                   { placeholder: L.cc.ph, list: 'cc-models' })));
+                   { placeholder: L.cc.ph, list: 'cc-models' }),
+            { flat: 'claude_code_opus_model' }));
         body.append(gsRow('claude_code', L.cc.sonnet, '',
             gsText('claude_code','sonnet_model','claude_code_sonnet_model', L,
-                   { placeholder: L.cc.ph, list: 'cc-models' })));
+                   { placeholder: L.cc.ph, list: 'cc-models' }),
+            { flat: 'claude_code_sonnet_model' }));
         body.append(gsRow('claude_code', L.cc.haiku, '',
             gsText('claude_code','haiku_model','claude_code_haiku_model', L,
-                   { placeholder: L.cc.ph, list: 'cc-models' })));
+                   { placeholder: L.cc.ph, list: 'cc-models' }),
+            { flat: 'claude_code_haiku_model' }));
     }
 
     // ---- Auth
@@ -3795,7 +3801,8 @@ function renderGlobalSettings() {
     dl.append(add);
     body.append(gsRow('model', L.model.dirs, '', dl));
     body.append(gsRow('model', L.model.fallback, L.model.fallback_desc,
-        gsText('model','model_fallback','model_fallback', L)));
+        gsText('model','model_fallback','model_fallback', L),
+        { flat: 'model_fallback' }));
     body.append(gsRow('model', L.model.hide_helper, L.model.hide_helper_desc,
         gsToggle('hide_helper_models', gsGet('model','hide_helper_models')),
         { flat: 'hide_helper_models' }));
@@ -3807,7 +3814,8 @@ function renderGlobalSettings() {
     body.append(gsRow('model', 'HF cache path', '', hfp));
     body.append(gsRow('model', L.model.idle, L.model.idle_desc,
         gsSelect('idle_timeout_seconds', L.model.idle_opts,
-                 gsGet('idle_timeout','idle_timeout_seconds') ?? '')));
+                 gsGet('idle_timeout','idle_timeout_seconds') ?? ''),
+        { flat: 'idle_timeout_seconds' }));
 
     // ---- Generation Defaults
     body.append(gsTitle('Generation Defaults'));
@@ -3820,49 +3828,59 @@ function renderGlobalSettings() {
     body.append(gsRow('gen', L.gen.top_p, L.gen.top_p_hint, topp,
         { flat: 'sampling_top_p' }));
     body.append(gsRow('gen', L.gen.top_k, L.gen.top_k_hint,
-        gsText('sampling','top_k','sampling_top_k', L, { number: true, min: 0 })));
+        gsText('sampling','top_k','sampling_top_k', L, { number: true, min: 0 }),
+        { flat: 'sampling_top_k' }));
     body.append(gsRow('gen', L.gen.max_tokens, '',
         gsText('sampling','max_tokens','sampling_max_tokens', L,
                { number: true, min: 1, max: 131072 }),
         { flat: 'sampling_max_tokens' }));
     body.append(gsRow('gen', L.gen.max_ctx, L.gen.max_ctx_hint,
         gsText('sampling','max_context_window','sampling_max_context_window', L,
-               { number: true, min: 1, max: 2097152 })));
+               { number: true, min: 1, max: 2097152 }),
+        { flat: 'sampling_max_context_window' }));
     body.append(gsRow('gen', L.gen.max_policy, L.gen.max_policy_hint,
         gsText('sampling','max_context_window_policy',
                'sampling_max_context_window_policy', L,
-               { number: true, min: 1, max: 2097152, placeholder: 'None' })));
+               { number: true, min: 1, max: 2097152, placeholder: 'None' }),
+        { flat: 'sampling_max_context_window_policy' }));
     body.append(gsRow('gen', L.gen.rep_pen, L.gen.rep_pen_hint,
         gsText('sampling','repetition_penalty','sampling_repetition_penalty', L,
-               { number: true, min: 1, step: 0.05 })));
+               { number: true, min: 1, step: 0.05 }),
+        { flat: 'sampling_repetition_penalty' }));
 
     // ---- Resource Management
     body.append(gsTitle('Resource Management'));
     body.append(gsRow('res', L.res.max_conc, L.res.max_conc_hint,
         gsText('scheduler','max_concurrent_requests','max_concurrent_requests', L,
-               { number: true, min: 1 })));
+               { number: true, min: 1 }),
+        { flat: 'max_concurrent_requests' }));
     body.append(gsRow('res', L.res.batch, L.res.batch_hint,
         gsText('scheduler','embedding_batch_size','embedding_batch_size', L,
-               { number: true, min: 1 })));
+               { number: true, min: 1 }),
+        { flat: 'embedding_batch_size' }));
     body.append(gsRow('res', L.res.chunked, L.res.chunked_desc,
-        gsToggle('chunked_prefill', gsGet('scheduler','chunked_prefill'))));
+        gsToggle('chunked_prefill', gsGet('scheduler','chunked_prefill')),
+        { flat: 'chunked_prefill' }));
     body.append(gsRow('res', L.res.prio, '',
         gsSelect('prefill_priority', [['speed', L.res.prio_speed],
                                       ['context', L.res.prio_context]],
-                 gsGet('scheduler','prefill_priority'))));
+                 gsGet('scheduler','prefill_priority')),
+        { flat: 'prefill_priority' }));
     body.append(gsRow('res', L.res.fairness, L.res.fairness_desc,
-        gsToggle('decode_fairness', gsGet('scheduler','decode_fairness'))));
+        gsToggle('decode_fairness', gsGet('scheduler','decode_fairness')),
+        { flat: 'decode_fairness' }));
     body.append(gsRow('res', L.res.guard, L.res.guard_desc,
         gsToggle('memory_prefill_memory_guard', gsGet('memory','prefill_memory_guard')),
         { flat: 'memory_prefill_memory_guard' }));
     const tierSel = gsSelect('memory_guard_tier', L.res.tiers,
                              gsGet('memory','memory_guard_tier'));
-    body.append(gsRow('res', L.res.tier, '', tierSel));
+    body.append(gsRow('res', L.res.tier, '', tierSel, { flat: 'memory_guard_tier' }));
     if (gsGet('memory','memory_guard_tier') === 'custom') {
         body.append(gsRow('res', L.res.custom, '',
             gsText('memory','memory_guard_custom_ceiling_gb',
                    'memory_guard_custom_ceiling_gb', L,
-                   { number: true, min: 1, step: 1, placeholder: L.res.custom_ph })));
+                   { number: true, min: 1, step: 1, placeholder: L.res.custom_ph }),
+            { flat: 'memory_guard_custom_ceiling_gb' }));
     }
 
     // ---- Cache
@@ -3874,13 +3892,16 @@ function renderGlobalSettings() {
         gsToggle('hot_cache_only', gsGet('cache','hot_cache_only')),
         { flat: 'hot_cache_only' }));
     body.append(gsRow('cache', L.cache.ssd_dir, '',
-        gsText('cache','ssd_cache_dir','ssd_cache_dir', L)));
+        gsText('cache','ssd_cache_dir','ssd_cache_dir', L),
+        { flat: 'ssd_cache_dir' }));
     body.append(gsRow('cache', L.cache.ssd_max, L.cache.ssd_max_hint,
         gsText('cache','ssd_cache_max_size','ssd_cache_max_size', L,
-               { placeholder: '64GB' })));
+               { placeholder: '64GB' }),
+        { flat: 'ssd_cache_max_size' }));
     body.append(gsRow('cache', L.cache.hot_max, L.cache.hot_max_hint,
         gsText('cache','hot_cache_max_size','hot_cache_max_size', L,
-               { placeholder: '8GB' })));
+               { placeholder: '8GB' }),
+        { flat: 'hot_cache_max_size' }));
 
     // ---- MCP
     body.append(gsTitle('MCP'));
@@ -3902,16 +3923,20 @@ function renderGlobalSettings() {
         { flat: 'hf_endpoint', badge: true }));
     body.append(gsRow('net', L.net.ms_ep, L.net.ms_ep_hint,
         gsText('modelscope','endpoint','ms_endpoint', L,
-               { placeholder: 'https://www.modelscope.cn' })));
+               { placeholder: 'https://www.modelscope.cn' }),
+        { flat: 'ms_endpoint' }));
     body.append(gsRow('net', L.net.http_proxy, L.net.proxy_hint,
-        gsText('network','http_proxy','network_http_proxy', L)));
+        gsText('network','http_proxy','network_http_proxy', L),
+        { flat: 'network_http_proxy' }));
     body.append(gsRow('net', L.net.https_proxy, L.net.proxy_hint,
         gsText('network','https_proxy','network_https_proxy', L),
         { flat: 'network_https_proxy' }));
     body.append(gsRow('net', L.net.no_proxy, L.net.no_proxy_hint,
-        gsText('network','no_proxy','network_no_proxy', L)));
+        gsText('network','no_proxy','network_no_proxy', L),
+        { flat: 'network_no_proxy' }));
     body.append(gsRow('net', L.net.ca_bundle, L.net.ca_hint,
-        gsText('network','ca_bundle','network_ca_bundle', L)));
+        gsText('network','ca_bundle','network_ca_bundle', L),
+        { flat: 'network_ca_bundle', badge: true }));
 
     // ---- Advanced
     body.append(gsTitle('Advanced'));
@@ -3921,33 +3946,42 @@ function renderGlobalSettings() {
         { flat: 'distributed_inference_enabled', badge: true }));
     body.append(gsRow('adv', L.adv.burst, L.adv.burst_hint,
         gsSelect('burst_decode_mode', L.adv.burst_opts,
-                 gsGet('server','burst_decode_mode'))));
+                 gsGet('server','burst_decode_mode')),
+        { flat: 'burst_decode_mode' }));
     body.append(gsRow('adv', L.adv.sse, L.adv.sse_hint,
         gsSelect('sse_keepalive_mode', L.adv.sse_opts,
-                 gsGet('server','sse_keepalive_mode'))));
+                 gsGet('server','sse_keepalive_mode')),
+        { flat: 'sse_keepalive_mode' }));
     body.append(gsRow('adv', L.adv.mid_sys, L.adv.mid_sys_hint,
-        gsToggle('preserve_mid_system_cache', gsGet('server','preserve_mid_system_cache'))));
+        gsToggle('preserve_mid_system_cache', gsGet('server','preserve_mid_system_cache')),
+        { flat: 'preserve_mid_system_cache' }));
     body.append(gsRow('adv', L.adv.audio, L.adv.audio_hint,
         gsText('server','max_audio_upload_size','max_audio_upload_size', L,
-               { number: true, min: 1 })));
+               { number: true, min: 1 }),
+        { flat: 'max_audio_upload_size' }));
     body.append(gsRow('adv', L.adv.ane, L.adv.ane_hint,
         gsToggle('ane_compile_cache', gsGet('cache','ane_compile_cache')),
         { flat: 'ane_compile_cache' }));
     body.append(gsRow('adv', L.adv.wt, L.adv.wt_hint,
-        gsToggle('hot_cache_write_through', gsGet('cache','hot_cache_write_through'))));
+        gsToggle('hot_cache_write_through', gsGet('cache','hot_cache_write_through')),
+        { flat: 'hot_cache_write_through' }));
     body.append(gsRow('adv', L.adv.blocks, L.adv.blocks_hint,
         gsText('cache','initial_cache_blocks','initial_cache_blocks', L,
-               { number: true, min: 1 })));
+               { number: true, min: 1 }),
+        { flat: 'initial_cache_blocks' }));
     const gsel = gsSelect('gdn_snapshot_storage', L.adv.gdn_store_opts,
                           gsGet('cache','gdn_snapshot_storage'));
-    body.append(gsRow('adv', L.adv.gdn_store, L.adv.gdn_store_hint, gsel));
+    body.append(gsRow('adv', L.adv.gdn_store, L.adv.gdn_store_hint, gsel,
+        { flat: 'gdn_snapshot_storage' }));
     if (gsGet('cache','gdn_snapshot_storage') === 'ssd_sidecar') {
         body.append(gsRow('adv', L.adv.gdn_pend, L.adv.gdn_pend_hint,
             gsText('cache','gdn_ssd_pending_max_size','gdn_ssd_pending_max_size', L,
-                   { placeholder: '512MB' })));
+                   { placeholder: '512MB' }),
+            { flat: 'gdn_ssd_pending_max_size' }));
         const prow = gsRow('adv', L.adv.gdn_prec, L.adv.gdn_prec_hint,
             gsSelect('gdn_sidecar_precision', L.adv.gdn_prec_opts,
-                     gsGet('cache','gdn_sidecar_precision')));
+                     gsGet('cache','gdn_sidecar_precision')),
+            { flat: 'gdn_sidecar_precision' });
         if (['int8','rht_int8'].includes(gsGet('cache','gdn_sidecar_precision'))) {
             const w = document.createElement('small');
             w.className = 'fhint warn'; w.textContent = L.adv.gdn_prec_warning;
