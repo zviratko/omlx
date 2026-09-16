@@ -4494,7 +4494,9 @@ async function openPruneDialog() {
     const sub = document.createElement('div');
     sub.className = 'se-hint';
     sub.textContent = 'Stored configuration for models that no longer exist on disk. '
-        + 'Removed entries are deleted from the sandbox model_settings.json.';
+        + (GW_LIVE
+            ? 'Removed entries are deleted from this server\'s model_settings.json.'
+            : 'Removed entries are deleted from the sandbox model_settings.json.');
     const list = document.createElement('div');
     list.className = 'prune-list';
     const checks = orphans.map(id => {
