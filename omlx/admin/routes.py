@@ -2309,6 +2309,20 @@ async def list_models(is_admin: bool = Depends(require_admin)):
             if ref:
                 referenced_drafts.add(ref)
 
+    # Uplift helper UI: reverse map drafter -> [consumer model ids]. Same
+    # reference fields as above; additive "used_by" on each model row lets
+    # the helper page show WHO uses a drafter instead of a load button
+    # (helpers ride their consumer's engine, they are not loaded directly).
+    helper_users: dict[str, set[str]] = {}
+    for _mid, _ms in all_settings.items():
+        for _ref in (
+            _ms.specprefill_draft_model,
+            _ms.dflash_draft_model,
+            _ms.vlm_mtp_draft_model,
+        ):
+            if _ref:
+                helper_users.setdefault(_ref, set()).add(_mid)
+
     # SSD cache dir is set on the scheduler_config when the user enables paged
     # SSD caching; admin UI consumes it to gate the dflash SSD toggle.
     ssd_cache_dir = getattr(
@@ -2436,6 +2450,13 @@ async def list_models(is_admin: bool = Depends(require_admin)):
                 or model_id in referenced_drafts
                 or model_info.get("model_path") in referenced_drafts
                 or model_info.get("source_repo_id") in referenced_drafts
+            ),
+            # Uplift helper page: which consumer models reference this one
+            # as their drafter (same key resolution as is_helper above)
+            "used_by": sorted(
+                (helper_users.get(model_id, set())
+                 | helper_users.get(model_info.get("model_path") or "", set())
+                 | helper_users.get(model_info.get("source_repo_id") or "", set()))
             ),
             "engine_type": model_info.get("engine_type", "batched"),
             "model_type": model_info.get("model_type", "llm"),

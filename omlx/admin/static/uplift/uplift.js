@@ -1263,7 +1263,9 @@ function seBind(kind, key, opts) {
         if (opts && opts.step != null) input.step = opts.step;
         const cur = seTab() && seTab().overrides[key];
         input.value = cur == null || cur === '' ? '' : cur;
+        // U3: never a blind empty — base value, else the server's own default
         if (bv != null) input.placeholder = String(bv) + ' (inherited)';
+        else input.placeholder = (opts && opts.effHint) || '(default)';
     } else if (kind === 'inheritable-text') {
         kind = 'text';
         input = document.createElement('input');
@@ -1272,6 +1274,7 @@ function seBind(kind, key, opts) {
         const cur = seTab() && seTab().overrides[key];
         input.value = cur == null ? '' : cur;
         if (bv != null && bv !== '') input.placeholder = String(bv) + ' (inherited)';
+        else input.placeholder = (opts && opts.effHint) || '(default)';
     } else if (kind === 'inheritable-bool') {
         // three-state: override-on / override-off / inherit (empty)
         input = document.createElement('select');
@@ -1293,6 +1296,10 @@ function seBind(kind, key, opts) {
                     if (opts.step != null) input.step = opts.step; }
         const cur = seValues[key];
         input.value = (cur === null || cur === undefined) ? '' : cur;
+        // U3: an empty number is NOT zero — the server falls back to the
+        // model's own default (generation_config.json / builtin). We do not
+        // read those files, so say so honestly instead of showing nothing.
+        if (input.value === '') input.placeholder = (opts && opts.effHint) || '(default)';
     }
     if (opts && opts.disabled) input.disabled = true;
     const evt = (kind === 'textarea' || kind === 'text' || kind === 'number') ? 'input' : 'change';
@@ -1548,6 +1555,13 @@ function renderEditorFields(container) {
             hint: 'EBNF / regex / JSON-schema grammar applied to generation when enabled.' });
         ggWrap.classList.add('se-wide');
         const ggInp = ggWrap.querySelector('textarea');
+        // U2: EBNF in a 3-row box is unworkable — EXPAND opens a roomy
+        // full-width grammar well. Edits flow back through the textarea's
+        // own input event so dirty-marking and tab bookkeeping stay exact.
+        const expandB = document.createElement('button');
+        expandB.type = 'button'; expandB.className = 'se-btn act';
+        expandB.textContent = 'EXPAND ⤢'; expandB.title = 'Edit the grammar in a larger window';
+        expandB.onclick = () => openGrammarPop(ggInp, expandB);
         // R10-9: preset examples. Shape is server-pluggable later: keep it
         // a list of {id, display_name, grammar} so a route can replace this.
         const GRAMMAR_PRESETS = [
@@ -1593,7 +1607,7 @@ function renderEditorFields(container) {
         ggInp.disabled = !seValues.guided_grammar_enabled;
         // R10-9: example dropdown docks inside the grammar field's control
         // box (below the textarea) so toggle + textarea + presets read as one unit
-        ggWrap.querySelector('.se-ctl').append(presetSel);
+        ggWrap.querySelector('.se-ctl').append(presetSel, expandB);
         gsb.append(ggWrap);
     }
 
@@ -1974,6 +1988,47 @@ function editorNode() {
     close.onclick = () => closeEditor();
     return panel;
 }
+/* U2: roomy grammar editing pop-out over the model editor. OK copies the
+   text back into the small textarea through its own 'input' event, so the
+   bound listener does dirty-marking / override bookkeeping exactly as if
+   the user typed it there. Cancel discards the draft. */
+function openGrammarPop(srcTa, btn) {
+    const existing = document.querySelector('.grammar-pop-overlay');
+    if (existing) existing.remove();
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay grammar-pop-overlay';
+    overlay.style.zIndex = '90';                 // above the editor modal (70)
+    const panel = document.createElement('div');
+    panel.className = 'modal nasa grammar-pop';
+    const head = document.createElement('div');
+    head.className = 'editor-head';
+    head.textContent = 'GUIDED GRAMMAR — ' + seModel;
+    const ta = document.createElement('textarea');
+    ta.value = srcTa.value;
+    ta.spellcheck = false;
+    const bar = document.createElement('div');
+    bar.className = 'editor-bar';
+    const ok = document.createElement('button');
+    ok.className = 'se-btn'; ok.textContent = 'OK';
+    const cancel = document.createElement('button');
+    cancel.className = 'se-btn'; cancel.textContent = 'Cancel';
+    const stat = document.createElement('span'); stat.className = 'stat-sub';
+    const count = () => { stat.textContent = ta.value.split('\n').length + ' lines · '
+                                   + ta.value.length + ' chars'; };
+    ta.addEventListener('input', count); count();
+    ok.onclick = () => {
+        srcTa.value = ta.value;
+        srcTa.dispatchEvent(new Event('input', { bubbles: true }));
+        overlay.remove();
+    };
+    cancel.onclick = () => overlay.remove();
+    bar.append(ok, cancel, stat);
+    panel.append(head, ta, bar);
+    overlay.append(panel);
+    overlay.addEventListener('keydown', e => { if (e.key === 'Escape') overlay.remove(); });
+    document.body.append(overlay);
+    ta.focus();
+}
 function closeEditor() {
     if (seModel) delete profilesCache[seModel];   // tree must show new profiles
     seModel = null; seFormModel = null;
@@ -2093,10 +2148,17 @@ function seRenderTabs(panel) {
         o.textContent = '◧ ' + (p.display_name || p.name); g1.append(o);
     }
     if (g1.children.length) drop.append(g1);
-    const g2 = document.createElement('optgroup'); g2.label = 'Model profiles (templates)';
+    const g2 = document.createElement('optgroup'); g2.label = 'Model profiles (this model)';
+    // U4: this model's own stored profiles live HERE now (apply values into
+    // the active tab, no tab of their own). seLoadProfiles fills the list
+    // async and re-renders the strip once loaded.
+    for (const p of (window.__seProfiles || [])) {
+        const o = document.createElement('option'); o.value = 'own:' + p.name;
+        o.textContent = '◧ ' + (p.display_name || p.name) + ' (profile)'; g2.append(o);
+    }
     for (const t of (window.__seTemplates || [])) {
         const o = document.createElement('option'); o.value = 'tpl:' + t.name;
-        o.textContent = '◱ ' + (t.display_name || t.name); g2.append(o);
+        o.textContent = '◱ ' + (t.display_name || t.name) + ' (template)'; g2.append(o);
     }
     if (g2.children.length) drop.append(g2);
     const g3 = document.createElement('optgroup'); g3.label = 'Copy settings from model';
@@ -2117,39 +2179,72 @@ function seRenderTabs(panel) {
         const v = drop.value; if (!v) return;
         drop.value = '';
         const kind = v.slice(0, 3), id = v.slice(4);
-        if (kind === 'mpr') {
-            // model profile: settings are already local in adminModels
+        if (kind === 'own') {
+            const p = (window.__seProfiles || []).find(x => x.name === id);
+            if (p) seApplyIntoActiveTab(p.settings || {}, p.display_name || p.name);
+        } else if (kind === 'mpr') {
+            // U4: model profile -> apply values into the ACTIVE tab, no new
+            // tab. Settings are already local in adminModels.
             const mid = decodeURIComponent(id.slice(0, id.indexOf('|')));
             const pname = id.slice(id.indexOf('|') + 1);
             const mm = (adminModels || []).find(x => x.id === mid);
             const ep = mm && (mm.exposed_profiles || []).find(x => x.name === pname);
-            if (ep) seOpenModelCopyTab(panel, mid + '/' + pname, ep.settings || {});
+            if (ep) seApplyIntoActiveTab(ep.settings || {}, mid + ' ▸ ' + pname);
         } else if (kind === 'pre') {
             const pre = (window.__sePresets || []).find(x => x.name === id);
-            if (pre) seOpenTemplateTab(panel, pre);
+            if (pre) seApplyIntoActiveTab(pre.settings || {}, pre.display_name || pre.name);
         } else if (kind === 'tpl') {
             const tpl = (window.__seTemplates || []).find(x => x.name === id);
-            if (tpl) seOpenTemplateTab(panel, tpl);
+            if (tpl) seApplyIntoActiveTab(tpl.settings || {}, tpl.display_name || tpl.name);
         } else {
             toast('Loading ' + id + ' settings…');
             fetchJson(`${API}/admin/api/models/${encodeURIComponent(id)}/settings`)
-                .then(d => seOpenModelCopyTab(panel, id, d.settings || {}))
+                .then(d => seApplyIntoActiveTab(d.settings || {}, id))
                 .catch(e => toast('Load failed: ' + e.message));
         }
     };
     strip.append(drop);
-    const ap = panel.querySelector('#se-apply-prof');
-    if (ap) {
-        const sel = panel.querySelector('#se-prof-sel');
-        ap.onclick = async () => {
-            if (!sel || !sel.value) return;
-            try {
-                await fetch(`${API}/admin/api/models/${encodeURIComponent(seModel)}/profiles/${encodeURIComponent(sel.value)}/apply`, { method: 'POST' });
-                toast('Applied profile ' + sel.value);
-                openEditor(seModel);
-            } catch (e) { toast('Apply failed: ' + e.message); }
-        };
+}
+/* U4: merge a settings blob INTO the active tab as unsaved edits —
+   profile tabs receive overrides (empty-able via inherit), the base tab
+   receives plain values. Dirty bookkeeping mirrors the widgets' own logic
+   so SAVE counts, the CHANGES rail and revert all stay exact. */
+function seApplyIntoActiveTab(rawSettings, sourceLabel) {
+    const t = seTab();
+    const st = window.UpliftModelSpec.buildState(seFormModel || { id: seModel },
+        JSON.parse(JSON.stringify(rawSettings || {})));
+    const base = seIsBaseTab() ? seOrig : (t.id !== 'base' ? t.origVals : seOrig);
+    const ovSnap = !seIsBaseTab() && SE_INHERIT_KEYS.size ? seOvSnap(t) : null;
+    let n = 0;
+    for (const [k, v] of Object.entries(st)) {
+        if (k === 'ctKwargEntries' || k === 'model_alias' || v === undefined) continue;
+        const origV = (t.id !== 'base' && SE_INHERIT_KEYS.has(k)) ? ovSnap[k] : base[k];
+        const changed = JSON.stringify(origV) !== JSON.stringify(v);
+        if (changed) { t.dirty.add(k); n++; } else t.dirty.delete(k);
+        if (t.id !== 'base') {
+            // inheritable key applied with the base value == inherit (drop override)
+            const inheritVal = seBaseVals ? seBaseVals[k] : undefined;
+            if (SE_INHERIT_KEYS.has(k) && JSON.stringify(v) === JSON.stringify(inheritVal)) {
+                delete t.overrides[k];
+                continue;
+            }
+            t.overrides[k] = v;
+        }
     }
+    // chat-template kwargs ride the entries list; replace it wholesale when
+    // the source defines any (classic apply is a full-merge too)
+    if (st.ctKwargEntries && st.ctKwargEntries.length) {
+        seValues.ctKwargEntries = st.ctKwargEntries;
+        if (t.id !== 'base') t.overrides.ctKwargEntries = st.ctKwargEntries;
+        if (!t._origKwargs) t._origKwargs = JSON.parse(JSON.stringify(seValues.ctKwargEntries));
+    }
+    Object.assign(seValues, st, { ctKwargEntries: seValues.ctKwargEntries });
+    seNormalizeKwargs(seValues);
+    renderEditorFields(document.getElementById('se-fields'));
+    seRenderTabs(document.querySelector('.modal.editor'));
+    seUpdateSaveBtn();
+    toast(n ? `Applied ${sourceLabel} into ${seIsBaseTab() ? 'BASE' : (t.display_name || t.name)} — ${n} change${n > 1 ? 's' : ''}, review & SAVE`
+            : `${sourceLabel}: nothing to change on this tab`);
 }
 function seCaptureTab() {
     // pull live widget values into the active tab before switching
@@ -2266,38 +2361,18 @@ function seOpenModelCopyTab(panel, modelId, settings) {
     seRenderTabs(panel); seUpdateSaveBtn();
 }
 
-/* ---- per-model profiles (sidebar of the classic editor) ---- */
+/* ---- per-model profiles (sidebar of the classic editor) ----
+   U4 (user round): selecting a profile must NOT open a tab (the classic
+   quirk duplicated tabs and looked like "create new profile"). Profiles
+   live in the editor's 'apply from…' dropdown and apply their values into
+   the ACTIVE tab as unsaved edits; a new profile is created only through
+   '+ NEW PROFILE'. This host keeps management rows only (delete / save
+   current as). */
 async function seLoadProfiles(model, host) {
     let profs = [];
     try { profs = (await fetchJson(`${API}/admin/api/models/${encodeURIComponent(model)}/profiles`)).profiles || []; } catch (_) {}
     host.textContent = '';
     window.__seProfiles = profs;
-    const pt = document.createElement('div');
-    pt.className = 'se-hint'; pt.textContent = 'Profiles: ';
-    const sel2 = document.createElement('select'); sel2.id = 'se-prof-sel';
-    const none2 = document.createElement('option'); none2.value = ''; none2.textContent = 'apply stored profile…';
-    const apB = document.createElement('button'); apB.className = 'se-btn'; apB.id = 'se-apply-prof';
-    apB.textContent = 'APPLY';
-    sel2.append(none2, ...profs.map(p => { const o = document.createElement('option');
-        o.value = p.name; o.textContent = p.display_name || p.name; return o; }));
-    // open an existing profile as a tab for editing
-    sel2.onchange = () => {
-        const p = profs.find(x => x.name === sel2.value); if (!p) return;
-        const panel = document.querySelector('.modal.editor');
-        const ov = JSON.parse(JSON.stringify(p.settings || {}));
-        seCaptureTab();
-        const t = { id: 'p' + Date.now(), name: p.name, display_name: p.display_name || p.name,
-            expose_as_model: !!p.expose_as_model, api_name: p.api_name || '',
-            profileId: p.name,
-            overrides: ov, workVals: Object.assign({}, seBaseVals, JSON.parse(JSON.stringify(ov))),
-            origVals: Object.assign({}, seBaseVals, JSON.parse(JSON.stringify(ov))),
-            dirty: new Set(), _origExpose: !!p.expose_as_model, _origApi: p.api_name || '' };
-        seInitSnap(t);
-        seTabs.push(t); seActiveTab = t.id; seRestoreTab(t);
-        renderEditorFields(document.getElementById('se-fields'));
-        seRenderTabs(panel); seUpdateSaveBtn();
-    };
-    host.append(pt, sel2, apB);
     const oldPt = null;
     const row = document.createElement('div');
     row.className = 'se-prof-row';
@@ -2305,7 +2380,8 @@ async function seLoadProfiles(model, host) {
     const none = document.createElement('option'); none.value = ''; none.textContent = 'profiles…';
     sel.append(none, ...profs.map(p => { const o = document.createElement('option');
         o.value = p.name; o.textContent = p.display_name || p.name; return o; }));
-    const applyB = document.createElement('button'); applyB.className = 'se-btn'; applyB.textContent = 'Apply';
+    // U4: no Apply button here — applying values lives in the 'apply from…'
+    // dropdown (client-side, into the active tab). This row manages profiles.
     const delB = document.createElement('button'); delB.className = 'se-btn'; delB.textContent = 'Delete';
     const saveAs = document.createElement('input');
     saveAs.type = 'text'; saveAs.placeholder = 'save current as…'; saveAs.className = 'se-prof-name';
@@ -2315,15 +2391,6 @@ async function seLoadProfiles(model, host) {
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(C.errorText(body) || String(res.status));
         return body;
-    };
-    applyB.onclick = async () => {
-        if (!sel.value) return;
-        try {
-            await write(`${API}/admin/api/models/${encodeURIComponent(model)}/profiles/${encodeURIComponent(sel.value)}/apply`,
-                { method: 'POST' });
-            toast(`Applied profile ${sel.value}`);
-            openEditor(model);
-        } catch (e) { toast(`Apply failed: ${e.message}`); }
     };
     delB.onclick = async () => {
         if (!sel.value) return;
@@ -2346,8 +2413,12 @@ async function seLoadProfiles(model, host) {
             seLoadProfiles(model, host);
         } catch (e) { toast(`Profile: ${e.message}`); }
     };
-    row.append(sel, applyB, delB, saveAs, saveB);
+    row.append(sel, delB, saveAs, saveB);
     host.append(row);
+    // keep the 'apply from…' strip in sync: own-profile options were just
+    // (re)loaded or changed
+    const stripPanel = document.querySelector('.modal.editor');
+    if (stripPanel) seRenderTabs(stripPanel);
     // Global templates (global_templates.json): apply or snapshot into a template.
     let tpls = [];
     try { tpls = (await fetchJson(`${API}/admin/api/profile-templates`)).templates || []; } catch (_) {}
@@ -3448,9 +3519,11 @@ function gsMarkSections() {
         head.classList.toggle('sec-dirty', rows.length > 0 && !anyRestart);
         head.classList.toggle('sec-restart', anyRestart);
         let warn = head.querySelector('.rqnow');
-        if (!warn) { warn = document.createElement('span'); warn.className = 'rqnow';
-                     warn.textContent = ' RESTART REQUIRED '; head.append(warn); }
-        warn.style.display = anyRestart ? '' : 'none';
+        if (!warn) { warn = document.createElement('span'); warn.className = 'rqnow'; head.append(warn); }
+        // U8 (user round): amber hot-apply banner for queued-but-hot edits;
+        // red restart banner takes precedence
+        warn.textContent = anyRestart ? ' RESTART REQUIRED ' : ' ⚡ HOT APPLY ON SAVE ';
+        warn.style.display = rows.length ? '' : 'none';
     }
 }
 function renderDirtyList() {
@@ -3868,7 +3941,10 @@ function renderGlobalSettings() {
     body.append(gsRow('res', L.res.max_conc, L.res.max_conc_hint,
         gsText('scheduler','max_concurrent_requests','max_concurrent_requests', L,
                { number: true, min: 1 }),
-        { flat: 'max_concurrent_requests' }));
+        // U7: it is in GS_RESTART_FIELDS (the scheduler pool size is read at
+        // boot) but only showed a bare "!" — the server routes say so too.
+        // Full badge with text, same as host/port.
+        { flat: 'max_concurrent_requests', badge: true }));
     body.append(gsRow('res', L.res.batch, L.res.batch_hint,
         gsText('scheduler','embedding_batch_size','embedding_batch_size', L,
                { number: true, min: 1 }),
@@ -4115,6 +4191,15 @@ function renderTasks(hostId, kind) {
                 x.onclick = () => postJson(`${API}/admin/api/${kind}/cancel/${t.id}`, {})
                     .then(() => renderTasks(hostId, kind)).catch(e => toast('cancel: ' + e.message));
                 r.append(x);
+            } else if (kind === 'hf' && ['failed', 'cancelled', 'canceled', 'error'].includes((t.status || '').toLowerCase())) {
+                // U11 parity: classic offers retry (resumes partial files)
+                const x = cell('retry');
+                x.className = 'sortable';
+                x.title = 'Resume this download from existing files';
+                x.onclick = () => postJson(`${API}/admin/api/hf/retry/${t.id}`,
+                    { hf_token: ($('dl-token') ? $('dl-token').value.trim() : '') })
+                    .then(() => renderTasks(hostId, kind)).catch(e => toast('retry: ' + e.message));
+                r.append(x);
             }
             host.append(r);
         }
@@ -4132,11 +4217,24 @@ let dlInit = false;
 function initDownloader() {
     if (!dlInit) {
         dlInit = true;
+        const queueDownload = (repoId, token, fromBtn) => {
+            if (!repoId) { toast('repo id required'); return; }
+            if (fromBtn) { fromBtn.disabled = true; fromBtn.textContent = 'queued…'; }
+            postJson(`${API}/admin/api/hf/download`,
+                { repo_id: repoId, hf_token: token || '' }).then(r => {
+                    // live: {success, task:{task_id}} · shadow: {task_id}
+                    const tid = (r.task && r.task.task_id) || r.task_id || r.id || '';
+                    toast(`download queued: ${repoId}` + (tid ? ` #${String(tid).slice(0, 8)}` : ''));
+                    renderTasks('dl-tasks', 'hf');
+                }).catch(e => { toast('download: ' + e.message);
+                    if (fromBtn) { fromBtn.disabled = false; fromBtn.textContent = 'download'; } });
+        };
         const go = () => {
             const q = $('dl-q').value.trim();
             if (!q) return;
+            const sort = $('dl-sort').value || 'trending';
             $('dl-sub').textContent = 'searching…';
-            fetchJson(`${API}/admin/api/hf/search?q=${encodeURIComponent(q)}&limit=30`).then(d => {
+            fetchJson(`${API}/admin/api/hf/search?q=${encodeURIComponent(q)}&limit=30&sort=${sort}`).then(d => {
                 $('dl-sub').textContent = `${(d.models || []).length} results`;
                 const host = $('dl-results'); host.innerHTML = '';
                 if (!d.models || !d.models.length) { host.innerHTML = '<div class="empty">No results</div>'; return; }
@@ -4148,13 +4246,7 @@ function initDownloader() {
                     const act = document.createElement('span'); act.className = 'rowacts';
                     const b = document.createElement('button');
                     b.className = 'se-btn act'; b.textContent = 'download';
-                    b.onclick = () => postJson(`${API}/admin/api/hf/download`,
-                        { repo_id: m.repo_id }).then(r => {
-                            // live: {success, task:{task_id}} · shadow: {task_id}
-                            const tid = (r.task && r.task.task_id) || r.task_id || r.id || '';
-                            toast(`download queued${GW_LIVE ? '' : ' (shadow)'}: ${m.repo_id}` + (tid ? ` #${tid.slice(0, 8)}` : ''));
-                            renderTasks('dl-tasks', 'hf');
-                        }).catch(e => toast('download: ' + e.message));
+                    b.onclick = () => queueDownload(m.repo_id, $('dl-token').value.trim(), b);
                     act.append(b); row.append(act);
                     host.append(row);
                 }
@@ -4162,6 +4254,11 @@ function initDownloader() {
         };
         $('dl-go').onclick = go;
         $('dl-q').addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
+        $('dl-sort').onchange = () => { if ($('dl-q').value.trim()) go(); };
+        $('dl-direct').onclick = () => queueDownload($('dl-repo').value.trim(),
+            $('dl-token').value.trim(), $('dl-direct'));
+        $('dl-repo').addEventListener('keydown', e => {
+            if (e.key === 'Enter') queueDownload($('dl-repo').value.trim(), $('dl-token').value.trim()); });
     }
     renderTasks('dl-tasks', 'hf');
 }
@@ -4932,19 +5029,42 @@ async function renderHelperModels() {
         name.title = m.model_path || m.id;
         const kind = /dflash/i.test(m.id) ? 'DFLASH DRAFTER'
             : /assistant/i.test(m.id) ? 'ASSISTANT (MTP)' : 'HELPER';
+        // U10 (user round): a drafter rides its consumers' engine — its own
+        // loaded flag does not mean anything useful and the load button was
+        // wrong. Show WHO uses it and light the lamp from the consumers.
+        const users = (m.used_by || []).map(uid => {
+            const u = (adminModels || []).find(x => x.id === uid);
+            return { id: uid, loaded: !!(u && (u.loaded || u.is_loading)),
+                     name: (u && (u.display_name || u.id)) || uid };
+        });
+        const active = users.filter(u => u.loaded);
         const state = document.createElement('span');
-        state.className = 'spill ' + (m.loaded ? 'on' : (m.is_loading ? 'load' : 'off'));
-        state.textContent = m.is_loading ? 'LOADING' : (m.loaded ? 'LOADED' : 'IDLE');
+        state.className = 'spill ' + (active.length ? 'on' : 'off');
+        state.textContent = users.length
+            ? (active.length ? `IN USE ×${active.length}` : `SET FOR ×${users.length}`)
+            : 'UNUSED';
+        state.title = users.length
+            ? 'Used by: ' + users.map(u => u.name + (u.loaded ? ' (loaded)' : '')).join(', ')
+            : 'No model config references this drafter';
         row.append(name, cell(m.model_type || ''), cell(kind),
                    cell(m.actual_size_formatted || C.fmtBytes(m.actual_size || m.estimated_size || 0)), state);
         const act = document.createElement('span'); act.className = 'rowacts';
-        const b = document.createElement('button');
-        b.className = 'se-btn act'; b.textContent = m.loaded ? 'unload' : 'load';
-        b.onclick = async () => {
-            try { await postModelAction(m.id, m.loaded ? 'unload' : 'load'); renderHelperModels(); }
-            catch (err) { toast('load failed: ' + err.message); }
-        };
-        act.append(b); row.append(act);
+        for (const u of users.slice(0, 3)) {
+            const chip = document.createElement('button');
+            chip.className = 'se-btn act' + (u.loaded ? ' on' : '');
+            chip.textContent = u.name.split('/').pop().slice(0, 22);
+            chip.title = (u.loaded ? 'loaded — ' : 'not loaded — ') + u.id;
+            chip.onclick = () => { location.hash = '#models/manager'; renderModelAdmin(true); };
+            act.append(chip);
+        }
+        if (users.length > 3) act.append(cell('+' + (users.length - 3)));
+        if (!users.length) {
+            const hint = document.createElement('span');
+            hint.className = 'dim'; hint.style.fontSize = '10px';
+            hint.textContent = 'assign it in a model\'s settings (DFlash / MTP / SpecPrefill)';
+            act.append(hint);
+        }
+        row.append(act);
         host.append(row);
     }
 }
