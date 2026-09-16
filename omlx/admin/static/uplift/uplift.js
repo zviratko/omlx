@@ -829,6 +829,10 @@ function renderRequestStats(s) {
     const server = s && s.requestStats ? s.requestStats : null;
     const pick = (blk, key) => blk && blk[key] !== undefined && blk[key] !== null ? blk[key] : null;
     const pKey = layout.percentile;
+    // Labels must follow the selector in BOTH paths (F-021: server-stats path
+    // updated the values but left "p95 …" text under a p99 number).
+    $('lbl-prompt-pct').textContent = `${layout.percentile} prompt tok`;
+    $('lbl-compl-pct').textContent = `${layout.percentile} completion tok`;
 
     if (server) {
         const pt = server.prompt_tokens || {}, ct = server.completion_tokens || {};
