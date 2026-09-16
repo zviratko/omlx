@@ -29,7 +29,7 @@ echo "Deployed to: $DEST (cache stamp $BUILD)"
 # index/prune endpoints). This script does NOT sync routes.py — after a
 # `brew upgrade omlx` or keg reinstall, re-copy routes.py from the branch
 # and restart (launchctl kickstart -k gui/$(id -u)/sh.brew.omlx). Backup
-# of the pre-swap keg file: /tmp/keg-routes-backup.py.
+# of the pre-swap keg file: ~/hermes/TMP/keg-routes-backup-2026-09-16.py.
 
 # Helper static server (serves index.html; the keg's own /admin/static route
 # has no .html media type, and we must not patch routes.py without a restart).
