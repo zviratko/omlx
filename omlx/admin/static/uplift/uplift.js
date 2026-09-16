@@ -2558,13 +2558,25 @@ function saveTableSort() {
 
 function stateRank(m) { return m.loaded ? 0 : (m.is_loading ? 1 : 2); }
 function sortModels(rows) {
+    // Match classic dashboard.js semantics (F-027/F-028): favorites pin
+    // first regardless of column/direction; name keys are lowercased so
+    // 'bge' and 'Ternary' interleave the way the column reads.
+    const key = (a, b) => a.id.localeCompare(b.id);
+    // uplift ids ARE the leaf names (display_name carries the owner/
+    // prefix); the column shows the leaf, so lowerCase the id.
+    const lo = m => (m.id || '').toLowerCase();
+    const nameCmp = (a, b) => {
+        const x = lo(a), y = lo(b);
+        return x < y ? -1 : x > y ? 1 : key(a, b);
+    };
     const cmp = {
-        name: (a, b) => a.id.localeCompare(b.id),
-        type: (a, b) => (a.model_type || '').localeCompare(b.model_type || '') || a.id.localeCompare(b.id),
-        state: (a, b) => stateRank(a) - stateRank(b) || a.id.localeCompare(b.id),
+        name: nameCmp,
+        type: (a, b) => (a.model_type || '').toLowerCase().localeCompare((b.model_type || '').toLowerCase()) || nameCmp(a, b),
+        state: (a, b) => stateRank(a) - stateRank(b) || nameCmp(a, b),
         size: (a, b) => ((a.actual_size || a.estimated_size || 0) - (b.actual_size || b.estimated_size || 0)),
-    }[sortKey] || ((a, b) => a.id.localeCompare(b.id));
-    return rows.sort((a, b) => (cmp(a, b) || 0) * sortDir || a.id.localeCompare(b.id));
+    }[sortKey] || nameCmp;
+    const favFirst = (a, b) => (b.is_favorite ? 1 : 0) - (a.is_favorite ? 1 : 0);
+    return rows.sort((a, b) => favFirst(a, b) || (cmp(a, b) || 0) * sortDir || key(a, b));
 }
 
 async function renderModelAdmin(force) {
