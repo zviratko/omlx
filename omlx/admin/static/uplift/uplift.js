@@ -2453,8 +2453,13 @@ async function saveEditor() {
                      b.textContent = '▶ RESTART MODEL';
                      b.onclick = async () => {
                         b.disabled = true;
-                        try { await postModelAction(seModel, 'unload');
-                              await postModelAction(seModel, 'load');
+                        // The server auto-unloads on save of a reload-key
+                        // field, so the unload here usually 400s ("Model
+                        // not loaded"). That is expected — tolerate it and
+                        // go straight to load; only a failed LOAD is fatal.
+                        try { await postModelAction(seModel, 'unload'); }
+                        catch (_) { /* already unloaded by the server */ }
+                        try { await postModelAction(seModel, 'load');
                               toast(`Reloaded ${seModel} with new settings`);
                               closeEditor(); }
                         catch (e) { toast(`Reload failed: ${e.message}`); b.disabled = false; }
