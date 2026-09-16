@@ -3512,6 +3512,93 @@ class PruneModelSettingsRequest(BaseModel):
     ids: list[str]
 
 
+# =============================================================================
+# Live request feed (R12-3) — additive for Uplift; classic does not use it.
+# Sampling design: no inference hot-path hooks. Each poll/SSE tick merges the
+# schedulers' already-published admin snapshots (omlx/request_log.py).
+# =============================================================================
+
+
+@router.get("/api/requests")
+async def list_requests(
+    limit: int = 30,
+    is_admin: bool = Depends(require_admin),
+):
+    """Live + recently finished requests, newest first.
+
+    Response shape matches the Uplift feed: {requests: [{id, state, model,
+    origin, prompt_tokens, completion_tokens, tps, error, ts}]}. States:
+    queued | prefilling | generating | cancelling | complete | error.
+    """
+    import asyncio
+
+    engine_pool = _get_engine_pool()
+    if engine_pool is None:
+        raise HTTPException(status_code=503, detail="Server not initialized")
+    from ..request_log import get_request_tracker
+
+    tracker = get_request_tracker()
+    await asyncio.to_thread(tracker.sample, engine_pool)
+    return {"requests": tracker.list_rows(limit=limit), "enabled": True}
+
+
+@router.get("/api/requests/stream")
+async def stream_requests(is_admin: bool = Depends(require_admin)):
+    """SSE feed of request lifecycle transitions (1 s sampling tick)."""
+    import asyncio
+    import json
+
+    from fastapi.responses import StreamingResponse
+
+    from ..request_log import get_request_tracker
+
+    tracker = get_request_tracker()
+
+    async def event_generator():
+        try:
+            while True:
+                engine_pool = _get_engine_pool()
+                if engine_pool is not None:
+                    await asyncio.to_thread(tracker.sample, engine_pool)
+                for row in tracker.drain_dirty():
+                    ev = {
+                        "type": "request",
+                        "id": row["id"],
+                        "state": row["state"],
+                        "model": row.get("model", ""),
+                        "origin": row.get("origin", "real"),
+                    }
+                    yield f"data: {json.dumps(ev)}\n\n"
+                await asyncio.sleep(1.0)
+        except asyncio.CancelledError:
+            pass
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.post("/api/requests/{request_id}/cancel")
+async def cancel_request(
+    request_id: str, is_admin: bool = Depends(require_admin)
+):
+    """Abort an in-flight request (deferred scheduler abort, R12-4)."""
+    engine_pool = _get_engine_pool()
+    if engine_pool is None:
+        raise HTTPException(status_code=503, detail="Server not initialized")
+    from ..request_log import get_request_tracker
+
+    if await get_request_tracker().cancel(engine_pool, request_id):
+        return {"cancelled": request_id}
+    raise HTTPException(status_code=404, detail=f"Request not found: {request_id}")
+
+
 @router.post("/api/prune-model-settings")
 async def prune_model_settings(
     req: PruneModelSettingsRequest,

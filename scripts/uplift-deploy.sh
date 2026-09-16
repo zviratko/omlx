@@ -30,19 +30,17 @@ echo "Deployed static to: $DEST (cache stamp $BUILD)"
 # /admin/uplift/ route serves the exact bytes deployed here — no second copy.
 
 # Additive python surface: uplift routes + settings-index/prune endpoints +
-# login ?next= pass-through (R12-5). Classic does not use any of it.
+# login ?next= pass-through (R12-5) + live request tracker (R12-3).
+# Classic does not use any of it.
 # Pre-swap original routes.py backup (2026-09-16): ~/hermes/TMP/keg-routes-backup-2026-09-16.py
 RESTART_NEEDED=0
-if ! cmp -s "$ROOT/omlx/admin/routes.py" "$PKG/admin/routes.py"; then
-    cp "$ROOT/omlx/admin/routes.py" "$PKG/admin/routes.py"
-    echo "Synced routes.py into keg"
-    RESTART_NEEDED=1
-fi
-if ! cmp -s "$ROOT/omlx/admin/templates/login.html" "$PKG/admin/templates/login.html"; then
-    cp "$ROOT/omlx/admin/templates/login.html" "$PKG/admin/templates/login.html"
-    echo "Synced login.html into keg"
-    RESTART_NEEDED=1
-fi
+for f in admin/routes.py admin/templates/login.html request_log.py; do
+    if ! cmp -s "$ROOT/omlx/$f" "$PKG/$f"; then
+        cp "$ROOT/omlx/$f" "$PKG/$f"
+        echo "Synced $f into keg"
+        RESTART_NEEDED=1
+    fi
+done
 
 # R12-1: never hardcode the server port — read it from oMLX's own settings.
 OMLX_BASE="${OMLX_BASE_PATH:-$HOME/.omlx}"

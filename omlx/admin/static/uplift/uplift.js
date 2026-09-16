@@ -988,13 +988,8 @@ function renderReqFeed() {
     $('reqfeed-sub').textContent = rows.length
         ? `${rows.filter(r => ['queued','prefilling','generating'].includes(r.state)).length} active` : '';
     if (!rows.length) {
-        // R12-3 interim: native oMLX has no server-side request tracker yet
-        // (GET /admin/api/requests 404s). Say so instead of pretending idle.
-        const msg = NATIVE
-            ? 'feed unavailable — no server-side tracker yet'
-            : 'No requests yet';
         const cur = list.querySelector('.empty');
-        if (!cur || cur.textContent !== msg) list.innerHTML = `<div class="empty">${msg}</div>`;
+        if (!cur) list.innerHTML = '<div class="empty">No requests yet</div>';
         return;
     }
     list.innerHTML = '';
@@ -1065,9 +1060,8 @@ function pushServerEvent(ev) {
 }
 function connectEventStream() {
     if (sseSource || !window.EventSource) return;
-    // R12-3: native oMLX has no /requests/stream yet; connecting would make
-    // EventSource retry a 404 forever. Skip until the tracker lands.
-    if (NATIVE) return;
+    // R12-3: native oMLX now serves /admin/api/requests/stream (sampled
+    // from scheduler snapshots); the gateway keeps its own SSE unchanged.
     try {
         sseSource = new EventSource(`${API}/admin/api/requests/stream`);
         sseSource.onmessage = e => { try { pushServerEvent(JSON.parse(e.data)); } catch (_) {} };
@@ -1075,7 +1069,7 @@ function connectEventStream() {
     } catch (_) { sseSource = null; }
 }
 async function pollRequests() {
-    if (document.hidden || NATIVE) return;   // native: no tracker to poll (R12-3)
+    if (document.hidden) return;   // R12-3: native route now exists
     try {
         const d = await fetchJson(`${API}/admin/api/requests?limit=30`);
         for (const r of d.requests)
@@ -1084,9 +1078,6 @@ async function pollRequests() {
                               tps: r.tps, error: r.error });
     } catch (_) { /* gateway offline; feed keeps last state */ }
 }
-// R12-3 interim: in native mode there is no /admin/api/requests to poll;
-// one honest render is enough (no 404 spam every 2 s).
-if (NATIVE) renderReqFeed();
 
 /* ---------------- model manager (Models tab) ---------------- */
 let seModel = null, seValues = {};   // seValues = live form state (modelspec shape)

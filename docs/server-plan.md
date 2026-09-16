@@ -29,7 +29,7 @@ exists, needs cookie auth).
 | GS_FLAT_MAP (flat integrations_* -> nested global-settings) | upstream GET returns nested sections already; classic posts nested too | **REPLACE** — uplift should read/write nested `global-settings` shape; mock overlay exists only for shadow mode |
 | api_key masking (`••••` on GET, echo-on-write) | upstream GET /admin/api/settings masks it too (classic relies on it) — verify during B1 | likely **REPLACE** with a passthrough; re-probe before deleting mock logic |
 | POST /admin/api/models/<id>/pin + /unpin | **no upstream route** — mock translates to PUT `is_pinned` | **REPLACE**: drop the POST calls, write `is_pinned` via PUT settings (route accepts it) |
-| GET /admin/api/requests + /requests/stream (live request lifecycle feed) | `/admin/api/requests` 404 upstream; stream mock-only (SSE sim) | **KEEP** (mock) / new upstream route is B1+ scope; Status page must degrade gracefully without it |
+| GET /admin/api/requests + /requests/stream (live request lifecycle feed) | DONE 2026-09-16 (R12-3): native routes in the branch's routes.py backed by omlx/request_log.py — sampled from Scheduler.snapshot_for_admin(), no hot-path hooks; cancel via AsyncEngineCore.abort_request. Deferred: SQLite persistence of finished rows (ring buffer only, 200 entries); queued->prefilling transition visibility depends on the chunked-prefill tracker (fast prefills may show generating only) | **DONE** upstream-side |
 | /admin/api/mock/info, /mock/reset | harness endpoints | **KEEP** (mock only) |
 | simulated disk deletes, tasks sandbox | mock-only | **KEEP** |
 
