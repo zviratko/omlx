@@ -4834,7 +4834,22 @@ async function renderHelperModels() {
     testBtn.onclick = async () => {
         testBtn.disabled = true; testBtn.textContent = 'Testing…';
         try {
-            const r = await fetchJson(`${API}/admin/api/web-search/test`, { method: 'POST' });
+            // Classic contract (dashboard.js testWebSearch): the endpoint tests
+            // the PENDING form values and 422s without a JSON body. This page
+            // autosaves every change, so last-loaded `integ` + live controls
+            // ARE the pending state.
+            const pickVal = ph => { const el = [...wsGrid.querySelectorAll('input')]
+                    .find(i => i.placeholder === ph); return el ? el.value : ''; };
+            const body = {
+                provider: provSel.value || integ.web_search_provider || 'ddgs',
+                brave_api_key: pickVal('BSA…') || integ.web_search_brave_api_key || '',
+                searxng_url: pickVal('http://127.0.0.1:8080') || integ.web_search_searxng_url || '',
+                ddgs_backends: pickVal('e.g. duckduckgo,brave,mojeek') || integ.web_search_ddgs_backends || '',
+                max_results: Number(integ.web_search_max_results) || 5,
+            };
+            const r = await fetchJson(`${API}/admin/api/web-search/test`,
+                { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(body) });
             testOut.textContent = r.ok
                 ? `Search OK: ${(r.results || []).length} results`
                 : ('Search test failed: ' + ((r.error && r.error.message) || 'unknown'));
