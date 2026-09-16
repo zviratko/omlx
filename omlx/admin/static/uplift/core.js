@@ -144,7 +144,7 @@ function mean(values) {
 }
 
 /* ---------------- layout settings ---------------- */
-const LAYOUT_KEY = '***';
+const LAYOUT_KEY = 'omlx-uplift-layout-v1';
 const LAYOUT_DEFAULTS = { cols: 4, chartWindowSec: 300, intervalMs: 1000, logsHideDebug: true, percentile: 'p95', collapsed: {}, order: [] };
 const LAYOUT_WINDOWS = [60, 300, 900, 3600];
 const LAYOUT_INTERVALS = [500, 1000, 2000, 5000];
@@ -216,7 +216,7 @@ function milestonesBetween(prev, next) {
 }
 
 /* Settings: validated against known-good values; corrupt/absent => defaults. */
-const PREFS_KEY = '***';
+const PREFS_KEY = 'omlx-uplift-prefs-v1';
 const PREFS_DEFAULTS = { theme: 'auto', motion: 'auto', intervalMs: 1000, dense: false };
 const THEMES = ['auto', 'light', 'dark', 'enhanced', 'cockpit'];
 function loadPrefs(storage) {

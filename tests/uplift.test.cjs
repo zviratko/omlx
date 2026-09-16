@@ -222,3 +222,19 @@ test('errorText: empty/garbage bodies do not throw', () => {
     assert.equal(C.errorText(null), '');
     assert.equal(C.errorText({ detail: {} }), '{}');
 });
+
+// F-020: prefs and layout once shared the corrupted literal '***' storage key,
+// so saving the theme wiped the layout blob (cols/order/collapsed lost).
+test('keys: PREFS_KEY and LAYOUT_KEY are distinct well-formed keys', () => {
+    assert.notEqual(C.PREFS_KEY, C.LAYOUT_KEY);
+    assert.match(C.PREFS_KEY, /^omlx-uplift-prefs-v\d+$/);
+    assert.match(C.LAYOUT_KEY, /^omlx-uplift-layout-v\d+$/);
+});
+test('prefs save does not clobber layout storage', () => {
+    const items = {};
+    const store = { getItem: k => items[k], setItem: (k, v) => items[k] = v };
+    C.saveLayout(store, { ...C.LAYOUT_DEFAULTS, cols: 3 });
+    C.savePrefs(store, { theme: 'dark' });
+    assert.equal(C.loadLayout(store).cols, 3);
+    assert.equal(C.loadPrefs(store).theme, 'dark');
+});
