@@ -266,9 +266,26 @@ function fmtDuration(s) {
 }
 function fmtNumber(n) { return n === null ? '—' : Math.round(n).toLocaleString('en-US'); }
 
+// FastAPI error bodies: `detail` is a string for HTTPException but an ARRAY
+// of {loc,msg,...} for 422 validation errors. Stringifying the array gave
+// "[object Object]" in toasts (F-019). Flatten to readable text.
+function errorText(body) {
+    const d = body && body.detail !== undefined ? body.detail : (body && body.error);
+    if (typeof d === 'string') return d || '';
+    if (Array.isArray(d)) {
+        return d.map(e => {
+            if (typeof e === 'string') return e;
+            const loc = Array.isArray(e.loc) ? e.loc.filter(x => x !== 'body').join('.') : '';
+            return (loc ? loc + ': ' : '') + (e.msg || 'invalid');
+        }).join('; ');
+    }
+    if (d && typeof d === 'object') { try { return JSON.stringify(d); } catch (_) { return 'error'; } }
+    return '';
+}
+
 return { num, r, normalize, modelState, appendSample, pruneOlderThan, eventsBetween, milestonesBetween,
          createRequestTracker, percentile, mean,
          PREFS_KEY, PREFS_DEFAULTS, THEMES, loadPrefs, savePrefs,
          LAYOUT_KEY, LAYOUT_DEFAULTS, LAYOUT_WINDOWS, LAYOUT_INTERVALS, LAYOUT_PERCENTILES, loadLayout, saveLayout, clampSpan,
-         fmtCompact, fmtBytes, fmtDuration, fmtNumber };
+         fmtCompact, fmtBytes, fmtDuration, fmtNumber, errorText };
 });

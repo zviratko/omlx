@@ -2306,7 +2306,7 @@ async function seLoadProfiles(model, host) {
     const write = async (path, opts) => {          // detail-aware JSON call
         const res = await fetch(path, Object.assign({ cache: 'no-store' }, opts));
         const body = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(body.detail || body.error || String(res.status));
+        if (!res.ok) throw new Error(C.errorText(body) || String(res.status));
         return body;
     };
     applyB.onclick = async () => {
@@ -2388,8 +2388,14 @@ async function seLoadProfiles(model, host) {
             } catch (e) { toast(`Template apply failed: ${e.message}`); }
         };
         tSnap.onclick = async () => {
-            const name = saveAs.value.trim() || tsel.value;
-            if (!name) { toast('type a name in “save current as…” first'); return; }
+            const typed = saveAs.value.trim() || tsel.value;
+            if (!typed) { toast('type a name in “save current as…” first'); return; }
+            // Classic contract (dashboard.js createTemplate): `name` is the
+            // machine slug, `display_name` the human text — POST 422s without
+            // display_name (F-019). Slug must match ^[a-z0-9][a-z0-9_-]{0,31}$.
+            const slug = typed.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
+            const name = /^[a-z0-9][a-z0-9_-]{0,31}$/.test(slug)
+                ? slug : 't-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
             const full = window.UpliftModelSpec.buildPayload(seValues, seFormModel);
             const uni = new Set(await uniFields());
             const settings = {};
@@ -2397,8 +2403,8 @@ async function seLoadProfiles(model, host) {
             try {
                 await write(`${API}/admin/api/profile-templates`,
                     { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ name, settings }) });
-                toast(`Saved template ${name}`);
+                      body: JSON.stringify({ name, display_name: typed, description: null, settings }) });
+                toast(`Saved template ${typed}`);
                 seLoadProfiles(model, host);
             } catch (e) { toast(`Template: ${e.message}`); }
         };

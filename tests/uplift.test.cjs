@@ -207,3 +207,18 @@ test('normalize extracts per-model runtime cache rows', () => {
     assert.equal(s.cacheModels[0].hotBytes, 3e9);
     assert.equal(s.cacheModels[1].hotBytes, null);
 });
+
+// F-019: FastAPI 422 detail arrays must render as readable text, not "[object Object]".
+test('errorText: string detail passes through', () => {
+    assert.equal(C.errorText({ detail: 'boom' }), 'boom');
+    assert.equal(C.errorText({ error: 'nope' }), 'nope');
+});
+test('errorText: 422 array flattened with loc', () => {
+    const b = { detail: [{ type: 'missing', loc: ['body', 'display_name'], msg: 'Field required' }] };
+    assert.equal(C.errorText(b), 'display_name: Field required');
+});
+test('errorText: empty/garbage bodies do not throw', () => {
+    assert.equal(C.errorText({}), '');
+    assert.equal(C.errorText(null), '');
+    assert.equal(C.errorText({ detail: {} }), '{}');
+});
