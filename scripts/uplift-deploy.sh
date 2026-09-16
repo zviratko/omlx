@@ -1,13 +1,18 @@
 #!/bin/bash
-# Deploy the Uplift dashboard to the ACTIVE Homebrew omlx keg (static files only).
-# No omlx code is modified, no restart needed (static files are read per request).
-# Safe across normal use; re-run after any `brew upgrade omlx`.
+# Deploy the Uplift dashboard to the ACTIVE Homebrew omlx keg (R12: no
+# helper servers, everything runs against real oMLX itself).
+# Static files land immediately (read per request). The additive python
+# surface (omlx/admin/routes.py + templates/login.html) is synced too and
+# needs a restart — done automatically here.
+# Re-run after any `brew upgrade omlx`.
 set -euo pipefail
 
-SRC="$(cd "$(dirname "$0")/.." && pwd)/omlx/admin/static/uplift"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SRC="$ROOT/omlx/admin/static/uplift"
 # brew is not on PATH in non-login shells (e.g. ssh without -l)
 BREW="$(command -v brew || echo /opt/homebrew/bin/brew)"
-KEG="$("$BREW" --prefix omlx 2>/dev/null)/libexec/lib/python3.11/site-packages/omlx/admin/static"
+PKG="$("$BREW" --prefix omlx 2>/dev/null)/libexec/lib/python3.11/site-packages/omlx"
+KEG="$PKG/admin/static"
 
 if [ ! -d "$KEG" ]; then
     echo "ERROR: keg static dir not found at $KEG" >&2; exit 1
@@ -20,54 +25,45 @@ cp "$SRC/vendor/"* "$DEST/vendor/"
 # Cache busting: stamp asset versions so browsers never serve stale CSS/JS.
 BUILD="$(date +%s)"
 sed -i '' "s/BUILD/$BUILD/g" "$DEST/index.html"
-echo "Deployed to: $DEST (cache stamp $BUILD)"
+echo "Deployed static to: $DEST (cache stamp $BUILD)"
 # Note: DEST is the keg's admin/static/uplift dir itself, so the native
 # /admin/uplift/ route serves the exact bytes deployed here — no second copy.
-#
-# WARNING (2026-09-16): the native route lives in the keg's routes.py,
-# which currently carries the branch's version (uplift route + settings-
-# index/prune endpoints). This script does NOT sync routes.py — after a
-# `brew upgrade omlx` or keg reinstall, re-copy routes.py from the branch
-# and restart (launchctl kickstart -k gui/$(id -u)/sh.brew.omlx). Backup
-# of the pre-swap keg file: ~/hermes/TMP/keg-routes-backup-2026-09-16.py.
 
-# Helper static server (serves index.html; the keg's own /admin/static route
-# has no .html media type, and we must not patch routes.py without a restart).
-# Uses uplift-server.py: index.html is served with no-store so deploys land
-# immediately (python -m http.server lets browsers keep a stale index fresh).
-PORT=11436
-if ! curl -sf -o /dev/null "http://127.0.0.1:$PORT/index.html"; then
-    nohup python3 "$(cd "$(dirname "$0")" && pwd)/uplift-server.py" --port "$PORT" \
-        --host "${UPLIFT_BIND_HOST:-127.0.0.1}" "$DEST" \
-        >> "$HOME/hermes/TMP/uplift-server.log" 2>&1 &
-    sleep 1
-elif ! curl -sI "http://127.0.0.1:$PORT/index.html" | grep -qi "cache-control: no-store"; then
-    # Old python -m http.server instance: replace with the no-cache server.
-    kill "$(lsof -tnP -iTCP:$PORT -sTCP:LISTEN)" 2>/dev/null || true
-    sleep 0.5
-    nohup python3 "$(cd "$(dirname "$0")" && pwd)/uplift-server.py" --port "$PORT" \
-        --host "${UPLIFT_BIND_HOST:-127.0.0.1}" "$DEST" \
-        >> "$HOME/hermes/TMP/uplift-server.log" 2>&1 &
-    sleep 1
-    echo "Helper server upgraded to no-cache uplift-server.py"
+# Additive python surface: uplift routes + settings-index/prune endpoints +
+# login ?next= pass-through (R12-5). Classic does not use any of it.
+# Pre-swap original routes.py backup (2026-09-16): ~/hermes/TMP/keg-routes-backup-2026-09-16.py
+RESTART_NEEDED=0
+if ! cmp -s "$ROOT/omlx/admin/routes.py" "$PKG/admin/routes.py"; then
+    cp "$ROOT/omlx/admin/routes.py" "$PKG/admin/routes.py"
+    echo "Synced routes.py into keg"
+    RESTART_NEEDED=1
 fi
-echo "Uplift dashboard: http://127.0.0.1:$PORT/index.html"
-echo "Classic dashboard stays at http://127.0.0.1:11435/admin/dashboard (untouched)"
+if ! cmp -s "$ROOT/omlx/admin/templates/login.html" "$PKG/admin/templates/login.html"; then
+    cp "$ROOT/omlx/admin/templates/login.html" "$PKG/admin/templates/login.html"
+    echo "Synced login.html into keg"
+    RESTART_NEEDED=1
+fi
 
-# Mock gateway (API for the UI: proxies oMLX + shadow writes + lifecycle sim).
-# Override upstream with UPLIFT_UPSTREAM (e.g. http://127.0.0.1:8000) and auth
-# with UPLIFT_UPSTREAM_API_KEY (env only, never logged).
-GPORT=11437
-if ! curl -sf -o /dev/null "http://127.0.0.1:$GPORT/admin/api/mock/info"; then
-    LIVE_FLAG=""
-    [ "${UPLIFT_LIVE_WRITES:-0}" = "1" ] && LIVE_FLAG="--live-writes"
-    UPLIFT_UPSTREAM_API_KEY="${UPLIFT_UPSTREAM_API_KEY:-}" \
-    nohup python3 "$(cd "$(dirname "$0")" && pwd)/uplift-mock.py" --sim 0.5 --seed \
-        --upstream "${UPLIFT_UPSTREAM:-http://127.0.0.1:11435}" \
-        --host "${UPLIFT_BIND_HOST:-127.0.0.1}" $LIVE_FLAG \
-        >> "$HOME/hermes/TMP/uplift-mock.log" 2>&1 &
-    sleep 1
-    echo "Mock gateway started: http://127.0.0.1:$GPORT${LIVE_FLAG:+ (LIVE writes)}"
+# R12-1: never hardcode the server port — read it from oMLX's own settings.
+OMLX_BASE="${OMLX_BASE_PATH:-$HOME/.omlx}"
+export OMLX_BASE
+PORT="$(python3 -c "
+import json, os
+print(json.load(open(os.environ['OMLX_BASE']+'/settings.json'))['server']['port'])
+" 2>/dev/null || echo "")"
+
+if [ "$RESTART_NEEDED" = "1" ]; then
+    launchctl kickstart -k "gui/$(id -u)/sh.brew.omlx"
+    echo "oMLX restarted (python surface changed)"
+fi
+
+if [ -n "$PORT" ]; then
+    echo "Uplift dashboard:  http://127.0.0.1:${PORT}/admin/uplift/"
+    echo "Classic dashboard: http://127.0.0.1:${PORT}/admin/dashboard (untouched)"
 else
-    echo "Mock gateway already running: http://127.0.0.1:$GPORT"
+    echo "Uplift dashboard:  http://<host>:<omlx-port>/admin/uplift/ (could not read $OMLX_BASE/settings.json)"
 fi
+
+# R12: the mock gateway (:11437) and standalone static server (:11436) are
+# retired from the default path. For shadow-sandbox QA only, start them by
+# hand: python3 scripts/uplift-mock.py --help / uplift-server.py --help.

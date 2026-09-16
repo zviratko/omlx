@@ -34,7 +34,7 @@
 {% endblock %}
 
 {% block content %}
-<div class="min-h-screen flex items-center justify-center bg-white relative overflow-hidden px-4" x-data="loginForm({{ 'true' if api_key_configured else 'false' }})">
+<div class="min-h-screen flex items-center justify-center bg-white relative overflow-hidden px-4" x-data="loginForm({{ 'true' if api_key_configured else 'false' }}, {{ next_json | default('', true) }})">
     <!-- Background Effects -->
     <div class="absolute inset-0 bg-grain pointer-events-none z-0"></div>
     <div class="absolute top-1/4 left-1/2 -translate-x-1/2 w-[600px] h-[300px] bg-gradient-to-b from-neutral-100 to-transparent rounded-full blur-3xl -z-10 opacity-50"></div>
@@ -229,9 +229,10 @@
 
 {% block scripts %}
 <script>
-    function loginForm(apiKeyConfigured) {
+    function loginForm(apiKeyConfigured, redirectTo) {
         return {
             apiKeyConfigured: apiKeyConfigured,
+            redirectTo: redirectTo || '/admin/dashboard',
             apiKey: '',
             apiKeyConfirm: '',
             remember: false,
@@ -265,7 +266,7 @@
                     const data = await response.json();
 
                     if (response.ok && data.success) {
-                        window.location.href = '/admin/dashboard';
+                        window.location.href = this.redirectTo;
                     } else {
                         this.error = data.detail || data.message || window.t('login.error.invalid_api_key');
                     }
@@ -311,7 +312,7 @@
                     const data = await response.json();
 
                     if (response.ok && data.success) {
-                        window.location.href = '/admin/dashboard';
+                        window.location.href = this.redirectTo;
                     } else {
                         this.error = data.detail || data.message || window.t('login.error.setup_failed');
                     }

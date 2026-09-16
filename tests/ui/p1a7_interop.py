@@ -17,10 +17,11 @@ section by section and exit code is 1 (restore manually from the printed
 path if needed - the script itself never writes the file).
 
 Usage: p1a7_interop.py [--base URL] [--settings PATH]
-Defaults: base http://127.0.0.1:8000, settings ~/.omlx/settings.json
+Defaults: base http://127.0.0.1:<server.port from the settings file>,
+settings ~/.omlx/settings.json (R12-1: the port is oMLX's config, not ours).
 Exit: 0 pass, 2 skipped (server unreachable - e.g. CI without oMLX), 1 fail.
 """
-import argparse, json, sys, urllib.request, urllib.error, pathlib, http.cookiejar
+import argparse, json, sys, urllib.request, urllib.error, pathlib, http.cookiejar, os
 
 
 def req(opener, url, data=None, headers=None, method=None):
@@ -38,7 +39,7 @@ def norm(x):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--base", default="http://127.0.0.1:8000")
+    ap.add_argument("--base", default=None)
     ap.add_argument("--settings", default=str(pathlib.Path.home() / ".omlx/settings.json"))
     args = ap.parse_args()
     spath = pathlib.Path(args.settings).expanduser()
@@ -46,6 +47,10 @@ def main():
         print(f"SKIP: settings file {spath} not found"); return 2
 
     before = json.loads(spath.read_text())
+    if args.base is None:
+        # R12-1: oMLX owns the port; read it from its own settings.
+        port = before.get("server", {}).get("port", 8000)
+        args.base = f"http://127.0.0.1:{port}"
     key = before.get("auth", {}).get("api_key") or ""
 
     cj = http.cookiejar.CookieJar()

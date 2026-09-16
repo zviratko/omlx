@@ -5,10 +5,11 @@ anything `needs-change` is a NOT-YET until the user signs it off.
 
 | Component | Status | How |
 |---|---|---|
-| `omlx/admin/routes.py` | additive-changed | New `/admin/uplift` + `/admin/uplift/{path}` GET routes (redirect-to-slash, cookie auth via `require_admin`, traversal guard, `no-store` on HTML). No existing route, template, or schema touched. |
+| `omlx/admin/routes.py` | additive-changed | New `/admin/uplift` + `/admin/uplift/{path}` GET routes (redirect-to-slash, cookie auth via `require_admin`, traversal guard, `no-store` on HTML) + R12-5 session gate: unauthenticated HTML nav redirects to classic login with `?next=`, API fetches keep plain 401. No existing route or schema touched. |
 | `omlx/admin/static/uplift/uplift.js` | additive-changed | R11 self-hosted mode: when `location.pathname` starts with `/admin/uplift`, API base defaults to same-origin (no gateway), chip reads `direct`, mode labels state real writes. Standalone hosting (:11436) keeps the `:11437` gateway default; `?api=` overrides both. |
 | `omlx/admin/static/uplift/*` | untouched by classic | Uplift's own bundle (index.html, uplift.js, core.js, modelspec.js, uplift.css, vendor/uPlot). Lives under the static dir but classic never references these paths. |
-| `omlx/admin/templates/**` | untouched | Uplift serves static HTML; no Jinja template changes. |
+| `omlx/admin/templates/login.html` | additive-changed (R12-5) | Login form now honors a `next_json` context var for post-login redirect; defaults to `/admin/dashboard` when absent, so classic behaviour is byte-equivalent without `?next=`. |
+| `omlx/admin/templates/**` (rest) | untouched | Uplift serves static HTML; no other Jinja template changes. |
 | `omlx/admin/i18n/*` | untouched so far | Uplift is EN-only until P1B-1/2 wire `t()`. New keys will be additive files/keys only; classic's existing keys stay byte-identical. |
 | `omlx/admin/static/js/dashboard.js`, `css/*` | untouched | Classic bundle verified byte-identical after the uplift route landed (diffed served `dashboard.js`, 2026-09-16). |
 | `/admin/api/*` routes | untouched (read/write through existing ones) | Uplift calls models/settings/profiles/logs/hf/oq APIs exactly like classic. `model-settings-index` + `/api/profiles` are mock-gateway-only; direct mode degrades to 0 stored/missing (known, docs/server-plan.md). |

@@ -1670,8 +1670,12 @@ async def login_page(request: Request):
     # Redirect to dashboard if already authenticated
     from .auth import verify_session
 
+    # R12-5: honor a same-origin ?next= target (set by the Uplift session
+    # gate) so login returns the user to the page they asked for.
+    next_url = _uplift_safe_next(request)
+
     if verify_session(request):
-        return RedirectResponse(url="/admin/dashboard", status_code=302)
+        return RedirectResponse(url=next_url or "/admin/dashboard", status_code=302)
 
     global_settings = _get_global_settings()
 
@@ -1680,13 +1684,16 @@ async def login_page(request: Request):
         from ..utils.network import is_loopback_bind
 
         if is_loopback_bind(_active_bind_host(global_settings)):
-            return RedirectResponse(url="/admin/dashboard", status_code=302)
+            return RedirectResponse(url=next_url or "/admin/dashboard", status_code=302)
 
     api_key_configured = bool(global_settings and global_settings.auth.api_key)
     return templates.TemplateResponse(
         request,
         "login.html",
-        {"api_key_configured": api_key_configured},
+        {"api_key_configured": api_key_configured,
+         # JSON literal for the x-data attribute; autoescape turns the
+         # quotes into entities which the browser decodes before Alpine.
+         "next_json": json.dumps(next_url)},
     )
 
 
@@ -1786,15 +1793,58 @@ async def uplift_page_redirect():
     return RedirectResponse(url="/admin/uplift/", status_code=307)
 
 
+def _uplift_safe_next(request: Request) -> str:
+    """Validate an optional ?next= target: same-origin path under /admin/ only."""
+    nxt = request.query_params.get("next", "")
+    if not isinstance(nxt, str):        # test doubles / malformed multiparams
+        return ""
+    if nxt.startswith("/admin/") and "//" not in nxt[:9]:
+        return nxt
+    return ""
+
+
+async def _uplift_gate(request: Request):
+    """Session gate for the Uplift HTML page (R12-5).
+
+    Returns None when authenticated. Unauthenticated browser navigation
+    (Accept: text/html — the case require_admin answers with a redirect)
+    gets the classic login page carrying ?next= back to the requested
+    Uplift path. API fetches without the Accept header keep the plain
+    401 — a redirect would hand fetch an HTML body and a confusing error.
+    """
+    from .auth import _RedirectToLogin
+    from urllib.parse import quote
+
+    try:
+        await require_admin(request)
+    except _RedirectToLogin:
+        target = request.url.path
+        if request.url.query:
+            target = f"{target}?{request.url.query}"
+        return RedirectResponse(
+            url=f"/admin?next={quote(target, safe='')}", status_code=302
+        )
+    return None
+
+
 @router.get("/uplift/", include_in_schema=False)
-async def uplift_page(is_admin: bool = Depends(require_admin)):
+async def uplift_page(request: Request):
     """Serve the Uplift dashboard (opt-in companion to the classic one)."""
+    redirect = await _uplift_gate(request)
+    if redirect is not None:
+        return redirect
     return _uplift_file("index.html")
 
 
 @router.get("/uplift/{path:path}", include_in_schema=False)
-async def uplift_static(path: str, is_admin: bool = Depends(require_admin)):
+async def uplift_static(path: str, request: Request):
     """Serve Uplift dashboard assets (JS/CSS/vendor)."""
+    if (path or "index.html") == "index.html":
+        redirect = await _uplift_gate(request)
+        if redirect is not None:
+            return redirect
+    else:
+        await require_admin(request)
     return _uplift_file(path or "index.html")
 
 
