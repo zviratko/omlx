@@ -703,19 +703,22 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
    framed panel with an inverted signage header strip; rows alternate
    shades inside the panel; controls sit in recessed field wells. */
 #gs-body.gs-wrap {
-    /* balanced multi-column flow (masonry-style): short boxes pack under
-       each other, bottoms don't have to align, columns never overlap */
-    column-width: 380px; column-gap: 14px; max-width: 1500px; margin: 0 auto;
+    /* U5 fix: JS-distributed flex columns replace CSS multicol (which tore
+       tall boxes into fragments and staggered column tops). gsLayoutColumns()
+       balances box heights across .gs-col children; tops are always flush. */
+    display: flex; align-items: flex-start; gap: 14px;
+    max-width: 1500px; margin: 0 auto;
 }
-/* boxes snap into the column flow; each box stretches to its column so no
-   trailing gap opens at the right edge */
+.gs-col { min-width: 0; }
+/* boxes stretch to their column so no trailing gap opens at the right edge */
 .gs-box {
-    margin: 0 0 14px; break-inside: avoid;
+    margin: 0 0 14px;
     border: 1px solid var(--edge); background: var(--card);
 }
 /* R10-11: alternate box shades like the model list boxes; the inverted
-   header strip stays as-is so each panel keeps its signage band */
-.gs-box:nth-of-type(even) { background: var(--row2); }
+   header strip stays as-is so each panel keeps its signage band.
+   .alt carries the even-shade globally (nth-of-type restarts per column). */
+.gs-box:nth-of-type(even), .gs-box.alt { background: var(--row2); }
 .gs-box-title {
     /* signage header strip: inverted colors, full-bleed across the panel */
     font: 500 11px/1 var(--sans); text-transform: uppercase; letter-spacing: 0.12em;

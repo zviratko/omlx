@@ -4081,30 +4081,40 @@ function renderGlobalSettings() {
         body.append(prow);
     }
 
-    // group staged children into bordered section boxes inside a capped
-    // multi-column flow (gs-wrap); each gs-title starts a new box
+    // group staged children into bordered section boxes; each gs-title
+    // starts a new box. U5 fix (user round): the old CSS multicol
+    // (column-width masonry) tore tall boxes apart — the fragment landed at
+    // the top of the next column and pushed its boxes down (staggered column
+    // tops that looked like a leftover banner). Boxes are now distributed by
+    // JS into equal flex columns: balanced fill order is preserved (same
+    // reading flow as column-fill:balance) but every column starts flush and
+    // a box is never split.
     const wrap = $('gs-body');
     const wasDirty = Object.assign({}, gsDirty);
     wrap.textContent = '';
     wrap.classList.add('gs-wrap');
-    let box = null, bbody = null;
+    const items = [];   // gs-boxes (and stray nodes) in document order
+    let box = null, bbody = null, ord = 0;
     for (const n of Array.from(body.childNodes)) {
         if (n.nodeType === 1 && n.classList.contains('gs-title')) {
             box = document.createElement('div');
             box.className = 'gs-box';
+            box.dataset.ord = ord++;   // stable order for resize re-layout
             const h = document.createElement('div');
             h.className = 'gs-box-title';
             h.textContent = n.textContent;
             bbody = document.createElement('div');
             bbody.className = 'gs-box-body';
             box.append(h, bbody);
-            wrap.append(box);
+            items.push(box);
         } else if (bbody) {
             bbody.append(n);
         } else {
-            wrap.append(n);
+            items.push(n);
         }
     }
+    // column layout: JS-distributed flex columns (U5 fix — see above).
+    gsLayoutColumns(items);
     // section header click scrolls to the SAVE bar (item 10); header also
     // carries the section dirty/restart state color (item 8)
     for (const h of wrap.querySelectorAll('.gs-box-title')) {
@@ -4154,6 +4164,53 @@ function renderGlobalSettings() {
     renderDirtyList();
     const clrB = document.getElementById('gs-discard');
     if (clrB) clrB.style.display = Object.keys(gsDirty).length ? '' : 'none';
+}
+
+function gsLayoutColumns(forced) {
+    // U5 fix: distribute section boxes into equal-width flex columns.
+    // Balanced sequential fill reproduces the old column-fill:balance reading
+    // order, but boxes never split and every column top is flush.
+    const wrap = document.getElementById('gs-body');
+    if (!wrap) return;
+    let items = (forced && forced.length) ? forced.slice()
+        : [...wrap.querySelectorAll('.gs-box')].sort((a, b) => (a.dataset.ord | 0) - (b.dataset.ord | 0));
+    if (!items.length) return;
+    // alternate box shading by GLOBAL index (nth-of-type restarts per column)
+    items.forEach((it, i) => it.classList.toggle('alt', i % 2 === 1));
+    for (const c of wrap.querySelectorAll('.gs-col')) c.remove();
+    const gap = 14, cw = 380;
+    const avail = wrap.clientWidth || (document.documentElement.clientWidth - 48);
+    let nCols = Math.max(1, Math.floor((avail + gap) / (cw + gap)));
+    nCols = Math.min(nCols, items.length);
+    const colW = Math.floor((Math.min(avail, 1500) - gap * (nCols - 1)) / nCols);
+    const cols = [];
+    for (let i = 0; i < nCols; i++) {
+        const d = document.createElement('div');
+        d.className = 'gs-col'; d.style.width = colW + 'px';
+        cols.push(d);
+    }
+    wrap.append(...cols);
+    // measure pass: all boxes in col 0 — every column has the same width so
+    // heights measured here are the heights they'll have in their final column
+    for (const it of items) cols[0].append(it);
+    const hs = items.map(it => it.offsetHeight + gap);
+    const target = hs.reduce((a, b) => a + b, 0) / nCols;
+    let ci = 0, acc = 0;
+    for (let i = 0; i < items.length; i++) {
+        cols[ci].append(items[i]);
+        acc += hs[i];
+        if (acc >= target && ci < nCols - 1 && i < items.length - (nCols - 1 - ci)) { ci++; acc = 0; }
+    }
+    if (!window.__gsResizeHooked) {
+        window.__gsResizeHooked = true;
+        let t = 0;
+        window.addEventListener('resize', () => {
+            clearTimeout(t);
+            t = setTimeout(() => {
+                if (document.querySelector('#gs-body.gs-wrap .gs-col')) gsLayoutColumns();
+            }, 150);
+        });
+    }
 }
 
 async function postJson(url, body) {
