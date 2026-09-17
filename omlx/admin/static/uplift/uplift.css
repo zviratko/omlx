@@ -448,6 +448,27 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
 .filterbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
     margin-bottom: 12px; }
 .filterbar .spacer { flex: 1; }
+/* U-downloader (user round): MLX-only toggle + suggested/search segment tabs,
+   house style = the top .tabs strip shrunk into the filterbar */
+.se-check { display: inline-flex; align-items: center; gap: 6px;
+    font: 400 11px/1 var(--mono); text-transform: uppercase; letter-spacing: .06em;
+    color: var(--dim); cursor: pointer; user-select: none; }
+.se-check input { accent-color: var(--ink); }
+.se-btn.seg { border-left-width: 1px; }
+.se-btn.seg + .se-btn.seg { margin-left: -10px; }
+.se-btn.seg.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.pager { display: flex; align-items: center; gap: 8px; margin-top: 8px;
+    font: 400 11px/1 var(--mono); color: var(--dim); }
+.pager button { background: transparent; border: 1px solid var(--edge); color: var(--ink);
+    border-radius: 0; padding: 3px 9px; font: inherit; cursor: pointer; }
+.pager button:hover:not(:disabled) { background: var(--ink); color: var(--bg); }
+.pager button:disabled { color: var(--edge); cursor: default; }
+.pager .pinfo { margin-left: auto; }
+/* model listing (suggested / search): rank + name + params + size + dl +
+   likes + action; header reuses the house .urow.head, sortable columns */
+#dl-results .urow.usage { grid-template-columns: 34px minmax(0,5fr) minmax(0,1.1fr) 86px 92px 58px auto; }
+#dl-results .urow.head span { cursor: pointer; user-select: none; }
+#dl-results .urow.head span:hover, #dl-results .urow.head span.sorted { color: var(--ink); }
 .filterbar input[type="search"] {
     background: transparent; border: 1px solid var(--edge); color: var(--ink);
     border-radius: 0; height: 32px; padding: 0 10px; font: 400 12px/1 var(--mono);
