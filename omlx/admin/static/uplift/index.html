@@ -32,7 +32,9 @@
     </nav>
     <span class="chip" id="chip-uptime">—</span>
     <span class="chip" id="chip-device">—</span>
-    <span class="chip" id="chip-gateway" title="Mock gateway status">—</span>
+    <!-- gateway status only exists for the ?api= dev proxy mode; native
+         hosting IS the server, so the old 'direct' chip stays hidden -->
+    <span class="chip" id="chip-gateway" title="Mock gateway status" hidden>—</span>
     <span class="spacer"></span>
     <button class="icon-btn" id="btn-motion" title="Toggle animations">✦</button>
     <span class="dd" id="dd-theme">

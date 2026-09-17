@@ -153,9 +153,12 @@ header.top {
     display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
     padding: 8px 2px 14px; margin-bottom: 18px;
     border-bottom: 1px solid var(--edge);   /* rule under header lockup */
+    /* the whole top menu floats: it sticks under the red strip on scroll */
+    position: sticky; top: 4px; z-index: 55;
+    background: var(--bg);
 }
 .logo {
-    font: 500 19px/1 var(--sans); letter-spacing: 0.02em; text-transform: uppercase;
+    font: 500 16px/1 var(--sans); letter-spacing: 0.02em; text-transform: uppercase;
 }
 .logo .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--ink); }
 .logo .dot.bad { background: var(--red); }
@@ -172,7 +175,10 @@ header.top .spacer { flex: 1; }
     transition: color .1s, background-color .1s, border-color .1s;
     font: 400 12px/1 var(--mono); padding: 0 8px;
 }
-.icon-btn { width: 32px; font-size: 13px; }
+.icon-btn { width: 40px; height: 40px; font-size: 17px; }   /* bigger hit
+    targets and glyphs (user request — the 32px/13px originals read as specks
+    on wide screens). Shared .icon-btn/select height stays 32px for selects. */
+#btn-theme { width: auto; padding: 0 10px; }   /* ◐ + caret need the room */
 /* Hover shifts value one step — never elevation. */
 .icon-btn:hover, select:hover { color: var(--bg); background: var(--ink); border-color: var(--ink); }
 select { color: var(--ink); }
@@ -180,7 +186,7 @@ option { background: var(--card); color: var(--ink); }
 
 /* Layout settings popover — framed rectangle, no shadow */
 .popover {
-    position: fixed; top: 56px; right: clamp(12px, 3vw, 32px); z-index: 40; width: 260px;
+    position: fixed; top: 72px; right: clamp(12px, 3vw, 32px); z-index: 56; width: 260px;
     background: var(--card); border: 1px solid var(--ink); padding: 16px;
 }
 .popover h3 { font: 500 11px/1 var(--sans); text-transform: uppercase; letter-spacing: 0.1em;
@@ -483,7 +489,14 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
     border-bottom: 1px solid var(--edge); font: 400 12px/1.4 var(--mono);
     align-items: center; }
 .admin-table .urow.admin { grid-template-columns: minmax(0,3fr) 110px 104px 90px minmax(0,5fr); }
-.admin-table .urow.usage { grid-template-columns: minmax(0,4fr) minmax(0,2fr) 120px auto; }
+.admin-table .urow.usage { grid-template-columns: minmax(0,4fr) minmax(0,2fr) 120px minmax(0,3fr); }
+/* action rows get a real trailing column (a 5th child on the 4-col grid used
+   to wrap onto an implicit second row pinned to the LEFT edge — that is why
+   cancel/retry appeared as nameless text under the repo, not as buttons).
+   Long error text must not starve the name: all tracks shrink fractionally */
+.admin-table .urow.usage.with-acts { grid-template-columns: minmax(0,4fr) minmax(0,2fr) 120px minmax(0,3fr) 96px; }
+.admin-table .urow.usage .rowacts { display: flex; gap: 6px; justify-content: flex-end;
+    text-align: right; overflow: visible; }
 .admin-table .urow.head { color: var(--dim); border-top: 1px solid var(--ink); }
 .admin-table .urow span:not(:first-child) { text-align: right; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

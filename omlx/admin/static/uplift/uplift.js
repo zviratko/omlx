@@ -958,10 +958,13 @@ async function pollGatewayInfo() {
     const chip = $('chip-gateway');
     // R11: native hosting = same-origin API, no gateway involved at all.
     if (NATIVE || API !== API_DEFAULT) {
-        chip.textContent = 'direct'; chip.title = 'API ' + (API || location.origin);
+        // 'direct' meant "talks to the server directly" — remnant of the old
+        // mock-gateway era; in native mode the chip is meaningless, keep hidden
+        if (chip) chip.hidden = true;
         if (NATIVE) updateModeLabels();   // labels must say the truth for real writes
         return;
     }
+    if (chip) chip.hidden = false;
     try {
         const d = await fetchJson(`${API}/admin/api/mock/info`);
         GW_LIVE = !!d.live_writes;
@@ -4252,22 +4255,27 @@ function renderTasks(hostId, kind) {
             // API field is task_id (older mock data used id) — a wrong value
             // here POSTed /cancel/undefined and the control silently failed
             const tid = t.task_id || t.id;
+            // controls render as real buttons in the house action column so
+            // they align right with the other row actions (they used to be
+            // bare spans wrapping onto a stray grid track at bottom-left)
+            const acts = document.createElement('span'); acts.className = 'rowacts';
+            const mkAct = (label, title, fn) => {
+                const x = document.createElement('button');
+                x.className = 'se-btn act'; x.textContent = label; x.title = title;
+                x.onclick = fn; acts.append(x);
+            };
             if (['downloading', 'quantizing', 'uploading', 'queued', 'pending'].includes(t.status)) {
                 active = true;
-                const x = cell('cancel');
-                x.className = 'sortable';
-                x.onclick = () => postJson(`${API}/admin/api/${kind}/cancel/${tid}`, {})
-                    .then(() => renderTasks(hostId, kind)).catch(e => toast('cancel: ' + e.message));
-                r.append(x);
+                mkAct('CANCEL', 'Stop this task', () => postJson(`${API}/admin/api/${kind}/cancel/${tid}`, {})
+                    .then(() => renderTasks(hostId, kind)).catch(e => toast('cancel: ' + e.message)));
+                r.classList.add('with-acts'); r.append(acts);
             } else if (kind === 'hf' && ['failed', 'cancelled', 'canceled', 'error'].includes((t.status || '').toLowerCase())) {
                 // U11 parity: classic offers retry (resumes partial files)
-                const x = cell('retry');
-                x.className = 'sortable';
-                x.title = 'Resume this download from existing files';
-                x.onclick = () => postJson(`${API}/admin/api/hf/retry/${tid}`,
-                    { hf_token: ($('dl-token') ? $('dl-token').value.trim() : '') })
-                    .then(() => renderTasks(hostId, kind)).catch(e => toast('retry: ' + e.message));
-                r.append(x);
+                mkAct('RETRY', 'Resume this download from existing files', () =>
+                    postJson(`${API}/admin/api/hf/retry/${tid}`,
+                        { hf_token: ($('dl-token') ? $('dl-token').value.trim() : '') })
+                        .then(() => renderTasks(hostId, kind)).catch(e => toast('retry: ' + e.message)));
+                r.classList.add('with-acts'); r.append(acts);
             }
             host.append(r);
         }
