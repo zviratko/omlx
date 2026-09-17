@@ -4224,12 +4224,20 @@ async function postJson(url, body) {
 function taskRow(t) {
     const row = document.createElement('div'); row.className = 'urow usage';
     const st = (t.status || 'unknown').toUpperCase();
-    const pct = Math.round((t.progress ?? 0) * 100);
+    // progress arrives as 0..100 already (hf/ms/oq task dicts) — classic does
+    // Math.round(task.progress); the old x100 here showed "2280%"
+    const pct = Math.round(t.progress || 0);
+    const activeSt = ['downloading', 'quantizing', 'uploading'].includes((t.status || '').toLowerCase());
+    // size column: downloaded/total while running (classic parity), final size when done
+    const total = t.total_size || t.size || t.output_size || 0;
+    const done = t.downloaded_size != null ? t.downloaded_size : (t.size || t.output_size || 0);
+    const sizeTxt = activeSt && total
+        ? `${C.fmtBytes(done)} / ${C.fmtBytes(total)}`
+        : (t.size_formatted || C.fmtBytes(total));
     row.append(cell(t.name || t.model_name || t.repo_id || t.model || t.model_path || '—'),
                cell(t.dest || t.target_repo || ''),
-               cell(st + (t.status === 'downloading' || t.status === 'quantizing' || t.status === 'uploading'
-                   ? ` ${pct}%` : '')),
-               cell(t.error || (t.size_formatted || C.fmtBytes(t.size || t.output_size || t.total_size || 0))));
+               cell(st + (activeSt ? ` ${Math.min(pct, 100)}%` : '')),
+               cell(t.error || sizeTxt));
     return row;
 }
 function renderTasks(hostId, kind) {
@@ -4241,11 +4249,14 @@ function renderTasks(hostId, kind) {
         let active = false;
         for (const t of tasks) {
             const r = taskRow(t);
-            if (['downloading', 'quantizing', 'uploading', 'queued'].includes(t.status)) {
+            // API field is task_id (older mock data used id) — a wrong value
+            // here POSTed /cancel/undefined and the control silently failed
+            const tid = t.task_id || t.id;
+            if (['downloading', 'quantizing', 'uploading', 'queued', 'pending'].includes(t.status)) {
                 active = true;
                 const x = cell('cancel');
                 x.className = 'sortable';
-                x.onclick = () => postJson(`${API}/admin/api/${kind}/cancel/${t.id}`, {})
+                x.onclick = () => postJson(`${API}/admin/api/${kind}/cancel/${tid}`, {})
                     .then(() => renderTasks(hostId, kind)).catch(e => toast('cancel: ' + e.message));
                 r.append(x);
             } else if (kind === 'hf' && ['failed', 'cancelled', 'canceled', 'error'].includes((t.status || '').toLowerCase())) {
@@ -4253,7 +4264,7 @@ function renderTasks(hostId, kind) {
                 const x = cell('retry');
                 x.className = 'sortable';
                 x.title = 'Resume this download from existing files';
-                x.onclick = () => postJson(`${API}/admin/api/hf/retry/${t.id}`,
+                x.onclick = () => postJson(`${API}/admin/api/hf/retry/${tid}`,
                     { hf_token: ($('dl-token') ? $('dl-token').value.trim() : '') })
                     .then(() => renderTasks(hostId, kind)).catch(e => toast('retry: ' + e.message));
                 r.append(x);
