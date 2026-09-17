@@ -175,10 +175,13 @@ header.top .spacer { flex: 1; }
     transition: color .1s, background-color .1s, border-color .1s;
     font: 400 12px/1 var(--mono); padding: 0 8px;
 }
-.icon-btn { width: 40px; height: 40px; font-size: 17px; }   /* bigger hit
+.icon-btn { width: 40px; height: 40px; font-size: 22px; }   /* bigger hit
     targets and glyphs (user request — the 32px/13px originals read as specks
-    on wide screens). Shared .icon-btn/select height stays 32px for selects. */
+    on wide screens). Shared .icon-btn/select height stays 32px for selects.
+    Glyph size raised separately from the 40px box (user: boxes are fine,
+    icons inside are still too small). */
 #btn-theme { width: auto; padding: 0 10px; }   /* ◐ + caret need the room */
+#btn-theme .dd-caret { font-size: 12px; }      /* caret scales with the bigger ◐ */
 /* Hover shifts value one step — never elevation. */
 .icon-btn:hover, select:hover { color: var(--bg); background: var(--ink); border-color: var(--ink); }
 select { color: var(--ink); }
