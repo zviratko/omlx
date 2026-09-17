@@ -175,13 +175,17 @@ header.top .spacer { flex: 1; }
     transition: color .1s, background-color .1s, border-color .1s;
     font: 400 12px/1 var(--mono); padding: 0 8px;
 }
-.icon-btn { width: 40px; height: 40px; font-size: 22px; }   /* bigger hit
-    targets and glyphs (user request — the 32px/13px originals read as specks
-    on wide screens). Shared .icon-btn/select height stays 32px for selects.
-    Glyph size raised separately from the 40px box (user: boxes are fine,
-    icons inside are still too small). */
-#btn-theme { width: auto; padding: 0 10px; }   /* ◐ + caret need the room */
-#btn-theme .dd-caret { font-size: 12px; }      /* caret scales with the bigger ◐ */
+.icon-btn { width: 32px; padding: 0; }   /* back to the original 32px box
+    (user: 40px boxes did not fit with the left menu). Boxes stay fixed —
+    size the ICON, never the box. Glyphs are inline SVG now (font glyphs
+    rendered off-centre inside the advance and the theme box resized with
+    content); flex centering of a fixed-box SVG is exact. */
+.icon-btn svg { width: 26px; height: 26px; flex: none; margin-left: 1px; }
+    /* 26px is the honest ceiling inside a 30px inner box; margin-left:1px
+    is the optical right-nudge (user: centred glyphs still read a touch
+    left, and ◐/✦ carry their visual mass on the left). */
+#btn-theme { width: auto; padding: 0 5px; gap: 3px; }   /* ◐ + caret room */
+#btn-theme .caret { width: 12px; height: 12px; margin-left: 0; }
 /* Hover shifts value one step — never elevation. */
 .icon-btn:hover, select:hover { color: var(--bg); background: var(--ink); border-color: var(--ink); }
 select { color: var(--ink); }
