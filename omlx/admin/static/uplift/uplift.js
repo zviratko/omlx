@@ -3667,18 +3667,23 @@ function gsRow(sec, labelTxt, hint, control, opts) {
     const row = document.createElement('div');
     row.className = 'urow settings';
     if (opts.flat) row.dataset.flat = opts.flat;
-    const lab = cell(labelTxt); lab.className = 'uname';
-    // The restart warning sits immediately RIGHT OF THE TITLE (user), the
-    // description follows after it — previously the chip was appended after
-    // the hint and wrapped onto a line below the description.
-    if (opts.badge) lab.append(gsBadge());
+    const lab = document.createElement('span'); lab.className = 'uname';
+    // title and the restart warning are ONE nowrap group — the chip can
+    // never wrap onto a line below the title (user: "right of it"). The
+    // label grid track sizes to this group via minmax(min-content,1fr).
+    const nameLine = document.createElement('span'); nameLine.className = 'unamel';
+    nameLine.append(document.createTextNode(labelTxt));
+    if (opts.badge) nameLine.append(gsBadge());
     else if (opts.flat && GS_RESTART_FIELDS.has(opts.flat)) {
         // permanent red ! on fields whose change needs a server restart
         const m = document.createElement('span');
         m.className = 'rqmark'; m.textContent = '!';
         m.title = 'Applied after oMLX restart';
-        lab.append(m);
+        nameLine.append(m);
     }
+    if (opts.badge || (opts.flat && GS_RESTART_FIELDS.has(opts.flat)))
+        row.classList.add('rqb');   // restart rows get the header band (CSS)
+    lab.append(nameLine);
     if (hint) {
         const h = document.createElement('small');
         h.className = 'dim'; h.textContent = hint;   // sits beside the name

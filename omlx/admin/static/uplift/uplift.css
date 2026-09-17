@@ -792,6 +792,19 @@ body.dragging-in-progress { user-select: none; cursor: grabbing; }
 /* description sits next to the setting name (wraps below only when tight) */
 .urow.settings .uname small { display: inline; color: var(--dim);
     font: 300 10px/1.35 var(--sans); margin-left: 8px; }
+/* title+chip are one nowrap group — the chip never wraps below the title */
+.urow.settings .unamel { display: inline-flex; align-items: center; gap: 8px;
+    white-space: nowrap; min-width: 0; }
+/* Restart rows get their own header band (user: chip right of the label,
+   ABOVE the value form): title+chip span the full width on line 1, the
+   diff slot and control share line 2 below. Order in the source matters —
+   this must come after the :has(checkbox) track rule to win for those. */
+.urow.settings.rqb { grid-template-columns: auto minmax(150px, 46%); }
+.urow.settings.rqb .uname { grid-column: 1 / -1; margin-bottom: 2px; }
+.urow.settings.rqb .diffslot { justify-content: flex-start; }
+.urow.settings.rqb .gctl { justify-content: flex-start; width: auto; }
+.urow.settings.rqb .gctl input:not([type=checkbox]),
+.urow.settings.rqb .gctl select { width: 100%; }
 [data-theme="light"] .urow.settings .uname small { color: #4a463e; }  /* AA on beige rows */
 /* ---- Cockpit lamps: every row shows PINNED / DEFAULT / FAV; lit = active
    (green), unlit = grey inactive. Clicking a lamp toggles the property. ---- */
