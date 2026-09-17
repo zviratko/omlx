@@ -3,33 +3,33 @@
 Every file/surface the Uplift dashboard touches, with its status. Rule:
 anything `needs-change` is a NOT-YET until the user signs it off.
 
+**Phase 6 (2026-09-17): the table collapsed to nearly nothing.** All
+Uplift code moved into the standalone package `projects/omlx-uplift/`
+(pip name `omlx-uplift`); `omlx/` is byte-identical to jundot/main
+(`git diff jundot/main -- omlx/` is empty). The former rows —
+`admin/routes.py` additions, `request_log.py`, `static/uplift/*`, the
+`login.html ?next=` patch — are ALL reverted/gone; their content lives in
+the package (router.py, request_log.py, static/, own login page).
+
 | Component | Status | How |
 |---|---|---|
-| `omlx/admin/routes.py` | additive-changed | New `/admin/uplift` + `/admin/uplift/{path}` GET routes (redirect-to-slash, cookie auth via `require_admin`, traversal guard, `no-store` on HTML) + R12-5 session gate: unauthenticated HTML nav redirects to classic login with `?next=`, API fetches keep plain 401 + R12-3 live-feed routes `GET /api/requests`, `GET /api/requests/stream` (SSE), `POST /api/requests/{id}/cancel`. No existing route or schema touched. |
-| `omlx/request_log.py` | new file (additive) | R12-3 sampled request tracker. Nothing imports it except the admin routes above; classic never loads it. Zero inference hot-path hooks — reads `Scheduler.snapshot_for_admin()`, the same published snapshot the stats route reads. |
-| `omlx/admin/static/uplift/uplift.js` | additive-changed | R11 self-hosted mode: when `location.pathname` starts with `/admin/uplift`, API base defaults to same-origin (no gateway), chip reads `direct`, mode labels state real writes. Standalone hosting (:11436) keeps the `:11437` gateway default; `?api=` overrides both. |
-| `omlx/admin/static/uplift/*` | untouched by classic | Uplift's own bundle (index.html, uplift.js, core.js, modelspec.js, uplift.css, vendor/uPlot). Lives under the static dir but classic never references these paths. |
-| `omlx/admin/templates/login.html` | additive-changed (R12-5) | Login form now honors a `next_json` context var for post-login redirect; defaults to `/admin/dashboard` when absent, so classic behaviour is byte-equivalent without `?next=`. |
-| `omlx/admin/templates/**` (rest) | untouched | Uplift serves static HTML; no other Jinja template changes. |
-| `omlx/admin/i18n/*` | untouched so far | Uplift is EN-only until P1B-1/2 wire `t()`. New keys will be additive files/keys only; classic's existing keys stay byte-identical. |
-| `omlx/admin/static/js/dashboard.js`, `css/*` | untouched | Classic bundle verified byte-identical after the uplift route landed (diffed served `dashboard.js`, 2026-09-16). |
-| `/admin/api/*` routes | untouched (read/write through existing ones) | Uplift calls models/settings/profiles/logs/hf/oq APIs exactly like classic. `model-settings-index` + `/api/profiles` are mock-gateway-only; direct mode degrades to 0 stored/missing (known, docs/server-plan.md). |
-| `omlx/model_settings.py` | untouched | Uplift writes only upstream-schema keys (extra keys are 400-forbidden upstream). |
-| Settings file `~/.omlx/settings.json` | shared, semantics preserved | Same flat/nested payloads classic uses; P1A-7 interop test proves a Uplift no-op save leaves the file byte-identical. |
+| `omlx/**` (everything) | **untouched — zero divergence** | Uplift mounts at runtime from its own package via the `omlx_uplift.pth` hook (or the `omlx-uplift serve` wrapper). Reads `_server_state` / `_server` module attrs through public imports; writes nothing into omlx's namespace. |
+| `omlx_uplift.pth` in the oMLX venv site-packages | install-time addition (not a file edit) | Written/removed by `omlx-uplift install` / `uninstall` (brew post-install does it). Vanilla `brew upgrade omlx` replaces the keg and simply drops it — omlx itself stays pristine; reinstall uplift to remount. |
+| `~/.omlx/uplift/metrics.sqlite3` | new, Uplift-owned | Collector (in omlx's loop) writes; never read by classic. Vanilla's `~/.omlx/usage.sqlite3` is opened strictly READ-ONLY (URI `mode=ro`). |
+| `/uplift/*`, `/admin/uplift/*` URL space | additive routes | Mounted by the package; classic never uses these paths. Removing the package 404s them and nothing else. |
+| `~/.omlx/settings.json` | shared, semantics preserved | Uplift sends the SAME payloads classic does; P1A-7 interop test still proves a Uplift no-op save leaves the file byte-identical. The window `ui_dashboard_layout` (classic's saved block layout) is in GS_PAYLOAD_SKIP — uplift never round-trips it. |
+| `omlx/admin/i18n/*`, `static/js/dashboard.js`, templates | untouched | Classic bundle byte-identical (zero diff by construction now). |
 
 ## Opt-in behaviour
 
-- Classic stays at `/admin/dashboard`; Uplift lives at `/admin/uplift/`.
-  Both served by one oMLX process at the same time; no redirects between them.
-- Segregation evidence (kocour, 2026-09-16): all 91 classic static assets
-  (everything under `admin/static` except `uplift/`) served 200 and
-  byte-compared equal to the on-disk store after the uplift route + self-
-  hosted mode landed; classic dashboard renders with its own title and JS.
-  Uplift's native load fires zero requests to the mock gateway (:11437)
-  and zero to classic's bundle beyond shared static dir reads.
-- Removing `omlx/admin/static/uplift/` (or the two routes) leaves classic
-  fully functional — the routes only 404 then; nothing else imports them.
-- Deleting the route block is the whole uninstall for the server side.
+- Classic stays at `/admin/dashboard`; Uplift at canonical `/uplift/`
+  (legacy `/admin/uplift/` aliases still served by the package). Both
+  live in one process simultaneously; login is Uplift's own page at
+  `/uplift/login` minting the SAME `omlx_admin_session` cookie (path `/`)
+  — sessions cross both surfaces; classic's login is unmodified.
+- Uninstall = `pip uninstall omlx-uplift` + `omlx-uplift uninstall`
+  (drops the .pth). Classic fully functional afterwards; no restart
+  order tricks needed.
 
 ## needs-user (nothing yet blocked)
 
