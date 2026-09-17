@@ -3668,7 +3668,11 @@ function gsRow(sec, labelTxt, hint, control, opts) {
     row.className = 'urow settings';
     if (opts.flat) row.dataset.flat = opts.flat;
     const lab = cell(labelTxt); lab.className = 'uname';
-    if (opts.flat && GS_RESTART_FIELDS.has(opts.flat) && !opts.badge) {
+    // The restart warning sits immediately RIGHT OF THE TITLE (user), the
+    // description follows after it — previously the chip was appended after
+    // the hint and wrapped onto a line below the description.
+    if (opts.badge) lab.append(gsBadge());
+    else if (opts.flat && GS_RESTART_FIELDS.has(opts.flat)) {
         // permanent red ! on fields whose change needs a server restart
         const m = document.createElement('span');
         m.className = 'rqmark'; m.textContent = '!';
@@ -3680,7 +3684,6 @@ function gsRow(sec, labelTxt, hint, control, opts) {
         h.className = 'dim'; h.textContent = hint;   // sits beside the name
         lab.append(h);
     }
-    if (opts.badge) lab.append(gsBadge());
     // fixed 3-column layout: name+hint | diff slot (reserved, never moves
     // the control) | control — the input keeps its place when it goes dirty
     const slot = document.createElement('span'); slot.className = 'diffslot';
@@ -4018,7 +4021,7 @@ function renderGlobalSettings() {
     body.append(gsRow('net', L.net.ms_ep, L.net.ms_ep_hint,
         gsText('modelscope','endpoint','ms_endpoint', L,
                { placeholder: 'https://www.modelscope.cn' }),
-        { flat: 'ms_endpoint' }));
+        { flat: 'ms_endpoint', badge: true }));
     body.append(gsRow('net', L.net.http_proxy, L.net.proxy_hint,
         gsText('network','http_proxy','network_http_proxy', L),
         { flat: 'network_http_proxy' }));
