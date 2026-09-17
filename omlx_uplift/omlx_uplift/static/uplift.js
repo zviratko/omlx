@@ -9,10 +9,12 @@ const $ = id => document.getElementById(id);
    and layers simulated data. Override with ?api= (e.g. =http://127.0.0.1:11435
    to bypass, or empty when served by oMLX itself in future hosting). */
 const qp = new URLSearchParams(location.search);
-// Served by oMLX itself (/admin/uplift/)? Talk to our own origin — the
-// dashboard that hosts us IS the API. Only the standalone helper server
-// (:11436) needs the mock gateway default. ?api= still overrides both.
-const NATIVE = location.pathname.startsWith('/admin/uplift');
+// Served by oMLX itself (/uplift/ or legacy /admin/uplift/) or by the
+// standalone `omlx-uplift view` server (/uplift/)? Either way our own
+// origin IS the API (the viewer proxies it). Only the old dev mock
+// gateway (:11437) default remains, for ?api= harness sessions.
+const NATIVE = location.pathname.startsWith('/uplift')
+    || location.pathname.startsWith('/admin/uplift');
 const API_DEFAULT = NATIVE ? ''
     : location.protocol + '//' + location.hostname + ':11437';
 const API = qp.has('api') ? qp.get('api') : API_DEFAULT;
@@ -3440,7 +3442,11 @@ const GS_MAP = {
 /* Keys the classic saveGlobalSettings() includes in its full payload.
    base_path is launch-time only (read-only row); api_key is sent masked and
    skipped upstream when unchanged — sending the masked value would corrupt it. */
-const GS_PAYLOAD_SKIP = new Set(['base_path', 'api_key']);
+/* ui_dashboard_layout is the CLASSIC dashboard's saved block layout —
+   Uplift has its own localStorage layout and must never round-trip or
+   clobber the classic one. Omitting it from the payload means "keep"
+   (routes.py only applies keys present in model_fields_set). */
+const GS_PAYLOAD_SKIP = new Set(['base_path', 'api_key', 'ui_dashboard_layout']);
 
 let GS = null;   // merged working copy (upstream + shadow)
 /* Dirty tracking for the deferred-SAVE flow: GS_ORIG is the snapshot at page
@@ -4939,6 +4945,22 @@ $('btn-prune').onclick = openPruneDialog;
 
 
 /* ---------------- models sub-page: helper models -------- */
+/* used_by resolver: overlay route provides row.used_by; vanilla rows lack
+   it but carry their full settings dict — derive the reverse map here so
+   the page works identically against a vanilla upstream. */
+function usedBy(m) {
+    if (Array.isArray(m.used_by)) return m.used_by;
+    const users = new Set();
+    for (const x of adminModels || []) {
+        if (x.id === m.id) continue;
+        const s = x.settings || {};
+        for (const k of ['specprefill_draft_model', 'dflash_draft_model',
+                         'vlm_mtp_draft_model'])
+            if (s[k] === m.id) users.add(x.id);
+    }
+    return [...users].sort();
+}
+
 async function renderHelperModels() {
     let models;
     try { models = (await fetchJson(`${API}/admin/api/models`)).models; }
@@ -5271,7 +5293,10 @@ async function renderHelperModels() {
         // U10 (user round): a drafter rides its consumers' engine — its own
         // loaded flag does not mean anything useful and the load button was
         // wrong. Show WHO uses it and light the lamp from the consumers.
-        const users = (m.used_by || []).map(uid => {
+        // used_by comes from our overlay route; on vanilla installs (viewer
+        // mode) it is absent and derived here from each model's embedded
+        // settings blob instead.
+        const users = usedBy(m).map(uid => {
             const u = (adminModels || []).find(x => x.id === uid);
             return { id: uid, loaded: !!(u && (u.loaded || u.is_loading)),
                      name: (u && (u.display_name || u.id)) || uid };

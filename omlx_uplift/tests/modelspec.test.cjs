@@ -5,7 +5,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const S = require('../omlx/admin/static/uplift/modelspec.js');
+const S = require('../omlx_uplift/static/modelspec.js');
 
 const base = (over = {}) => Object.assign({
     id: 'm1', model_type: 'llm', config_model_type: 'qwen3_5',

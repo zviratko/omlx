@@ -2,7 +2,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const C = require('../omlx/admin/static/uplift/core.js');
+const C = require('../omlx_uplift/static/core.js');
 
 const snap = o => C.normalize(o);
 const raw = extra => Object.assign({

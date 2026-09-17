@@ -1806,12 +1806,8 @@ async def login_page(request: Request):
     # Redirect to dashboard if already authenticated
     from .auth import verify_session
 
-    # R12-5: honor a same-origin ?next= target (set by the Uplift session
-    # gate) so login returns the user to the page they asked for.
-    next_url = _uplift_safe_next(request)
-
     if verify_session(request):
-        return RedirectResponse(url=next_url or "/admin/dashboard", status_code=302)
+        return RedirectResponse(url="/admin/dashboard", status_code=302)
 
     global_settings = _get_global_settings()
 
@@ -1820,16 +1816,13 @@ async def login_page(request: Request):
         from ..utils.network import is_loopback_bind
 
         if is_loopback_bind(_active_bind_host(global_settings)):
-            return RedirectResponse(url=next_url or "/admin/dashboard", status_code=302)
+            return RedirectResponse(url="/admin/dashboard", status_code=302)
 
     api_key_configured = bool(global_settings and global_settings.auth.api_key)
     return templates.TemplateResponse(
         request,
         "login.html",
-        {"api_key_configured": api_key_configured,
-         # JSON literal for the x-data attribute; autoescape turns the
-         # quotes into entities which the browser decodes before Alpine.
-         "next_json": json.dumps(next_url)},
+        {"api_key_configured": api_key_configured},
     )
 
 
@@ -1884,104 +1877,6 @@ async def admin_static(path: str):
     }
     media_type = media_types.get(file_path.suffix, "application/octet-stream")
     return FileResponse(file_path, media_type=media_type)
-
-
-# =============================================================================
-# Uplift dashboard (opt-in, additive; classic dashboard untouched)
-# =============================================================================
-
-uplift_dir = static_dir / "uplift"
-
-_UPLIFT_MEDIA_TYPES = {
-    ".html": "text/html",
-    ".css": "text/css",
-    ".js": "application/javascript",
-    ".json": "application/json",
-    ".svg": "image/svg+xml",
-    ".png": "image/png",
-    ".ico": "image/x-icon",
-    ".woff2": "font/woff2",
-    ".woff": "font/woff",
-    ".ttf": "font/ttf",
-    ".map": "application/json",
-}
-
-
-def _uplift_file(path: str) -> FileResponse:
-    """Serve one file from the uplift static dir with traversal guard."""
-    file_path = (uplift_dir / path)
-    if not file_path.is_file() or not file_path.resolve().is_relative_to(
-        uplift_dir.resolve()
-    ):
-        raise HTTPException(status_code=404, detail="Uplift file not found")
-    media_type = _UPLIFT_MEDIA_TYPES.get(
-        file_path.suffix, "application/octet-stream"
-    )
-    headers = (
-        {"Cache-Control": "no-store"} if file_path.suffix == ".html" else None
-    )
-    return FileResponse(file_path, media_type=media_type, headers=headers)
-
-
-@router.get("/uplift", include_in_schema=False)
-async def uplift_page_redirect():
-    """Canonicalise so relative asset URLs (./uplift.css) resolve."""
-    return RedirectResponse(url="/admin/uplift/", status_code=307)
-
-
-def _uplift_safe_next(request: Request) -> str:
-    """Validate an optional ?next= target: same-origin path under /admin/ only."""
-    nxt = request.query_params.get("next", "")
-    if not isinstance(nxt, str):        # test doubles / malformed multiparams
-        return ""
-    if nxt.startswith("/admin/") and "//" not in nxt[:9]:
-        return nxt
-    return ""
-
-
-async def _uplift_gate(request: Request):
-    """Session gate for the Uplift HTML page (R12-5).
-
-    Returns None when authenticated. Unauthenticated browser navigation
-    (Accept: text/html — the case require_admin answers with a redirect)
-    gets the classic login page carrying ?next= back to the requested
-    Uplift path. API fetches without the Accept header keep the plain
-    401 — a redirect would hand fetch an HTML body and a confusing error.
-    """
-    from .auth import _RedirectToLogin
-    from urllib.parse import quote
-
-    try:
-        await require_admin(request)
-    except _RedirectToLogin:
-        target = request.url.path
-        if request.url.query:
-            target = f"{target}?{request.url.query}"
-        return RedirectResponse(
-            url=f"/admin?next={quote(target, safe='')}", status_code=302
-        )
-    return None
-
-
-@router.get("/uplift/", include_in_schema=False)
-async def uplift_page(request: Request):
-    """Serve the Uplift dashboard (opt-in companion to the classic one)."""
-    redirect = await _uplift_gate(request)
-    if redirect is not None:
-        return redirect
-    return _uplift_file("index.html")
-
-
-@router.get("/uplift/{path:path}", include_in_schema=False)
-async def uplift_static(path: str, request: Request):
-    """Serve Uplift dashboard assets (JS/CSS/vendor)."""
-    if (path or "index.html") == "index.html":
-        redirect = await _uplift_gate(request)
-        if redirect is not None:
-            return redirect
-    else:
-        await require_admin(request)
-    return _uplift_file(path or "index.html")
 
 
 # =============================================================================
@@ -2445,20 +2340,6 @@ async def list_models(is_admin: bool = Depends(require_admin)):
             if ref:
                 referenced_drafts.add(ref)
 
-    # Uplift helper UI: reverse map drafter -> [consumer model ids]. Same
-    # reference fields as above; additive "used_by" on each model row lets
-    # the helper page show WHO uses a drafter instead of a load button
-    # (helpers ride their consumer's engine, they are not loaded directly).
-    helper_users: dict[str, set[str]] = {}
-    for _mid, _ms in all_settings.items():
-        for _ref in (
-            _ms.specprefill_draft_model,
-            _ms.dflash_draft_model,
-            _ms.vlm_mtp_draft_model,
-        ):
-            if _ref:
-                helper_users.setdefault(_ref, set()).add(_mid)
-
     # SSD cache dir is set on the scheduler_config when the user enables paged
     # SSD caching; admin UI consumes it to gate the dflash SSD toggle.
     ssd_cache_dir = getattr(
@@ -2586,13 +2467,6 @@ async def list_models(is_admin: bool = Depends(require_admin)):
                 or model_id in referenced_drafts
                 or model_info.get("model_path") in referenced_drafts
                 or model_info.get("source_repo_id") in referenced_drafts
-            ),
-            # Uplift helper page: which consumer models reference this one
-            # as their drafter (same key resolution as is_helper above)
-            "used_by": sorted(
-                (helper_users.get(model_id, set())
-                 | helper_users.get(model_info.get("model_path") or "", set())
-                 | helper_users.get(model_info.get("source_repo_id") or "", set()))
             ),
             "engine_type": model_info.get("engine_type", "batched"),
             "model_type": model_info.get("model_type", "llm"),
@@ -2811,25 +2685,6 @@ async def reload_models(is_admin: bool = Depends(require_admin)):
     if success:
         return {"status": "ok", "message": message}
     raise HTTPException(status_code=500, detail=message)
-
-
-@router.get("/api/models/{model_id}/settings")
-async def get_model_settings(
-    model_id: str,
-    is_admin: bool = Depends(require_admin),
-):
-    """Stored settings for one model: {id, settings}.
-
-    Additive for Uplift (R11) — the editor prefills from this; classic
-    embeds settings in /api/models instead. None values are stripped
-    (to_dict), so absent keys mean "global default".
-    """
-    settings_manager = _require_settings_manager()
-    engine_pool = _get_engine_pool()
-    if engine_pool is not None and engine_pool.get_entry(model_id) is None:
-        raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
-    settings = settings_manager.get_settings(model_id)
-    return {"id": model_id, "settings": settings.to_dict()}
 
 
 @router.put("/api/models/{model_id}/settings")
@@ -3585,150 +3440,6 @@ async def update_model_settings(
 # =============================================================================
 # Profile & Template endpoints
 # =============================================================================
-
-
-@router.get("/api/model-settings-index")
-async def model_settings_index(is_admin: bool = Depends(require_admin)):
-    """Stored model-settings ids vs models discovered on disk.
-
-    Powers the Uplift Models manager "stored/missing" counts, the Missing
-    section, and the prune dialog. Additive for Uplift (R11); classic does
-    not use it. Mirrors the standalone gateway's response shape:
-    {stored, known, orphans, entries:[{id, alias}]}.
-    """
-    settings_manager = _require_settings_manager()
-    engine_pool = _get_engine_pool()
-    if engine_pool is None:
-        raise HTTPException(status_code=503, detail="Server not initialized")
-    all_settings = settings_manager.get_all_settings()
-    known = set(engine_pool.get_model_ids())
-    alias_of = {
-        mid: ms.model_alias
-        for mid, ms in all_settings.items()
-        if getattr(ms, "model_alias", None)
-    }
-    # An id a live model points at via alias is not an orphan.
-    orphans = sorted(set(all_settings) - known - set(alias_of.values()))
-    entries = sorted(
-        ({"id": mid, "alias": alias_of.get(mid)} for mid in all_settings),
-        key=lambda e: e["id"],
-    )
-    return {
-        "stored": len(all_settings),
-        "known": len(known),
-        "orphans": orphans,
-        "entries": entries,
-    }
-
-
-class PruneModelSettingsRequest(BaseModel):
-    ids: list[str]
-
-
-# =============================================================================
-# Live request feed (R12-3) — additive for Uplift; classic does not use it.
-# Sampling design: no inference hot-path hooks. Each poll/SSE tick merges the
-# schedulers' already-published admin snapshots (omlx/request_log.py).
-# =============================================================================
-
-
-@router.get("/api/requests")
-async def list_requests(
-    limit: int = 30,
-    is_admin: bool = Depends(require_admin),
-):
-    """Live + recently finished requests, newest first.
-
-    Response shape matches the Uplift feed: {requests: [{id, state, model,
-    origin, prompt_tokens, completion_tokens, tps, error, ts}]}. States:
-    queued | prefilling | generating | cancelling | complete | error.
-    """
-    import asyncio
-
-    engine_pool = _get_engine_pool()
-    if engine_pool is None:
-        raise HTTPException(status_code=503, detail="Server not initialized")
-    from ..request_log import get_request_tracker
-
-    tracker = get_request_tracker()
-    await asyncio.to_thread(tracker.sample, engine_pool)
-    return {"requests": tracker.list_rows(limit=limit), "enabled": True}
-
-
-@router.get("/api/requests/stream")
-async def stream_requests(is_admin: bool = Depends(require_admin)):
-    """SSE feed of request lifecycle transitions (1 s sampling tick)."""
-    import asyncio
-    import json
-
-    from fastapi.responses import StreamingResponse
-
-    from ..request_log import get_request_tracker
-
-    tracker = get_request_tracker()
-
-    async def event_generator():
-        try:
-            while True:
-                engine_pool = _get_engine_pool()
-                if engine_pool is not None:
-                    await asyncio.to_thread(tracker.sample, engine_pool)
-                for row in tracker.drain_dirty():
-                    ev = {
-                        "type": "request",
-                        "id": row["id"],
-                        "state": row["state"],
-                        "model": row.get("model", ""),
-                        "origin": row.get("origin", "real"),
-                    }
-                    yield f"data: {json.dumps(ev)}\n\n"
-                await asyncio.sleep(1.0)
-        except asyncio.CancelledError:
-            pass
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
-@router.post("/api/requests/{request_id}/cancel")
-async def cancel_request(
-    request_id: str, is_admin: bool = Depends(require_admin)
-):
-    """Abort an in-flight request (deferred scheduler abort, R12-4)."""
-    engine_pool = _get_engine_pool()
-    if engine_pool is None:
-        raise HTTPException(status_code=503, detail="Server not initialized")
-    from ..request_log import get_request_tracker
-
-    if await get_request_tracker().cancel(engine_pool, request_id):
-        return {"cancelled": request_id}
-    raise HTTPException(status_code=404, detail=f"Request not found: {request_id}")
-
-
-@router.post("/api/prune-model-settings")
-async def prune_model_settings(
-    req: PruneModelSettingsRequest,
-    is_admin: bool = Depends(require_admin),
-):
-    """Delete stored settings for model ids no longer on disk.
-
-    Additive for Uplift (R11). Mirrors the gateway shape:
-    {removed, removed_templates}. Only ids the caller lists are deleted;
-    templates are left alone (conservative — user can delete them in the
-    Templates page).
-    """
-    settings_manager = _require_settings_manager()
-    if not req.ids:
-        raise HTTPException(status_code=400, detail="ids required")
-    removed = [mid for mid in dict.fromkeys(req.ids) if settings_manager.delete_settings(mid)]
-    return {"removed": removed, "removed_templates": []}
 
 
 def _require_settings_manager():

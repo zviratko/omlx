@@ -8,7 +8,7 @@ real one: {running_by_id: {id: Request-like}, waiting: [Request-like]}.
 import time
 from types import SimpleNamespace
 
-from omlx.request_log import RequestTracker, get_request_tracker
+from omlx_uplift.request_log import RequestTracker, get_request_tracker
 
 
 def _req(rid, prompt=10, gen_at=None, out=0):

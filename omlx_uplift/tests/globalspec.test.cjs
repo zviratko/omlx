@@ -8,11 +8,11 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 
-const ROOT = path.join(__dirname, '..');
+const ROOT = path.join(__dirname, '..', '..');   // repo root (tests live in omlx_uplift/tests)
 const routes = fs.readFileSync(path.join(ROOT, 'omlx/admin/routes.py'), 'utf8');
-const uplift = fs.readFileSync(path.join(ROOT, 'omlx/admin/static/uplift/uplift.js'), 'utf8');
-const mock = fs.readFileSync(path.join(ROOT, 'scripts/uplift-mock.py'), 'utf8');
-const modelspec = fs.readFileSync(path.join(ROOT, 'omlx/admin/static/uplift/modelspec.js'), 'utf8');
+const uplift = fs.readFileSync(path.join(__dirname, '..', 'omlx_uplift', 'static', 'uplift.js'), 'utf8');
+const mock = fs.readFileSync(path.join(ROOT, 'scripts', 'uplift-mock.py'), 'utf8');
+const modelspec = fs.readFileSync(path.join(__dirname, '..', 'omlx_uplift', 'static', 'modelspec.js'), 'utf8');
 
 /* ---- schema keys from GlobalSettingsRequest ---- */
 function schemaKeys() {
@@ -74,7 +74,11 @@ test('gateway GS_FLAT_MAP keeps every GS_MAP key it must overlay in shadow mode'
 
 test('payload skip list stays minimal', () => {
     const skip = extractedJsConst('GS_PAYLOAD_SKIP', uplift);
-    assert.deepStrictEqual([...skip].sort(), ['api_key', 'base_path']);
+    // ui_dashboard_layout: classic's saved block layout — Uplift must not
+    // round-trip it (omitting = "keep" server-side). Everything else in
+    // the GlobalSettingsRequest schema must stay MAPPED and reachable.
+    assert.deepStrictEqual([...skip].sort(),
+        ['api_key', 'base_path', 'ui_dashboard_layout']);
 });
 
 // P1A-8: model-settings editor parity. Every ModelSettingsRequest field must
@@ -99,7 +103,7 @@ test('ModelSettingsRequest fields stay reachable in the Uplift editor', () => {
 // oMLX answers, so CI without a running server stays green.
 test('global-settings round-trip is a no-op on the real server', { timeout: 30000 }, () => {
     const { spawnSync } = require('child_process');
-    const script = require('path').join(__dirname, 'ui', 'p1a7_interop.py');
+    const script = require('path').join(__dirname, '..', '..', 'tests', 'ui', 'p1a7_interop.py');
     const r = spawnSync('python3', [script], { encoding: 'utf8', timeout: 25000 });
     const out = (r.stdout || '') + (r.stderr || '');
     if (r.status === 2) { console.log('interop SKIP:', out.trim()); return; }
