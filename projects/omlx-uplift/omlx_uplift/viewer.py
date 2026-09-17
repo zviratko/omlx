@@ -73,21 +73,35 @@ def build_viewer_app(api_base: str = "") -> FastAPI:
     async def login_page():
         return HTMLResponse(_LOGIN_HTML, headers={"Cache-Control": "no-store"})
 
-    @app.post("/uplift/api/login", include_in_schema=False)
+    @app.post("/uplift/login", include_in_schema=False)
     async def login(request: Request):
-        return _proxy("/admin/api/login", request)
+        # Mirror the packaged router's login endpoint path (see
+        # router.uplift_login for why it is not /uplift/api/login).
+        request.__dict__["_body"] = await request.body()
+        out = _proxy("/admin/api/login", request)
+        # Upstream sets its cookie pathless (browser scopes it to the
+        # request URL) — force Path=/ so /admin/api AND /uplift/api calls
+        # from the browser both carry it through this proxy.
+        cookies = out.headers.get_list("set-cookie") if hasattr(out.headers, "get_list") else []
+        if cookies:
+            for k in list(out.headers.keys()):
+                if k.lower() == "set-cookie":
+                    del out.headers[k]
+            for c in cookies:
+                if "path=" not in c.lower():
+                    c += "; Path=/"
+            for c in cookies:
+                out.headers.append("set-cookie", c)
+        return out
 
     @app.get("/uplift/", include_in_schema=False)
     async def index():
         return _static_file("index.html")
 
-    @app.get("/uplift/{path:path}", include_in_schema=False)
-    async def static(path: str):
-        return _static_file(path or "index.html")
-
-    # API surface: /admin/api/* and /uplift/api/* both proxy upstream.
-    # Vanilla's 404 on /admin/api/requests is forwarded verbatim — the UI
-    # capability-probes it and hides live-feed features accordingly.
+    # API surface BEFORE the static catch-all (FastAPI matches in
+    # registration order). /admin/api/* and /uplift/api/* both proxy
+    # upstream. Vanilla's 404 on /admin/api/requests is forwarded verbatim
+    # — the UI capability-probes it and hides live-feed features.
     @app.api_route("/admin/api/{path:path}",
                    methods=["GET", "POST", "PUT", "DELETE"], include_in_schema=False)
     async def api_admin(path: str, request: Request):
@@ -101,6 +115,10 @@ def build_viewer_app(api_base: str = "") -> FastAPI:
         if path.startswith("metrics/"):
             return _metrics_local(path)
         return _proxy(f"/admin/api/{path}", request)
+
+    @app.get("/uplift/{path:path}", include_in_schema=False)
+    async def static(path: str):
+        return _static_file(path or "index.html")
 
     def _metrics_local(path: str) -> Response:
         """Read-only history from a locally reachable usage.sqlite3."""

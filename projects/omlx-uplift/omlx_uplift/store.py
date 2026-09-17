@@ -25,8 +25,23 @@ _SCHEMA_VERSION = 1
 
 
 def default_db_path() -> Path:
-    base = os.environ.get("OMLX_BASE_PATH") or os.path.expanduser("~/.omlx")
-    return Path(base) / "uplift" / "metrics.sqlite3"
+    # Same resolution priority omlx uses for its own base dir
+    # (omlx.settings.resolve_default_base_path), with env fallback for
+    # standalone usage (viewer/CLI without a running server).
+    base = None
+    try:
+        from omlx.server import _server_state
+
+        gs = getattr(_server_state, "global_settings", None)
+        bp = getattr(gs, "base_path", None) if gs else None
+        if bp:
+            base = Path(bp)
+    except Exception:
+        pass
+    if base is None:
+        env = os.environ.get("OMLX_BASE_PATH")
+        base = Path(env) if env else Path(os.path.expanduser("~/.omlx"))
+    return base / "uplift" / "metrics.sqlite3"
 
 
 def open_usage_ro(path: Path | None = None) -> sqlite3.Connection:

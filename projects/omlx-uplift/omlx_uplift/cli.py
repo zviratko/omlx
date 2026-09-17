@@ -83,32 +83,16 @@ def cmd_serve(argv=None) -> int:
         # Fallback mount for environments without the .pth: omlx imports
         # its server lazily, so wrapping serve_command pre-import is the
         # one seam guaranteed to run before uvicorn.Config is built.
+        # register() itself starts the collector via the app lifespan.
         import omlx.server as server  # noqa: F401 (import is the point)
 
         from . import register
 
         register(server.app)
-        _startup_watch(server.app)
         return orig_serve(args)
 
     cli.serve_command = serve_with_uplift
     return cli.main()
-
-
-def _startup_watch(app) -> None:
-    """Safety net: if the autopatch ran but registration raced an already
-    imported server, mount at startup instead of never."""
-    from .collector import get_collector
-
-    collector = get_collector()
-
-    async def _ensure():
-        from . import register
-
-        register(app)  # idempotent
-        await collector.start()
-
-    app.add_event_handler("startup", _ensure)
 
 
 def cmd_view(argv=None) -> int:

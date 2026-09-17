@@ -8,7 +8,10 @@ Route map (register() mounts api_router under /uplift/api AND /admin/api):
   GET  /uplift                     -> 307 /uplift/
   GET  /uplift/                    -> index.html (session-gated)
   GET  /uplift/login               -> uplift login page (no auth needed)
-  POST /uplift/api/login           -> validate key, mint session cookie
+  POST /uplift/login               -> validate key, mint session cookie
+                                      (NOT /uplift/api/login: a literal
+                                      under /uplift/api/ outranks the API
+                                      router in FastAPI>=0.141 matching)
   GET  /uplift/{path}              -> static asset (auth-gated)
   GET  /admin/uplift[/...]         -> legacy aliases of the three above
   GET  /uplift/api/models          -> vanilla model list + used_by overlay
@@ -174,7 +177,7 @@ document.getElementById('f').onsubmit = async (ev) => {
   ev.preventDefault();
   const e = document.getElementById('e'); e.textContent = '';
   try {
-    const r = await fetch('/uplift/api/login', {method:'POST',
+    const r = await fetch('/uplift/login', {method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({api_key: document.getElementById('k').value})});
     const d = await r.json().catch(() => ({}));
@@ -194,12 +197,16 @@ class LoginRequest(BaseModel):
     remember: bool = False
 
 
-@page_router.post("/uplift/api/login", include_in_schema=False)
+@page_router.post("/uplift/login", include_in_schema=False)
 async def uplift_login(request: Request):
     """Validate the admin API key and mint the shared session cookie.
 
     Same token format as vanilla (omlx.admin.auth.create_session_token)
-    and cookie path '/' so /admin and /uplift share one session."""
+    and cookie path '/' so /admin and /uplift share one session.
+
+    NOTE: served at /uplift/login (NOT /uplift/api/login) — a literal
+    page route under /uplift/api/ outranks the API router's dynamic
+    routes in FastAPI>=0.141 candidate matching and swallows them."""
     from omlx.admin.auth import (
         SESSION_COOKIE_NAME,
         SESSION_MAX_AGE,

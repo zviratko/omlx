@@ -8,7 +8,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 
-const ROOT = path.join(__dirname, '..', '..');   // repo root (tests live in omlx_uplift/tests)
+const ROOT = path.join(__dirname, '..', '..', '..');   // repo root (tests live in projects/omlx-uplift/tests)
 const routes = fs.readFileSync(path.join(ROOT, 'omlx/admin/routes.py'), 'utf8');
 const uplift = fs.readFileSync(path.join(__dirname, '..', 'omlx_uplift', 'static', 'uplift.js'), 'utf8');
 const mock = fs.readFileSync(path.join(ROOT, 'scripts', 'uplift-mock.py'), 'utf8');
@@ -103,7 +103,7 @@ test('ModelSettingsRequest fields stay reachable in the Uplift editor', () => {
 // oMLX answers, so CI without a running server stays green.
 test('global-settings round-trip is a no-op on the real server', { timeout: 30000 }, () => {
     const { spawnSync } = require('child_process');
-    const script = require('path').join(__dirname, '..', '..', 'tests', 'ui', 'p1a7_interop.py');
+    const script = require('path').join(__dirname, '..', '..', '..', 'tests', 'ui', 'p1a7_interop.py');
     const r = spawnSync('python3', [script], { encoding: 'utf8', timeout: 25000 });
     const out = (r.stdout || '') + (r.stderr || '');
     if (r.status === 2) { console.log('interop SKIP:', out.trim()); return; }

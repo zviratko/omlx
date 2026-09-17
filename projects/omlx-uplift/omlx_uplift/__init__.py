@@ -23,15 +23,35 @@ def register(app) -> None:
 
     if getattr(app, "_omlx_uplift_mounted", False):
         return
-    app.include_router(page_router)
+    # API FIRST: the page router's /uplift/{path} catch-all would
+    # otherwise swallow /uplift/api/* in registration order.
     app.include_router(api_router, prefix="/uplift/api", include_in_schema=True)
     # Legacy/dev-gateway alias: identical handlers under /admin/api.
     app.include_router(api_router, prefix="/admin/api", include_in_schema=False)
+    app.include_router(page_router)
     # Collector lives in omlx's own loop — no separate daemon. Vanilla
     # servers without this package simply never reach this code.
+    # FastAPI>=0.140 apps with a lifespan have no add_event_handler, and
+    # omlx uses lifespan — wrap the existing lifespan context instead.
+    _wrap_lifespan(app)
+    app._omlx_uplift_mounted = True
+
+
+def _wrap_lifespan(app) -> None:
+    from contextlib import asynccontextmanager
+
     from .collector import get_collector
 
     collector = get_collector()
-    app.add_event_handler("startup", collector.start)
-    app.add_event_handler("shutdown", collector.stop)
-    app._omlx_uplift_mounted = True
+    original = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def lifespan_with_uplift(app_obj):
+        await collector.start()
+        try:
+            async with original(app_obj):
+                yield
+        finally:
+            await collector.stop()
+
+    app.router.lifespan_context = lifespan_with_uplift
