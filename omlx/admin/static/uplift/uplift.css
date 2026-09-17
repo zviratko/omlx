@@ -180,7 +180,7 @@ header.top .spacer { flex: 1; }
     Boxes stay fixed and square — size the ICON, never the box. Glyphs are
     inline SVG (font glyphs rendered off-centre inside their advance);
     flex centering of a fixed-box SVG is exact. */
-.icon-btn svg { width: 24px; height: 24px; flex: none; margin-left: 1px; }
+.icon-btn svg { width: 22px; height: 22px; flex: none; margin-left: 1px; }
     /* optical right-nudge: ◐/✦ carry their visual mass on the left */
 /* Hover shifts value one step — never elevation. */
 .icon-btn:hover, select:hover { color: var(--bg); background: var(--ink); border-color: var(--ink); }
