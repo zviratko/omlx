@@ -27,7 +27,7 @@ echo "Installed omlx-uplift into keg python ($KEG_PY)"
 
 # R12-1: never hardcode the server port — read it from oMLX's own settings.
 OMLX_BASE="${OMLX_BASE_PATH:-$HOME/.omlx}"
-PORT="$("$KEG_PY" -c "
+PORT="$(OMLX_BASE="$OMLX_BASE" "$KEG_PY" -c "
 import json, os
 print(json.load(open(os.environ['OMLX_BASE']+'/settings.json'))['server']['port'])
 " 2>/dev/null || echo "")"
