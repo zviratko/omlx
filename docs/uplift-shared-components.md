@@ -18,7 +18,8 @@ the package (router.py, request_log.py, static/, own login page).
 | `~/.omlx/uplift/metrics.sqlite3` | new, Uplift-owned | Collector (in omlx's loop) writes; never read by classic. Vanilla's `~/.omlx/usage.sqlite3` is opened strictly READ-ONLY (URI `mode=ro`). |
 | `/uplift/*`, `/admin/uplift/*` URL space | additive routes | Mounted by the package; classic never uses these paths. Removing the package 404s them and nothing else. |
 | `~/.omlx/settings.json` | shared, semantics preserved | Uplift sends the SAME payloads classic does; P1A-7 interop test still proves a Uplift no-op save leaves the file byte-identical. The window `ui_dashboard_layout` (classic's saved block layout) is in GS_PAYLOAD_SKIP — uplift never round-trips it. |
-| `omlx/admin/i18n/*`, `static/js/dashboard.js`, templates | untouched | Classic bundle byte-identical (zero diff by construction now). |
+| `omlx/admin/i18n/*`, `static/js/dashboard.js`, templates | untouched | Classic bundle byte-identical (zero diff by construction now). Layout-edit wording was copied at authoring time from classic's `status.layout.*` catalog into additive `uplift.layout.*` keys in the package's own locale overlays (one-time copy, no runtime read, no rewording of classic keys). |
+| `vendor/gridstack-all.js` + `gridstack.min.css` (package) | new, Uplift-owned copies | Same gridstack 13.3.0 build classic vendored (byte-copied from `omlx/admin/static/`), but a separate copy inside the package — classic's vendor dir untouched; if upstream bumps gridstack, mirror the copy. |
 
 ## Opt-in behaviour
 
