@@ -22,6 +22,22 @@ fi
 "$KEG_PY" -m pip install -q --upgrade "$PKG_DIR" 2>&1 | grep -v "^$" | tail -2 || true
 echo "Installed omlx-uplift into keg python ($KEG_PY)"
 
+# Guard against pre-D-1 leftovers inside the keg shadowing the package
+# router (an old hand-patched omlx/admin/routes.py with baked-in /uplift
+# routes + a copied omlx/admin/static/uplift/ bundle win route precedence
+# and silently serve a STALE UI — F-029). Vanilla omlx has ZERO 'uplift'
+# references in these paths; anything found here is divergence.
+SITE_PKGS="$("$KEG_PY" -c "import sysconfig;print(sysconfig.get_paths()['purelib'])")"
+if [ -d "$SITE_PKGS/omlx/admin/static/uplift" ]; then
+    echo "WARNING: legacy keg copy $SITE_PKGS/omlx/admin/static/uplift — removing (stale-bundle shadow, F-029)" >&2
+    rm -rf "$SITE_PKGS/omlx/admin/static/uplift"
+fi
+if grep -q "uplift" "$SITE_PKGS/omlx/admin/routes.py" 2>/dev/null; then
+    echo "ERROR: $SITE_PKGS/omlx/admin/routes.py contains uplift routes — this is a pre-D-1 hand-patched vanilla file that shadows the package router." >&2
+    echo "Fix: brew reinstall omlx, then re-run this script." >&2
+    exit 1
+fi
+
 # Autopatch .pth so plain `omlx serve` mounts Uplift too (wrapper-free).
 "$KEG_PY" -m omlx_uplift.cli install --python "$KEG_PY"
 
