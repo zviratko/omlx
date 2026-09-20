@@ -19,7 +19,10 @@ if [ ! -x "$KEG_PY" ]; then
     exit 1
 fi
 
-"$KEG_PY" -m pip install -q --upgrade "$PKG_DIR" 2>&1 | grep -v "^$" | tail -2 || true
+# --no-deps: the keg ships fastapi+uvicorn already; a dep-resolution pass
+# tries to touch brew-managed packages (mlx-audio has no RECORD) and fails.
+"$KEG_PY" -m pip install -q --no-deps --upgrade "$PKG_DIR" 2>&1 | grep -v "^$" | tail -2 || true
+"$KEG_PY" -c "import omlx_uplift" || { echo "ERROR: omlx_uplift not importable after install" >&2; exit 1; }
 echo "Installed omlx-uplift into keg python ($KEG_PY)"
 
 # Guard against pre-D-1 leftovers inside the keg shadowing the package
@@ -65,7 +68,7 @@ if [ -n "$PORT" ]; then
     C=$(curl -s -o /dev/null -w '%{http_code}' -m 5 "http://127.0.0.1:${PORT}/admin/dashboard")
     echo "Uplift dashboard:  http://127.0.0.1:${PORT}/uplift/   (gate: $U — 200 login page / 302 expected, NOT 404)"
     echo "Classic dashboard: http://127.0.0.1:${PORT}/admin/dashboard (untouched: $C — 302/200 expected)"
-    [ "$U" = "404" ] && { echo "ERROR: /uplift/ 404 — package did not mount; check: launchctl print gui/$(id -u)/sh.brew.omlx | tail -30" >&2; exit 1; }
+    if [ "$U" = "404" ]; then echo "ERROR: /uplift/ 404 — package did not mount; check: launchctl print gui/$(id -u)/sh.brew.omlx | tail -30" >&2; exit 1; fi
 else
     echo "Uplift dashboard:  http://<host>:<omlx-port>/uplift/ (could not read $OMLX_BASE/settings.json)"
 fi
