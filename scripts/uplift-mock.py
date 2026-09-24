@@ -219,6 +219,7 @@ GS_FLAT_MAP = {
     "sse_keepalive_mode": ("server", "sse_keepalive_mode"),
     "burst_decode_mode": ("server", "burst_decode_mode"),
     "preserve_mid_system_cache": ("server", "preserve_mid_system_cache"),
+    "qwen4_gdn_decode_wide_proj": ("server", "qwen4_gdn_decode_wide_proj"),
     "distributed_inference_enabled": ("server", "distributed_inference_enabled"),
     "max_audio_upload_size": ("server", "max_audio_upload_size"),
     "model_dirs": ("model", "model_dirs"),
