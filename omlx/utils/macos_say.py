@@ -481,18 +481,80 @@ def address_of(row: dict[str, Any]) -> str:
     return str(row.get("identifier") or row.get("name") or "")
 
 
-def resolve(name: str) -> Optional[dict[str, Any]]:
+def parse_voice_language(token: Any) -> tuple[str, str]:
+    """Split a voice address into ``(name, language)``, either order.
+
+    Display names are NOT unique on macOS: on this Mac eight names (the
+    Eloquence family - Shelley, Eddy, Sandy, Grandma...) exist once per
+    language, fourteen of them, so "say:Shelley" cannot say which Shelley is
+    meant. Writing the language next to the name does: `say:Shelley:cs-CZ`
+    and `say:cs-CZ:Shelley` both address one row. Identifiers carry dots, not
+    colons, so they come back unchanged."""
+    raw = str(token or "").strip()
+    if ":" not in raw:
+        return raw, ""
+    head, _, tail = raw.partition(":")
+    head, tail = head.strip(), tail.strip()
+    if not head or not tail:
+        return raw, ""
+    if looks_like_locale(tail) and not looks_like_locale(head):
+        return head, tail
+    if looks_like_locale(head) and not looks_like_locale(tail):
+        return tail, head
+    return raw, ""
+
+
+def name_languages(name: str) -> list[str]:
+    """Every language this Mac carries a display name in, for honest errors."""
+    return sorted(
+        {
+            _norm_locale(v.get("locale"))
+            for v in list_voices()
+            if v.get("installed") is not False and v["name"] == name
+            and v.get("locale")
+        },
+        key=str.lower,
+    )
+
+
+def resolve(
+    name: str, language: Any = None
+) -> Optional[dict[str, Any]]:
     """Match a requested voice by IDENTIFIER first, then by display name.
-    A miss refreshes the roster once: the owner may have downloaded the
-    voice seconds ago, and waiting out a cache TTL would read as a bug."""
+    ``language`` picks between the rows that share a name: a caller who said
+    Shelley plus pt-BR gets the Brazilian Shelley, and one who asked for a
+    language that name does not cover gets None rather than a surprise. With
+    no language the first roster row answers, as before. A miss refreshes the
+    roster once: the owner may have downloaded the voice seconds ago, and
+    waiting out a cache TTL would read as a bug."""
     if not name:
         return None
+    want, named = parse_voice_language(name)
+    language = language or named
     for fresh in (False, True):
-        for v in list_voices(force=fresh):
-            if v.get("installed") is False:
-                continue  # downloadable-but-absent: nothing to speak
-            if v["identifier"] == name or v["name"] == name:
+        rows = [
+            v
+            for v in list_voices(force=fresh)
+            if v.get("installed") is not False  # downloadable-but-absent
+        ]
+        for v in rows:
+            if v["identifier"] == want:
                 return v
+        shares = [v for v in rows if v["name"] == want]
+        if not shares:
+            continue
+        if not language:
+            return shares[0]
+        ranked = sorted(
+            shares,
+            key=lambda v: (
+                -locale_score(language, v.get("locale")),
+                _quality_rank(v.get("quality")),
+            ),
+        )
+        if locale_score(language, ranked[0].get("locale")) > 0:
+            return ranked[0]
+        return None
     return None
 
 
@@ -847,11 +909,26 @@ def route(
     nothing installed."""
     voice = str(voice or "").strip()
     if voice:
-        row = resolve(voice)
+        # A voice the caller NAMED wins over a language field beside it: they
+        # asked for that voice, and a Slovak voice reading Czech text is what
+        # `say -v Laura` has always done. A language written INTO the address
+        # ('say:Laura:sk-SK') is a different promise - both halves were meant,
+        # so a half that does not exist is refused instead of silently dropped.
+        name, pinned = parse_voice_language(voice)
+        row = resolve(voice, pinned)
         if row is not None:
             return address_of(row)
         if looks_like_locale(voice):
             return _by_language(voice, voices)
+        if pinned and name and not looks_like_locale(name):
+            langs = name_languages(name)
+            if langs:
+                shown = ", ".join(langs[:6]) + (", ..." if len(langs) > 6 else "")
+                raise LookupError(
+                    "voice '%s' is installed for %s, not for %s. Name one of "
+                    "those languages, or address the voice by its full "
+                    "identifier" % (name[:40], shown, pinned[:16])
+                )
         raise LookupError("voice '%s' is not installed on this Mac" % voice[:64])
     if language:
         return _by_language(language, voices)

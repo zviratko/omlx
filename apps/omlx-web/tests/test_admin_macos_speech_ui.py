@@ -132,14 +132,22 @@ def test_the_copy_describes_what_the_engine_actually_does():
     assert "4096" in cs["settings.integrations.speech.long_hint"]
 
 
-def test_the_usage_example_covers_all_three_ways_to_address_the_engine():
+def test_the_usage_example_covers_every_way_to_address_the_engine():
     """A bare "say" is the interesting case, because macOS then decides the
-    language: the card has to say so, and show both a voice and a language."""
+    language. And because display names are NOT unique on macOS (eight of them
+    exist once per language on this Mac), the example has to teach the form that
+    removes the doubt, not just the pretty one."""
     hint = EN["settings.integrations.speech.usage_hint"]
     assert '"say"' in hint, "the plain model name"
-    assert "say:Zuzana" in hint, "a voice named directly"
-    assert "say:cs-CZ" in hint and "say:en-US" in hint, "a language forced"
+    assert "say:cs-CZ" in hint, "a language forced, macOS picks the voice"
+    assert "say:Zuzana" in hint, "a voice named by itself"
+    assert "say:Zuzana:cs-CZ" in hint, "the unambiguous voice-plus-language form"
     assert "detects the language" in hint, "what a bare say actually does"
+    assert "belongs to a language" in hint, "the binding the names hide"
+    assert "identifier" in hint, "the address that can never be ambiguous"
+    # and the dropdown copy must say the same thing about shared names
+    voices = EN["settings.integrations.speech.voices_hint"]
+    assert "other languages" in voices and "different voice" in voices
 
 
 def test_languages_with_an_observable_macos_default_are_listed_first():

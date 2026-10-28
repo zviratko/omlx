@@ -289,6 +289,114 @@ def test_route_returns_empty_when_nothing_can_be_named(mac, monkeypatch):
     assert ms.route(text="hello") == ""
 
 
+# --- names that are not unique: macOS reuses them across languages -------
+
+SHARED = list(INSTALLED) + [
+    {
+        "name": "Rico",
+        "locale": "it-IT",
+        "quality": "standard",
+        "sample": "Ciao",
+        "identifier": "com.apple.eloquence.it-IT.Rico",
+        "installed": True,
+        "default": False,
+        "downloaded": False,
+    },
+    {
+        "name": "Rico",
+        "locale": "pt-BR",
+        "quality": "standard",
+        "sample": "Ola",
+        "identifier": "com.apple.eloquence.pt-BR.Rico",
+        "installed": True,
+        "default": False,
+        "downloaded": False,
+    },
+    {
+        "name": "Zuzana (Premium)",
+        "locale": "cs-CZ",
+        "quality": "premium",
+        "sample": "Ahoj",
+        "identifier": "com.apple.voice.premium.cs-CZ.Zuzana",
+        "installed": True,
+        "default": False,
+        "downloaded": True,
+    },
+]
+
+
+@pytest.fixture
+def shared_names(monkeypatch, mac):
+    """The same Mac, but with a name that exists in two languages and a
+    display name carrying a space and parentheses - both real on macOS."""
+    monkeypatch.setattr(mac, "list_voices", lambda force=False: list(SHARED))
+    return mac
+
+
+def test_address_parser_accepts_the_language_on_either_side(shared_names):
+    assert ms.parse_voice_language("Rico") == ("Rico", "")
+    assert ms.parse_voice_language("Rico:pt-BR") == ("Rico", "pt-BR")
+    assert ms.parse_voice_language("pt-BR:Rico") == ("Rico", "pt-BR")
+    # identifiers use dots, so they must never be torn apart
+    assert ms.parse_voice_language("com.apple.eloquence.pt-BR.Rico") == (
+        "com.apple.eloquence.pt-BR.Rico",
+        "",
+    )
+
+
+def test_a_shared_name_without_a_language_still_answers(shared_names):
+    """Naming a voice alone is a real request: it speaks, in the language the
+    roster lists first. Nothing is invented here, which is exactly why the
+    card and the example tell the operator to pin the language."""
+    assert ms.resolve("Rico")["locale"] == "it-IT"
+
+
+@pytest.mark.parametrize(
+    "address,locale",
+    [
+        ("Rico:pt-BR", "pt-BR"),
+        ("pt-BR:Rico", "pt-BR"),
+        ("Rico:it-IT", "it-IT"),
+    ],
+)
+def test_a_shared_name_pinned_to_a_language_answers_that_row(
+    shared_names, address, locale
+):
+    assert ms.resolve(address)["locale"] == locale
+
+
+def test_a_shared_name_pinned_to_a_language_it_lacks_resolves_to_nothing(
+    shared_names,
+):
+    assert ms.resolve("Rico:de-DE") is None
+    assert ms.name_languages("Rico") == ["it-IT", "pt-BR"]
+
+
+def test_route_names_the_languages_a_pinned_one_does_not_cover(shared_names):
+    with pytest.raises(LookupError) as exc:
+        ms.route("Rico:de-DE", None, "Hallo", {})
+    text = str(exc.value)
+    assert "it-IT" in text and "pt-BR" in text
+    assert "de-DE" in text and "identifier" in text
+
+
+def test_a_named_voice_outlives_a_language_field_but_not_its_own(shared_names):
+    # Pinned in the address: both halves are honoured. Named beside a language:
+    # the voice wins, which is the long-standing contract and what `say -v`
+    # does, so a Slovak voice asked for with Czech reads the Czech text.
+    assert ms.route("Rico:pt-BR", None, "Ola", {}) == "com.apple.eloquence.pt-BR.Rico"
+    assert ms.route("Rico", "pt-BR", "Ola", {}) == "com.apple.eloquence.it-IT.Rico"
+
+
+def test_display_names_with_spaces_and_parentheses_stay_addressable(shared_names):
+    """'(Premium)' is part of how macOS lists the voice, and the model field is
+    JSON, so a space needs no encoding - pinned so nobody 'cleans' it away."""
+    assert ms.resolve("Zuzana (Premium)")["quality"] == "premium"
+    assert ms.route("Zuzana (Premium)", None, "Ahoj", {}) == (
+        "com.apple.voice.premium.cs-CZ.Zuzana"
+    )
+
+
 def test_explicit_voice_wins_over_language_and_configuration(mac):
     got = ms.route(
         voice="Laura",
