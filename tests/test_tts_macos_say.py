@@ -426,7 +426,7 @@ def test_synth_addresses_say_through_argv_with_a_temp_file(mac, monkeypatch, tmp
     assert cmd[cmd.index("-v") + 1] == "com.apple.voice.premium.cs-CZ.Zuzana"
     assert cmd[cmd.index("-r") + 1] == str(round(175 * 1.5))
     assert cmd[cmd.index("-f") + 1].endswith("in.txt")
-    assert "--data-format=LEI16@22050" in cmd
+    assert "--data-format=LEI16@24000" in cmd
     assert not any("&&" in part or ";" in part or " " in part for part in cmd[1:2])
 
 
