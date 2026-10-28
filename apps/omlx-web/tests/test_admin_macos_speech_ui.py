@@ -115,6 +115,49 @@ def test_saves_send_the_whole_voice_map():
     assert "if (lang.configured) out[lang.locale] = lang.configured;" in DASHBOARD_JS
 
 
+def test_the_copy_describes_what_the_engine_actually_does():
+    """Two copies of the truth the card had wrong. The long-text control must
+    name the limit it is about, and say in words what it does to the text:
+    nothing is cut up or split, it is spoken whole or refused."""
+    label = EN["settings.integrations.speech.long_label"]
+    assert "OpenAI" in label and "limit" in label.lower()
+    hint = EN["settings.integrations.speech.long_hint"]
+    for needle in ("4096", "10000"):
+        assert needle in hint, f"the hint lost the {needle} character figure"
+    assert "never cut or split" in hint, "the hint must rule out chunking in words"
+    assert "spoken whole" in hint and "refused" in hint
+    # and the same promises must hold in the translated catalog, not just en
+    cs = json.loads((ROOT / "omlx_web/i18n/cs.json").read_text())
+    assert "10000" in cs["settings.integrations.speech.long_hint"]
+    assert "4096" in cs["settings.integrations.speech.long_hint"]
+
+
+def test_the_usage_example_covers_all_three_ways_to_address_the_engine():
+    """A bare "say" is the interesting case, because macOS then decides the
+    language: the card has to say so, and show both a voice and a language."""
+    hint = EN["settings.integrations.speech.usage_hint"]
+    assert '"say"' in hint, "the plain model name"
+    assert "say:Zuzana" in hint, "a voice named directly"
+    assert "say:cs-CZ" in hint and "say:en-US" in hint, "a language forced"
+    assert "detects the language" in hint, "what a bare say actually does"
+
+
+def test_languages_with_an_observable_macos_default_are_listed_first():
+    """Fifty-two rows, and only a handful carry a default macOS lets us see.
+    Those answer the owner's question ('what will it pick here?'), so they lead;
+    each group then follows the alphabet the operator reads, which is the
+    dashboard's own language, not the raw tags."""
+    loader = DASHBOARD_JS[DASHBOARD_JS.index("async loadMacosSayVoices("):]
+    loader = loader[: loader.index("\n            },")]
+    assert "(lang.default || {}).preference === true" in loader, \
+        "the group split follows the OS pick"
+    assert "Intl.DisplayNames" in loader and "Intl.Collator" in loader
+    order = loader.index("filter(seen)")
+    assert order < loader.index(".concat("), "detected defaults come before the rest"
+    assert loader.count("sort(byName)") == 2, "both groups sort, not just the first"
+    assert "localeCompare" in loader, "an engine without Intl still gets a stable order"
+
+
 def test_long_input_policy_is_an_operator_choice_on_the_card():
     """Past OpenAI's input limit the engine either speaks everything or
     refuses. The caller does not pick: it asked for audio."""

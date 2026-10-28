@@ -4465,10 +4465,32 @@
                     // The card owns the map it shows: a language the server
                     // still has a voice for, but that is no longer installed,
                     // comes back without a choice and reads as the default.
-                    this.macosSay.languages = (data.languages || []).map(lang => ({
+                    const list = (data.languages || []).map(lang => ({
                         ...lang,
                         configured: pinned[lang.locale] || '',
                     }));
+                    // macOS lets us observe its own pick for some languages and
+                    // not others, and the observable half is the interesting
+                    // half in a list this long: those go first, the rest after,
+                    // each group in the alphabet the operator reads (the card
+                    // names languages in the dashboard's own language, so a
+                    // Czech operator sorts by Czech names).
+                    let byName = (a, b) =>
+                        String(a.locale).localeCompare(String(b.locale));
+                    try {
+                        const ui = this.globalSettings.ui.language || 'en';
+                        const names = new Intl.DisplayNames(
+                            [ui, 'en'], { type: 'language' });
+                        const collator = new Intl.Collator(ui);
+                        byName = (a, b) => collator.compare(
+                            names.of(a.locale) || a.locale,
+                            names.of(b.locale) || b.locale);
+                    } catch (err) {
+                        // an engine without Intl.DisplayNames keeps tag order
+                    }
+                    const seen = lang => (lang.default || {}).preference === true;
+                    this.macosSay.languages = list.filter(seen).sort(byName)
+                        .concat(list.filter(lang => !seen(lang)).sort(byName));
                     this.macosSay.loaded = true;
                 } catch (err) {
                     console.error('Failed to load macOS voices:', err);
