@@ -868,6 +868,135 @@ def _transcode_speech_output(wav_bytes: bytes, response_format: str) -> bytes:
     return buf.getvalue()
 
 
+def _macos_say_settings() -> tuple[bool, dict[str, str]]:
+    """(engine switched on, per-language voice map) from the global settings.
+    A settings file the server never loaded means the defaults: on, no
+    overrides, so macOS itself picks every voice."""
+    try:
+        from omlx.settings import get_settings
+
+        integrations = get_settings().integrations
+    except RuntimeError:
+        return True, {}
+    return bool(integrations.say_enabled), dict(integrations.say_voices)
+
+
+def _say_engine_request(model: str) -> tuple[bool, str]:
+    """Whether this model token asks for the macOS system synthesizer, and
+    the voice or locale it carries ('say', 'say:Zuzana', 'say:cs-CZ').
+
+    A discovered model that happens to be named 'say' keeps its name: this
+    engine only answers when no model on the box claims it."""
+    from ..utils import macos_say
+
+    is_say, tail = macos_say.split_model_token(model)
+    if not is_say:
+        return False, ""
+    try:
+        from omlx.server import _server_state
+
+        pool = _server_state.engine_pool
+        wanted = str(model).strip().lower()
+        if pool is not None and any(
+            str(known).strip().lower() == wanted for known in pool.get_model_ids()
+        ):
+            return False, ""
+    except Exception:  # no server state (tests, early boot): nothing claims it
+        pass
+    return True, tail
+
+
+async def _speech_via_macos_say(
+    request: AudioSpeechRequest, say_voice: str, response_format: str
+) -> Response:
+    """The model='say' path of POST /v1/audio/speech: render the text with
+    the macOS speech synthesizer. No engine, no model load, no GPU - `say`
+    writes the file and the bytes go straight back.
+
+    ``say_voice`` is the voice the model token named ('say:Zuzana') and is
+    held to: an address this Mac cannot speak answers 400. ``request.voice``
+    is only consulted when the token named none, and an OpenAI client always
+    sends one of ITS names - a voice that is neither an installed macOS voice
+    nor a locale is dropped, because the caller chose the engine by model and
+    has no way to know the macOS roster. With no voice at all the language
+    routes it, and with no language either macOS names the language of the
+    text and the voice chain answers. `say` renders the whole utterance
+    before it produces a byte, so stream=True gets the finished audio in
+    chunks instead of a native stream."""
+    from ..utils import macos_say
+
+    if request.ref_audio:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "model 'say' is the macOS system synthesizer: it cannot clone "
+                "a reference voice, drop 'ref_audio' or pick a TTS model"
+            ),
+        )
+    if not await asyncio.to_thread(macos_say.available):
+        raise HTTPException(
+            status_code=400,
+            detail="model 'say' needs a macOS server with the 'say' command",
+        )
+    enabled, pinned = await asyncio.to_thread(_macos_say_settings)
+    if not enabled:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "macOS speech is switched off: enable it under "
+                "Settings > Integrations > macOS Speech"
+            ),
+        )
+    voice = (say_voice or "").strip()
+    client_voice = str(request.voice or "").strip()
+    if not voice and client_voice:
+        resolved = await asyncio.to_thread(macos_say.resolve, client_voice)
+        if resolved is not None or macos_say.looks_like_locale(client_voice):
+            voice = client_voice
+        else:
+            logger.info(
+                "model 'say': ignoring voice '%s', not a macOS voice", client_voice
+            )
+
+    try:
+        wav_bytes = await asyncio.to_thread(
+            macos_say.synth_bytes,
+            request.input,
+            voice,
+            request.language,
+            pinned,
+            request.speed,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    _record_audio_request(macos_say.SAY_ENGINE)
+
+    audio_out = wav_bytes
+    if response_format != "wav":
+        try:
+            audio_out = await asyncio.to_thread(
+                _transcode_speech_output, wav_bytes, response_format
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    media_type = _SPEECH_RESPONSE_FORMATS[response_format]
+    if request.stream:
+        return StreamingResponse(_iter_say_chunks(audio_out), media_type=media_type)
+    return Response(content=audio_out, media_type=media_type)
+
+
+async def _iter_say_chunks(audio: bytes, chunk_size: int = 8192):
+    """Hand finished audio to a streaming client in pieces."""
+    for start in range(0, len(audio), chunk_size):
+        yield audio[start : start + chunk_size]
+
+
 @router.post("/v1/audio/speech")
 async def create_speech(request: AudioSpeechRequest):
     """OpenAI-compatible text-to-speech endpoint."""
@@ -893,6 +1022,11 @@ async def create_speech(request: AudioSpeechRequest):
                 detail="Streaming TTS currently only supports response_format='wav'",
             )
         streaming_interval = _resolve_tts_streaming_interval(request)
+
+    # macOS system speech: a model-less engine, so it never reaches the pool.
+    is_say, say_voice = _say_engine_request(request.model)
+    if is_say:
+        return await _speech_via_macos_say(request, say_voice, response_format)
 
     audio_bytes = _decode_ref_audio_base64(request)
 

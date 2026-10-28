@@ -952,6 +952,25 @@ class ClaudeCodeSettings:
         )
 
 
+def _clean_say_voices(raw: Any) -> dict[str, str]:
+    """Shape-check the persisted per-language macOS voice map: locale ->
+    voice identifier. Anything that is not a non-empty string pair is
+    dropped, and locales keep one spelling (BCP-47: 'cs_CZ' -> 'cs-CZ').
+
+    Normalised here rather than through omlx.utils: that package pulls the
+    tokenizer and hardware probes in, and settings load long before either
+    is needed."""
+    out: dict[str, str] = {}
+    if not isinstance(raw, dict):
+        return out
+    for locale, voice in raw.items():
+        key = str(locale or "").strip().replace("_", "-")
+        if not key or not isinstance(voice, str) or not voice.strip():
+            continue
+        out[key] = voice.strip()
+    return out
+
+
 @dataclass
 class IntegrationSettings:
     """Other integrations settings."""
@@ -979,6 +998,15 @@ class IntegrationSettings:
     web_search_content_mode: str = "snippet"  # "snippet" | "full"
     web_search_content_truncate: bool = True
     web_search_content_max_chars: int = 20000
+    # macOS speech: the system `say` engine (omlx/utils/macos_say.py) serves
+    # POST /v1/audio/speech for model='say' - no model, no GPU. Enabled by
+    # default; off macOS the engine is not available and the setting is inert.
+    say_enabled: bool = True
+    # Per-language voice choice: BCP-47 locale -> voice identifier, as
+    # offered by Settings > Integrations > macOS Speech. A language that is
+    # absent here is left to macOS: the owner's Spoken Content pick for it,
+    # else the system default.
+    say_voices: dict[str, str] = field(default_factory=dict)
     # External engines: Splash (omlx/engine/splash.py). An empty path means
     # oMLX looks for an installed launcher itself.
     splash_path: str | None = None
@@ -1012,6 +1040,8 @@ class IntegrationSettings:
             "web_search_content_mode": self.web_search_content_mode,
             "web_search_content_truncate": self.web_search_content_truncate,
             "web_search_content_max_chars": self.web_search_content_max_chars,
+            "say_enabled": self.say_enabled,
+            "say_voices": dict(self.say_voices),
             "splash_path": self.splash_path,
             "splash_kv_format": self.splash_kv_format,
             "splash_max_memory_gb": self.splash_max_memory_gb,
@@ -1053,6 +1083,8 @@ class IntegrationSettings:
             web_search_content_max_chars=data.get(
                 "web_search_content_max_chars", 20000
             ),
+            say_enabled=bool(data.get("say_enabled", True)),
+            say_voices=_clean_say_voices(data.get("say_voices")),
             splash_path=data.get("splash_path") or None,
             splash_kv_format=data.get("splash_kv_format", "int8"),
             splash_max_memory_gb=data.get("splash_max_memory_gb"),
