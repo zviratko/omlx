@@ -886,6 +886,20 @@ def _macos_say_settings() -> tuple[bool, dict[str, str], str]:
     )
 
 
+def say_model_visible() -> bool:
+    """Whether the model list should advertise the system speech engine.
+
+    Two gates, both cheap: `say` must exist on this machine (a PATH probe) and
+    the operator must not have switched it off. A model-less engine is not in
+    the pool, so nothing else names it and strict clients - anything that
+    validates a model id against GET /v1/models - would refuse the only name
+    that works."""
+    from ..utils import macos_say
+
+    enabled, _pinned, _policy = _macos_say_settings()
+    return bool(enabled) and macos_say.available()
+
+
 def _say_engine_request(model: str) -> tuple[bool, str]:
     """Whether this model token asks for the macOS system synthesizer, and
     the voice or locale it carries ('say', 'say:Zuzana', 'say:cs-CZ').

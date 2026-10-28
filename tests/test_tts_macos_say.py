@@ -670,6 +670,47 @@ def test_speech_passes_the_long_input_policy_to_the_engine(monkeypatch, say_endp
     assert calls["long_input"] == "reject"
 
 
+def test_the_engine_is_advertised_only_when_it_can_answer(monkeypatch):
+    """`say` never occupies a pool slot, so the pool cannot name it. Strict
+    clients validate the model id against GET /v1/models, which means the list
+    has to carry it - and carry it only when a request would actually work."""
+    from omlx.api import audio_routes as ar
+    from omlx.utils import macos_say as engine
+
+    monkeypatch.setattr(engine, "available", lambda: True)
+    monkeypatch.setattr(ar, "_macos_say_settings", lambda: (True, {}, "speak"))
+    assert ar.say_model_visible() is True
+    monkeypatch.setattr(ar, "_macos_say_settings", lambda: (False, {}, "speak"))
+    assert ar.say_model_visible() is False, "a switched-off engine is not offered"
+    monkeypatch.setattr(engine, "available", lambda: False)
+    monkeypatch.setattr(ar, "_macos_say_settings", lambda: (True, {}, "speak"))
+    assert ar.say_model_visible() is False, "Linux has no say to offer"
+
+
+def test_models_endpoint_lists_the_say_row(monkeypatch):
+    import json as _json
+
+    from omlx import server
+    from omlx.api import audio_routes as ar
+
+    async def ask():
+        return await server.list_models(_=True)   # the auth dependency is moot here
+
+    def listed():
+        body = _json.loads(asyncio.run(ask()).body)
+        return [m["id"] for m in body["data"]]
+
+    monkeypatch.setattr(ar, "say_model_visible", lambda: True)
+    ids = listed()
+    assert "say" in ids
+
+    monkeypatch.setattr(ar, "say_model_visible", lambda: False)
+    ids = listed()
+    assert "say" not in ids
+    # the row is addressable as-is: the endpoint routes exactly this token
+    assert ar._say_engine_request("say") == (True, "")
+
+
 def test_speech_answers_400_for_a_language_the_mac_cannot_speak(say_endpoint):
     ar, calls = say_endpoint
 
