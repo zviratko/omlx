@@ -1492,6 +1492,18 @@
                                     <div>
                                         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-4 sm:px-6 py-4">
                                             <div>
+                                                <label class="text-sm text-neutral-700">{{ t('settings.integrations.speech.long_label') }}</label>
+                                                <p class="text-xs text-neutral-400 mt-0.5">{{ t('settings.integrations.speech.long_hint') }}</p>
+                                            </div>
+                                            <select x-model="globalSettings.integrations.say_long_input"
+                                                    @change="saveSayLongInput()"
+                                                    class="w-full sm:w-64 px-3 py-2 text-sm border border-neutral-200 rounded-lg focus:ring-2 focus:ring-neutral-900 focus:border-transparent transition-all bg-white">
+                                                <option value="speak">{{ t('settings.integrations.speech.long_speak') }}</option>
+                                                <option value="reject">{{ t('settings.integrations.speech.long_reject') }}</option>
+                                            </select>
+                                        </div>
+                                        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-4 sm:px-6 py-4">
+                                            <div>
                                                 <label class="text-sm text-neutral-700">{{ t('settings.integrations.speech.voices') }}</label>
                                                 <p class="text-xs text-neutral-400 mt-0.5">{{ t('settings.integrations.speech.voices_hint') }}</p>
                                             </div>

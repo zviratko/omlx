@@ -868,17 +868,22 @@ def _transcode_speech_output(wav_bytes: bytes, response_format: str) -> bytes:
     return buf.getvalue()
 
 
-def _macos_say_settings() -> tuple[bool, dict[str, str]]:
-    """(engine switched on, per-language voice map) from the global settings.
-    A settings file the server never loaded means the defaults: on, no
-    overrides, so macOS itself picks every voice."""
+def _macos_say_settings() -> tuple[bool, dict[str, str], str]:
+    """(engine switched on, per-language voice map, long-input policy) from
+    the global settings. A settings file the server never loaded means the
+    defaults: on, no overrides, say the whole utterance - so macOS itself
+    picks every voice and a long reply still gets read."""
     try:
         from omlx.settings import get_settings
 
         integrations = get_settings().integrations
     except RuntimeError:
-        return True, {}
-    return bool(integrations.say_enabled), dict(integrations.say_voices)
+        return True, {}, "speak"
+    return (
+        bool(integrations.say_enabled),
+        dict(integrations.say_voices),
+        str(integrations.say_long_input),
+    )
 
 
 def _say_engine_request(model: str) -> tuple[bool, str]:
@@ -938,7 +943,7 @@ async def _speech_via_macos_say(
             status_code=400,
             detail="model 'say' needs a macOS server with the 'say' command",
         )
-    enabled, pinned = await asyncio.to_thread(_macos_say_settings)
+    enabled, pinned, long_input = await asyncio.to_thread(_macos_say_settings)
     if not enabled:
         raise HTTPException(
             status_code=400,
@@ -966,6 +971,7 @@ async def _speech_via_macos_say(
             request.language,
             pinned,
             request.speed,
+            long_input,
         )
     except LookupError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

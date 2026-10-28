@@ -88,6 +88,7 @@ from ..settings import (
     BURST_DECODE_MODES,
     SPLASH_KV_FORMATS,
     SubKeyEntry,
+    _clean_say_long_input,
     burst_decode_env,
 )
 from ..utils import gpu_power
@@ -791,6 +792,7 @@ class GlobalSettingsRequest(BaseModel):
     # that language's override and hands the choice back to macOS.
     say_enabled: bool | None = None
     say_voices: dict[str, str] | None = None
+    say_long_input: str | None = None
     markitdown_enabled: bool | None = None
     markitdown_expose_model: bool | None = None
     markitdown_max_file_size_mb: int | None = None
@@ -4750,6 +4752,7 @@ def _global_settings_response(global_settings):
             "splash_ane_prefill": global_settings.integrations.splash_ane_prefill,
             "say_enabled": global_settings.integrations.say_enabled,
             "say_voices": dict(global_settings.integrations.say_voices),
+            "say_long_input": global_settings.integrations.say_long_input,
             # Whether THIS server can speak at all: the card hides its
             # controls off macOS instead of offering a dead engine.
             "say_supported": macos_say.available(),
@@ -5691,6 +5694,17 @@ async def update_global_settings(
         logger.info(
             "macOS speech voices updated: %s",
             global_settings.integrations.say_voices or "(all macOS defaults)",
+        )
+    if "say_long_input" in request.model_fields_set:
+        # Only the two policies the engine knows; junk reads back as 'speak',
+        # the same rule the settings file applies on load.
+        global_settings.integrations.say_long_input = _clean_say_long_input(
+            request.say_long_input
+        )
+        integrations_changed = True
+        logger.info(
+            "macOS speech long-input policy: %s",
+            global_settings.integrations.say_long_input,
         )
     if "markitdown_enabled" in request.model_fields_set:
         global_settings.integrations.markitdown_enabled = bool(

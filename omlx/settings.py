@@ -971,6 +971,19 @@ def _clean_say_voices(raw: Any) -> dict[str, str]:
     return out
 
 
+# What model='say' does with text past OpenAI's input limit. Same two strings
+# as omlx.utils.macos_say.LONG_INPUT_*; repeated because settings must not
+# import omlx.utils (it pulls the tokenizer and hardware probes in).
+_SAY_LONG_INPUTS = ("speak", "reject")
+
+
+def _clean_say_long_input(raw: Any) -> str:
+    """Long-input policy for the macOS speech engine; anything unknown
+    means the default, which speaks the whole utterance."""
+    value = str(raw or "").strip().lower()
+    return value if value in _SAY_LONG_INPUTS else _SAY_LONG_INPUTS[0]
+
+
 @dataclass
 class IntegrationSettings:
     """Other integrations settings."""
@@ -1007,6 +1020,10 @@ class IntegrationSettings:
     # absent here is left to macOS: the owner's Spoken Content pick for it,
     # else the system default.
     say_voices: dict[str, str] = field(default_factory=dict)
+    # Text past OpenAI's 4096 character input limit: "speak" says the whole
+    # utterance (one `say` call renders it in seconds), "reject" answers 400
+    # exactly like OpenAI does.
+    say_long_input: str = "speak"
     # External engines: Splash (omlx/engine/splash.py). An empty path means
     # oMLX looks for an installed launcher itself.
     splash_path: str | None = None
@@ -1042,6 +1059,7 @@ class IntegrationSettings:
             "web_search_content_max_chars": self.web_search_content_max_chars,
             "say_enabled": self.say_enabled,
             "say_voices": dict(self.say_voices),
+            "say_long_input": self.say_long_input,
             "splash_path": self.splash_path,
             "splash_kv_format": self.splash_kv_format,
             "splash_max_memory_gb": self.splash_max_memory_gb,
@@ -1085,6 +1103,7 @@ class IntegrationSettings:
             ),
             say_enabled=bool(data.get("say_enabled", True)),
             say_voices=_clean_say_voices(data.get("say_voices")),
+            say_long_input=_clean_say_long_input(data.get("say_long_input")),
             splash_path=data.get("splash_path") or None,
             splash_kv_format=data.get("splash_kv_format", "int8"),
             splash_max_memory_gb=data.get("splash_max_memory_gb"),

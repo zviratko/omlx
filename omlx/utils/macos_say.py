@@ -60,6 +60,10 @@ logger = logging.getLogger(__name__)
 SAY_ENGINE = "say"              # model token that selects this engine
 SAY_PREFIX = "say:"             # model token carrying an explicit voice
 MAX_SAY_CHARS = 10000           # a whole long reply already; keep the cap honest
+OPENAI_INPUT_CHARS = 4096       # OpenAI's documented input limit for this call
+LONG_INPUT_SPEAK = "speak"      # operator policy: say the whole thing
+LONG_INPUT_REJECT = "reject"    # operator policy: refuse like OpenAI does
+LONG_INPUT_POLICIES = (LONG_INPUT_SPEAK, LONG_INPUT_REJECT)
 _MIN_DETECT_CHARS = 3           # below this there is nothing to recognise
 _NL_CONFIDENT = 50              # percent; 'ok' scores pl@29 - garbage stops here
 _DETECT_CHARS = 1000            # the first lines of a reply decide the language
@@ -959,28 +963,59 @@ def _speed_wpm(speed: Any) -> Optional[str]:
     return str(max(80, min(450, round(_BASE_WPM * mult))))
 
 
+def long_input_error(text_len: int, policy: Any = LONG_INPUT_SPEAK) -> str | None:
+    """Why this utterance must not be rendered, or ``None`` to render it.
+
+    Two limits, on purpose. OpenAI's ``/v1/audio/speech`` documents 4096
+    characters and answers 400 past it; an operator who wants that exact
+    behaviour picks ``reject``. Everyone else gets the whole utterance said,
+    up to a ceiling this Mac can still turn into audio in a few seconds:
+    measured here, `say` renders 8.3k characters (7.5 minutes of speech) in
+    7 s of wall time, so one call is cheap and stays one call. Splitting a
+    long reply across calls costs ~0.9 s of CPU each time, an order of
+    magnitude more for the same bytes, and buys nothing until the response
+    streams per segment, so this engine does not do it."""
+    if text_len > MAX_SAY_CHARS:
+        return (
+            "input is %d characters; this engine speaks at most %d"
+            % (text_len, MAX_SAY_CHARS)
+        )
+    if text_len > OPENAI_INPUT_CHARS and str(policy) == LONG_INPUT_REJECT:
+        return (
+            "input is %d characters; the OpenAI-compatible limit is %d. "
+            "Shorten it, or set long text handling to 'speak it all' under "
+            "Settings > Integrations > macOS Speech"
+            % (text_len, OPENAI_INPUT_CHARS)
+        )
+    return None
+
+
 def synth_bytes(
     text: str,
     voice: Any = None,
     language: Any = None,
     voices: dict | None = None,
     speed: Any = None,
+    long_input: Any = LONG_INPUT_SPEAK,
 ) -> bytes:
     """Render one utterance to WAV bytes. The text never reaches a shell.
     Addressing goes through :func:`route`, so an empty voice means 'macOS
     decides'. Raises LookupError with a user-safe reason when the caller
     asked for a voice or language this Mac cannot speak, ValueError for an
-    empty utterance, and RuntimeError when the synthesis itself fails."""
+    empty or refused utterance, and RuntimeError when the synthesis itself
+    fails. ``long_input`` is the operator's policy for text past OpenAI's
+    character limit."""
     if not available():
         raise RuntimeError("macOS speech is not available on this server")
     text = (text or "").strip()
     if not text:
         raise ValueError("nothing to say")
+    refused = long_input_error(len(text), long_input)
+    if refused:
+        raise ValueError(refused)
     # An addressing failure is the caller's fault (LookupError), a synthesis
     # failure is the machine's (RuntimeError): endpoints map them apart.
     target = route(voice, language, text, voices)
-    if len(text) > MAX_SAY_CHARS:
-        text = text[:MAX_SAY_CHARS]  # truncate; don't punish the whole reply
     args = ["say"] + (["-v", target] if target else [])
     wpm = _speed_wpm(speed)
     if wpm:

@@ -69,10 +69,13 @@ def test_saved_choice_is_marked_selected_on_the_option_itself():
     `x-effect`: Alpine initialises the select before its children exist, so
     the assignment lands on an empty list and a saved voice renders as
     'macOS default'. `:selected` on the option has no such ordering trap."""
-    select_tag = CARD[CARD.index("<select"): CARD.index(">", CARD.index("<select"))]
+    # The language dropdown, not the card's other selects.
+    at = CARD.index("setSayVoice(lang,")
+    start = CARD.rindex("<select", 0, at)
+    select_tag = CARD[start : CARD.index(">", start)]
     assert ":value=" not in select_tag and "x-effect=" not in select_tag
     assert '@change="setSayVoice(lang, $event.target.value)"' in select_tag
-    options = CARD[CARD.index("<select"): CARD.index("</select>")]
+    options = CARD[start : CARD.index("</select>", start)]
     assert ':selected="!lang.configured"' in options
     assert ':selected="v.value === lang.configured"' in options
 
@@ -110,6 +113,34 @@ def test_saves_send_the_whole_voice_map():
     assert "say_voices: this.sayVoicesMap()" in save
     # A language back on its default leaves the map instead of pinning ''.
     assert "if (lang.configured) out[lang.locale] = lang.configured;" in DASHBOARD_JS
+
+
+def test_long_input_policy_is_an_operator_choice_on_the_card():
+    """Past OpenAI's input limit the engine either speaks everything or
+    refuses. The caller does not pick: it asked for audio."""
+    at = CARD.index("globalSettings.integrations.say_long_input")
+    start = CARD.rindex("<select", 0, at)
+    tag = CARD[start : CARD.index(">", start)]
+    assert 'x-model="globalSettings.integrations.say_long_input"' in tag
+    assert '@change="saveSayLongInput()"' in tag
+    options = CARD[start : CARD.index("</select>", start)]
+    assert '<option value="speak">' in options
+    assert '<option value="reject">' in options
+    # Both labels come from the catalog, never hardcoded in the template.
+    for key in ("long_label", "long_hint", "long_speak", "long_reject"):
+        assert f"settings.integrations.speech.{key}" in CARD
+        assert EN[f"settings.integrations.speech.{key}"]
+
+
+def test_dashboard_defaults_to_speaking_long_text():
+    start = DASHBOARD_JS.index("integrations: {")
+    block = DASHBOARD_JS[start : DASHBOARD_JS.index("external_engines: {", start)]
+    assert "say_long_input: 'speak'" in block
+    save = DASHBOARD_JS[DASHBOARD_JS.index("async saveIntegrationSettings()") :]
+    save = save[: save.index("\n            },")]
+    assert (
+        "say_long_input: this.globalSettings.integrations.say_long_input" in save
+    )
 
 
 def test_a_failed_save_puts_the_dropdown_back():

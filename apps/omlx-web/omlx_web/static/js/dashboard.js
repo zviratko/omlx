@@ -203,6 +203,7 @@
                     splash_ane_prefill: true,
                     say_enabled: true,
                     say_voices: {},
+                    say_long_input: 'speak',
                     say_supported: false,
                 },
                 external_engines: {
@@ -4423,6 +4424,7 @@
                             splash_ane_prefill: this.globalSettings.integrations.splash_ane_prefill,
                             say_enabled: this.globalSettings.integrations.say_enabled,
                             say_voices: this.sayVoicesMap(),
+                            say_long_input: this.globalSettings.integrations.say_long_input,
                         }),
                     });
                     if (!response.ok) {
@@ -4532,6 +4534,19 @@
                 this.saveIntegrationSettings().then(err => {
                     if (!err) return;
                     lang.configured = previous;
+                    this.macosSay.error = err;
+                });
+            },
+
+            // Policy for text past OpenAI's input limit. The engine answers a
+            // refusal with a 400, so the choice belongs to the operator, not
+            // the caller; a failed save flips the select back.
+            saveSayLongInput() {
+                const integrations = this.globalSettings.integrations;
+                const chosen = integrations.say_long_input || 'speak';
+                this.saveIntegrationSettings().then(err => {
+                    if (!err) return;
+                    integrations.say_long_input = chosen === 'speak' ? 'reject' : 'speak';
                     this.macosSay.error = err;
                 });
             },

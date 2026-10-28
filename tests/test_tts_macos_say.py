@@ -347,12 +347,15 @@ def test_integration_settings_round_trip_the_speech_fields():
     from omlx.settings import IntegrationSettings
 
     s = IntegrationSettings(
-        say_enabled=False, say_voices={"cs-CZ": "com.apple.voice.premium.cs-CZ.Zuzana"}
+        say_enabled=False,
+        say_voices={"cs-CZ": "com.apple.voice.premium.cs-CZ.Zuzana"},
+        say_long_input="reject",
     )
     stored = json.loads(json.dumps(s.to_dict()))
     back = IntegrationSettings.from_dict(stored)
     assert back.say_enabled is False
     assert back.say_voices == {"cs-CZ": "com.apple.voice.premium.cs-CZ.Zuzana"}
+    assert back.say_long_input == "reject"
 
 
 def test_speech_settings_default_to_enabled_with_no_overrides():
@@ -361,6 +364,25 @@ def test_speech_settings_default_to_enabled_with_no_overrides():
     s = IntegrationSettings.from_dict({})
     assert s.say_enabled is True
     assert s.say_voices == {}
+    assert s.say_long_input == "speak"
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        (None, "speak"),
+        ("", "speak"),
+        ("speak", "speak"),
+        ("REJECT", "reject"),
+        ("  reject ", "reject"),
+        ("split", "speak"),  # not a policy this engine offers
+        (7, "speak"),
+    ],
+)
+def test_clean_say_long_input_falls_back_to_speaking(raw, expected):
+    from omlx.settings import _clean_say_long_input
+
+    assert _clean_say_long_input(raw) == expected
 
 
 @pytest.mark.parametrize(
@@ -460,20 +482,62 @@ def test_synth_reports_a_failure_instead_of_returning_silence(mac, monkeypatch, 
         ms.synth_bytes("Hello", voice="Laura")
 
 
-def test_synth_caps_a_runaway_utterance(mac, monkeypatch, tmp_path):
-    seen = {}
-
+def _capture_say_run(ms, monkeypatch, tmp_path, calls):
     def fake_run(cmd, capture_output, text, timeout):
         with open(cmd[cmd.index("-f") + 1], encoding="utf-8") as fh:
-            seen["chars"] = len(fh.read())
+            calls.append(len(fh.read()))
         with open(cmd[cmd.index("-o") + 1], "wb") as fh:
             fh.write(b"RIFF" + b"\0" * 500)
         return FakeProcess()
 
     monkeypatch.setattr(ms.subprocess, "run", fake_run)
     monkeypatch.setattr(ms.tempfile, "TemporaryDirectory", _dir_context(tmp_path))
-    ms.synth_bytes("a" * (ms.MAX_SAY_CHARS + 5000))
-    assert seen["chars"] == ms.MAX_SAY_CHARS
+
+
+def test_long_text_is_said_whole_and_in_one_call(mac, monkeypatch, tmp_path):
+    # Past the OpenAI limit the operator's policy decides, and the default
+    # says everything. One `say` call renders the whole utterance: measured on
+    # a Mac, 8.3k characters (7.5 minutes of audio) take 7 s of wall time,
+    # while splitting the same text costs ~0.9 s of CPU per extra call and
+    # returns the identical bytes. Nothing is dropped on the floor either -
+    # silently truncating a reply is worse than either policy.
+    calls = []
+    _capture_say_run(ms, monkeypatch, tmp_path, calls)
+    ms.synth_bytes("a" * ms.MAX_SAY_CHARS)
+    assert calls == [ms.MAX_SAY_CHARS]
+
+
+def test_reject_policy_refuses_before_spawning_anything(mac, monkeypatch, tmp_path):
+    calls = []
+    _capture_say_run(ms, monkeypatch, tmp_path, calls)
+    with pytest.raises(ValueError, match="4096"):
+        ms.synth_bytes("a" * (ms.OPENAI_INPUT_CHARS + 1), long_input="reject")
+    assert calls == []
+    # Text inside the limit speaks normally under the same policy.
+    ms.synth_bytes("a" * ms.OPENAI_INPUT_CHARS, long_input="reject")
+    assert calls == [ms.OPENAI_INPUT_CHARS]
+
+
+@pytest.mark.parametrize("policy", ms.LONG_INPUT_POLICIES)
+def test_both_policies_refuse_past_the_ceiling(mac, policy):
+    with pytest.raises(ValueError, match=str(ms.MAX_SAY_CHARS)):
+        ms.synth_bytes("a" * (ms.MAX_SAY_CHARS + 1), long_input=policy)
+
+
+@pytest.mark.parametrize(
+    "length,policy,expected",
+    [
+        (100, "speak", None),
+        (ms.OPENAI_INPUT_CHARS, "reject", None),
+        (ms.OPENAI_INPUT_CHARS + 1, "speak", None),
+        (ms.OPENAI_INPUT_CHARS + 1, "junk", None),  # junk reads as the default
+        (ms.OPENAI_INPUT_CHARS + 1, "reject", "4096"),
+        (ms.MAX_SAY_CHARS + 1, "speak", str(ms.MAX_SAY_CHARS)),
+    ],
+)
+def test_long_input_policy_matrix(length, policy, expected):
+    refused = ms.long_input_error(length, policy)
+    assert (expected in refused) if expected else refused is None
 
 
 def test_empty_text_is_a_value_error_not_silence(mac):
@@ -573,13 +637,16 @@ def say_endpoint(monkeypatch):
 
     monkeypatch.setattr(engine, "available", lambda: True)
     monkeypatch.setattr(engine, "resolve", lambda name: None)
-    monkeypatch.setattr(ar, "_macos_say_settings", lambda: (True, {"cs-CZ": "Zuzana"}))
+    monkeypatch.setattr(
+        ar, "_macos_say_settings", lambda: (True, {"cs-CZ": "Zuzana"}, "speak")
+    )
     calls = {}
 
-    def fake_synth(text, voice, language, voices, speed):
+    def fake_synth(text, voice, language, voices, speed, long_input):
         calls["voice"] = voice
         calls["language"] = language
         calls["voices"] = voices
+        calls["long_input"] = long_input
         return b"RIFF" + b"\0" * 500
 
     monkeypatch.setattr(engine, "synth_bytes", fake_synth)
@@ -592,6 +659,15 @@ def test_speech_serves_the_macos_engine(monkeypatch, say_endpoint):
     assert response.body.startswith(b"RIFF")
     assert response.media_type == "audio/wav"
     assert calls["voices"] == {"cs-CZ": "Zuzana"}
+
+
+def test_speech_passes_the_long_input_policy_to_the_engine(monkeypatch, say_endpoint):
+    ar, calls = say_endpoint
+    asyncio.run(ar._speech_via_macos_say(_speech_request(), "", "wav"))
+    assert calls["long_input"] == "speak"
+    monkeypatch.setattr(ar, "_macos_say_settings", lambda: (True, {}, "reject"))
+    asyncio.run(ar._speech_via_macos_say(_speech_request(), "", "wav"))
+    assert calls["long_input"] == "reject"
 
 
 def test_speech_answers_400_for_a_language_the_mac_cannot_speak(say_endpoint):
@@ -623,7 +699,7 @@ def test_speech_answers_500_when_say_itself_fails(say_endpoint):
 
 def test_speech_refuses_a_switched_off_engine(monkeypatch, say_endpoint):
     ar, calls = say_endpoint
-    monkeypatch.setattr(ar, "_macos_say_settings", lambda: (False, {}))
+    monkeypatch.setattr(ar, "_macos_say_settings", lambda: (False, {}, "speak"))
     with pytest.raises(HTTPException) as exc:
         asyncio.run(ar._speech_via_macos_say(_speech_request(), "", "wav"))
     assert exc.value.status_code == 400
@@ -673,7 +749,7 @@ def test_macos_voice_from_the_voice_field_is_honoured(say_endpoint):
 def test_voice_named_in_the_model_token_is_held_to(say_endpoint):
     ar, _ = say_endpoint
 
-    def explode(text, voice, language, voices, speed):
+    def explode(text, voice, language, voices, speed, long_input):
         raise LookupError("voice 'Ghost' is not installed on this Mac")
 
     from omlx.utils import macos_say as engine
