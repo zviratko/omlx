@@ -637,6 +637,10 @@ def test_long_text_is_said_whole_and_in_one_call(mac, monkeypatch, tmp_path):
     # silently truncating a reply is worse than either policy.
     calls = []
     _capture_say_run(ms, monkeypatch, tmp_path, calls)
+    # 200k characters cannot fit the DEFAULT 256 MB ceiling even at the fast
+    # bound, so this raises the ceiling to test the character gate itself:
+    # under a generous ceiling the whole utterance still speaks in one call.
+    monkeypatch.setenv(ms.MAX_AUDIO_ENV, "512")
     ms.synth_bytes("a" * ms.MAX_SAY_CHARS)
     assert calls == [ms.MAX_SAY_CHARS]
 
@@ -1107,12 +1111,50 @@ def test_segmentation_can_be_switched_off(monkeypatch, say_endpoint):
     assert len(calls["segments"]) == 1, "chunk size 0 means one `say` call"
 
 
-def test_the_audio_ceiling_refuses_rather_than_cutting_short(
+def test_a_reply_that_cannot_fit_is_refused_before_the_first_render(
     monkeypatch, say_endpoint
 ):
-    """Past the ceiling the caller gets a 400 that names the ceiling and the
-    way out - there is no setting to raise any more. A partial file would be
-    the worse answer, and so would a leaked spool."""
+    """Fail or pass up front. The ceiling is the environment's
+    (OMLX_SAY_MAX_AUDIO_MB), and at the fast bound of speech one MB is about
+    416 characters - so 2000 characters is arithmetic, not a guess: the answer
+    must arrive with NOTHING rendered, and it must name the env to raise."""
+    from omlx.utils import macos_say as engine
+
+    ar, calls = say_endpoint
+    monkeypatch.setenv(engine.MAX_AUDIO_ENV, "1")
+    _use(monkeypatch, ar)
+    with pytest.raises(HTTPException) as exc:
+        _ask(ar, input="word " * 400)
+    assert exc.value.status_code == 400
+    assert "ceiling" in str(exc.value.detail)
+    assert engine.MAX_AUDIO_ENV in str(exc.value.detail), "the way out is named"
+    assert calls["segments"] == [], "refused up front: not one `say` call"
+
+
+def test_the_ceiling_moves_with_the_environment_and_junk_falls_back(
+    monkeypatch,
+):
+    """The knob left the card but not the operator: the env is read per
+    request - no settings file, no restart. Junk, blank and 0 mean the
+    default: the guardrail can be moved, never removed."""
+    from omlx.utils import macos_say as engine
+
+    monkeypatch.delenv(engine.MAX_AUDIO_ENV, raising=False)
+    assert engine.max_audio_mb() == engine.DEFAULT_MAX_AUDIO_MB
+    monkeypatch.setenv(engine.MAX_AUDIO_ENV, "64")
+    assert engine.max_audio_mb() == 64
+    monkeypatch.setenv(engine.MAX_AUDIO_ENV, "junk")
+    assert engine.max_audio_mb() == engine.DEFAULT_MAX_AUDIO_MB
+    monkeypatch.setenv(engine.MAX_AUDIO_ENV, "0")
+    assert engine.max_audio_mb() == engine.DEFAULT_MAX_AUDIO_MB
+
+
+def test_a_slow_voice_crossing_the_ceiling_mid_render_stops_early(
+    monkeypatch, say_endpoint
+):
+    """Under the fast bound the pre-check passes, and a voice slower than the
+    bound can still walk past the ceiling while rendering. That exception to
+    fail-up-front must stop at the crossing, name the env, and leak no spool."""
     import glob
     import os
     import tempfile
@@ -1121,18 +1163,14 @@ def test_the_audio_ceiling_refuses_rather_than_cutting_short(
 
     ar, calls = say_endpoint
     before = set(glob.glob(os.path.join(tempfile.gettempdir(), "omlx-say-*")))
+    monkeypatch.setenv(engine.MAX_AUDIO_ENV, "1")
     _use(monkeypatch, ar, chunk=300)
-    monkeypatch.setattr(engine, "DEFAULT_MAX_AUDIO_MB", 1)
-    calls["frames_per_char"] = 400  # ~800 KB of audio per character of text
+    calls["frames_per_char"] = 1500      # 3 KB of audio per character
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(
-            ar._speech_via_macos_say(
-                _speech_request(input="word " * 400), "", "wav"
-            )
-        )
+        _ask(ar, input="word " * 70)     # 350 chars: under the fast bound
     assert exc.value.status_code == 400
-    assert "ceiling" in str(exc.value.detail)
-    assert len(calls["segments"]) < 400 / 5, "it must stop early, not render it all"
+    assert engine.MAX_AUDIO_ENV in str(exc.value.detail)
+    assert 0 < len(calls["segments"]) < 7, "stops at the crossing, not after"
     left = set(glob.glob(os.path.join(tempfile.gettempdir(), "omlx-say-*")))
     assert left == before, "a refused request left spool files behind"
 
@@ -1165,9 +1203,10 @@ def test_an_encoded_reply_is_written_from_the_spool_file(
 
 def test_the_segment_size_is_a_setting_and_the_ceiling_is_not():
     """The card writes the segment size and the loader clamps it on the way in.
-    The audio ceiling is no longer a setting at all (user 2026-10-29: 256 MB
-    is about ninety minutes of speech, no reply needs a knob for it): the
-    settings schema must not carry it, and a settings.json left over from the
+    The audio ceiling is no longer a CARD setting (user 2026-10-29: 256 MB is
+    about ninety minutes of speech, no reply needs a knob for it): the one
+    way to move it is the OMLX_SAY_MAX_AUDIO_MB environment. The settings
+    schema must not carry the field, and a settings.json left over from the
     version that did must simply drop the key."""
     from omlx.settings import IntegrationSettings
 

@@ -871,13 +871,14 @@ def _transcode_speech_output(wav_bytes: bytes, response_format: str) -> bytes:
     return buf.getvalue()
 
 
-def _macos_say_settings() -> tuple[bool, dict[str, str], str, int, int]:
+def _macos_say_settings() -> tuple[bool, dict[str, str], str, int]:
     """(engine switched on, per-language voice map, long-input policy,
-    segment size in characters, audio ceiling in MB) from the global settings.
-    A settings file the server never loaded means the defaults: on, no
-    overrides, say the whole utterance in sentence-sized pieces, up to the
-    default ceiling - so macOS picks every voice and a long reply still gets
-    read instead of being cut."""
+    segment size in characters) from the global settings. A settings file the
+    server never loaded means the defaults: on, no overrides, say the whole
+    utterance in sentence-sized pieces - so macOS picks every voice and a long
+    reply still gets read instead of being cut. The audio ceiling is
+    deliberately absent: it is the environment's, not the settings file's
+    (macos_say.max_audio_mb reads OMLX_SAY_MAX_AUDIO_MB per request)."""
     from ..utils import macos_say
 
     try:
@@ -885,19 +886,12 @@ def _macos_say_settings() -> tuple[bool, dict[str, str], str, int, int]:
 
         integrations = get_settings().integrations
     except RuntimeError:
-        return (
-            True,
-            {},
-            "speak",
-            macos_say.DEFAULT_CHUNK_CHARS,
-            macos_say.DEFAULT_MAX_AUDIO_MB,
-        )
+        return (True, {}, "speak", macos_say.DEFAULT_CHUNK_CHARS)
     return (
         bool(integrations.say_enabled),
         dict(integrations.say_voices),
         str(integrations.say_long_input),
         macos_say.clean_chunk_chars(getattr(integrations, "say_chunk_chars", None)),
-        macos_say.clean_max_audio_mb(getattr(integrations, "say_max_audio_mb", None)),
     )
 
 
@@ -949,8 +943,12 @@ async def _speech_via_macos_say(
 
     A reply longer than the configured segment size is rendered in sentence
     pieces and stitched into one file, so the server's memory tracks the
-    longest segment rather than the longest answer; the ceiling is therefore
-    in MB of audio, not in characters.
+    longest segment rather than the longest answer. The ceiling is MB of
+    audio - the one unit that means the same for every voice - and its knob
+    is the environment (OMLX_SAY_MAX_AUDIO_MB), not the card. A reply that
+    cannot fit even at the fastest speaking pace is refused before anything
+    renders; one that crosses the ceiling on a slow voice is aborted, never
+    delivered cut short.
 
     ``say_voice`` is the voice the model token named ('say:Zuzana') and is
     held to: an address this Mac cannot speak answers 400. ``request.voice``
@@ -975,7 +973,7 @@ async def _speech_via_macos_say(
             status_code=400,
             detail="model 'say' needs a macOS server with the 'say' command",
         )
-    enabled, pinned, long_input, chunk_chars, max_audio_mb = await asyncio.to_thread(
+    enabled, pinned, long_input, chunk_chars = await asyncio.to_thread(
         _macos_say_settings
     )
     if not enabled:
@@ -998,8 +996,11 @@ async def _speech_via_macos_say(
             )
 
     text = (request.input or "").strip()
-    refused = macos_say.long_input_error(len(text), long_input)
+    max_mb = macos_say.max_audio_mb()
+    refused = macos_say.long_input_error(len(text), long_input, max_mb)
     if refused:
+        # Fail or pass up front: this answer costs no render time at all.
+        logger.warning("macOS speech refused before rendering: %s", refused)
         raise HTTPException(status_code=400, detail=refused)
 
     # Route ONCE for the whole utterance. Re-detecting per segment would let
@@ -1012,15 +1013,13 @@ async def _speech_via_macos_say(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     segments = _say_segments(text, chunk_chars)
-    ceiling_bytes = max_audio_mb * 1_000_000
+    ceiling_bytes = max_mb * 1_000_000
     media_type = _SPEECH_RESPONSE_FORMATS[response_format]
     _record_audio_request(macos_say.SAY_ENGINE)
 
     if request.stream:
         return StreamingResponse(
-            _iter_say_stream(
-                segments, address, request.speed, ceiling_bytes, max_audio_mb
-            ),
+            _iter_say_stream(segments, address, request.speed, ceiling_bytes),
             media_type=media_type,
         )
 
@@ -1032,9 +1031,9 @@ async def _speech_via_macos_say(
             request.speed,
             response_format,
             ceiling_bytes,
-            max_audio_mb,
         )
     except ValueError as exc:
+        logger.warning("macOS speech refused: %s", exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except LookupError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1061,12 +1060,14 @@ def _say_segments(text: str, chunk_chars: int) -> list[str]:
     return _split_tts_text(text, max_chars=chunk_chars) or [text]
 
 
-def _say_ceiling_error(payload_bytes: int, max_audio_mb: int) -> ValueError:
+def _say_ceiling_error(payload_bytes: int, ceiling_bytes: int) -> ValueError:
+    from ..utils import macos_say
+
     return ValueError(
-        "this reply passed the %d MB audio ceiling set under "
-        "Settings > Integrations > macOS Speech before it finished speaking. "
-        "Raise the ceiling, lower the segment size, or ask for a shorter "
-        "answer" % max_audio_mb
+        "this reply crossed the %d MB ceiling of one spoken answer while it "
+        "was still rendering - this voice speaks slower than the pre-check "
+        "promises. Ask for a shorter reply, or set %s to raise the ceiling"
+        % (ceiling_bytes // 1_000_000, macos_say.MAX_AUDIO_ENV)
     )
 
 
@@ -1082,7 +1083,7 @@ def _say_segment_pcm(segment: str, address: Any, speed: Any) -> tuple:
         del wav
 
 
-def _say_spool(segments, address, speed, ceiling_bytes, max_audio_mb, out_path):
+def _say_spool(segments, address, speed, ceiling_bytes, out_path):
     """Render every segment into ONE WAV file, header patched to the truth.
 
     Nothing longer than a segment is ever held: the reply accumulates on disk.
@@ -1102,7 +1103,7 @@ def _say_spool(segments, address, speed, ceiling_bytes, max_audio_mb, out_path):
                 )
             total += len(pcm)
             if total > ceiling_bytes:
-                raise _say_ceiling_error(total, max_audio_mb)
+                raise _say_ceiling_error(total, ceiling_bytes)
             if pcm:
                 out.write(pcm)
     if fmt is None:
@@ -1125,16 +1126,14 @@ def _say_spool(segments, address, speed, ceiling_bytes, max_audio_mb, out_path):
 
 
 def _say_spool_and_encode(
-    segments, address, speed, response_format, ceiling_bytes, max_audio_mb
+    segments, address, speed, response_format, ceiling_bytes
 ) -> str:
     """Spool, then encode if the client asked for something other than WAV.
     Returns a temp path the caller must delete once it has been sent."""
     fd, spool = tempfile.mkstemp(prefix="omlx-say-", suffix=".wav")
     os.close(fd)
     try:
-        _say_spool(
-            segments, address, speed, ceiling_bytes, max_audio_mb, spool
-        )
+        _say_spool(segments, address, speed, ceiling_bytes, spool)
         if response_format == "wav":
             return spool
         fd, out = tempfile.mkstemp(prefix="omlx-say-", suffix="." + response_format)
@@ -1186,7 +1185,7 @@ def _transcode_speech_file(src: str, dst: str, response_format: str) -> None:
                 fout.write(block)
 
 
-async def _iter_say_stream(segments, address, speed, ceiling_bytes, max_audio_mb):
+async def _iter_say_stream(segments, address, speed, ceiling_bytes):
     """Header first, then each segment the moment it finishes rendering: a
     long answer starts playing after its first sentence instead of after the
     last one, and the server holds one segment at a time.
@@ -1215,7 +1214,7 @@ async def _iter_say_stream(segments, address, speed, ceiling_bytes, max_audio_mb
         if total > ceiling_bytes:
             # The bytes already sent cannot be taken back, so this dies loudly
             # rather than ending the reply with a silent cut.
-            raise _say_ceiling_error(total, max_audio_mb)
+            raise _say_ceiling_error(total, ceiling_bytes)
         if pcm:
             yield pcm
 

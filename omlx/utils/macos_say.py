@@ -45,6 +45,7 @@ Contract:
 from __future__ import annotations
 
 import logging
+import os
 import plistlib
 import re
 import shutil
@@ -67,11 +68,21 @@ OPENAI_INPUT_CHARS = 4096       # OpenAI's documented input limit for this call
 # a property of the voice (measured here: 18 chars/s for Samantha, 5 chars/s
 # for the novelty voice this Mac ships as its English default).
 DEFAULT_CHUNK_CHARS = 1200      # ~1-2 sentences; one call per chunk
-DEFAULT_MAX_AUDIO_MB = 256      # ~89 minutes of speech
 MIN_CHUNK_CHARS = 200           # below this the per-call cost dominates
 MAX_CHUNK_CHARS = 20000         # `say` reads a file, so argv is not the limit
-MIN_MAX_AUDIO_MB = 1
-MAX_MAX_AUDIO_MB = 4096
+# The ceiling is a guardrail rather than a card setting (decided 2026-10-29):
+# the default is 256 MB, ~89 minutes of speech, deliberately generous because
+# guessing what an operator needs is a losing game. It stays configurable
+# through the environment - the one place a number this size belongs - and a
+# reply past it is refused, never cut short.
+MAX_AUDIO_ENV = "OMLX_SAY_MAX_AUDIO_MB"
+DEFAULT_MAX_AUDIO_MB = 256
+SPEECH_BYTES_PER_SEC = 48000     # 24 kHz mono 16-bit, fixed whatever the voice
+# Measured chars/s: 18 for Samantha, 5 for the novelty default voice on this
+# Mac. Rounding UP to 20 gives the fast bound of speech: the minimum bytes
+# this text can produce. Past the ceiling even at that pace, the answer is
+# refuse NOW - before the first `say` call - rather than mid-render.
+FAST_SPEECH_CHARS_PER_SEC = 20
 LONG_INPUT_SPEAK = "speak"      # operator policy: say the whole thing
 LONG_INPUT_REJECT = "reject"    # operator policy: refuse like OpenAI does
 LONG_INPUT_POLICIES = (LONG_INPUT_SPEAK, LONG_INPUT_REJECT)
@@ -1074,28 +1085,59 @@ def clean_chunk_chars(raw: Any) -> int:
     return max(MIN_CHUNK_CHARS, min(MAX_CHUNK_CHARS, value))
 
 
-def clean_max_audio_mb(raw: Any) -> int:
-    """Ceiling in megabytes of AUDIO, the unit that means the same thing on
-    every Mac and for every voice."""
-    if raw is None:
-        return DEFAULT_MAX_AUDIO_MB
+def max_audio_mb() -> int:
+    """Ceiling for one reply, in MB of audio, from :data:`MAX_AUDIO_ENV`.
+    Unset, blank, junk or 0 means the default - the guardrail can never be
+    switched off, only moved. The environment is read per request, so an
+    operator can raise it without touching a settings file or a restart."""
+    raw = str(os.environ.get(MAX_AUDIO_ENV) or "").strip()
     try:
-        value = int(float(str(raw).strip()))
-    except (TypeError, ValueError):
+        value = int(float(raw))
+    except ValueError:
         return DEFAULT_MAX_AUDIO_MB
-    return max(MIN_MAX_AUDIO_MB, min(MAX_MAX_AUDIO_MB, value))
+    return value if value >= 1 else DEFAULT_MAX_AUDIO_MB
 
 
-def long_input_error(text_len: int, policy: Any = LONG_INPUT_SPEAK) -> str | None:
+def min_audio_bytes(text_len: int) -> int:
+    """The SMALLEST this much text can ever render to: the fastest speaking
+    pace times the fixed byte rate. Slow voices only add bytes."""
+    return text_len * SPEECH_BYTES_PER_SEC // FAST_SPEECH_CHARS_PER_SEC
+
+
+def ceiling_refusal(text_len: int, ceiling_mb: int | None = None,
+                    env: str = MAX_AUDIO_ENV) -> str | None:
+    """Refuse the reply BEFORE rendering if it cannot possibly fit.
+
+    Fail-or-pass up front is the contract: past the fast bound below, no
+    voice on this Mac could keep the audio under the ceiling, so the answer
+    comes immediately instead of an hour into a render. A reply under the
+    bound may still cross it mid-render on a slow voice - that abort exists
+    and is honest, but it is the exception the pre-check cannot see, not the
+    design."""
+    mb = max_audio_mb() if ceiling_mb is None else ceiling_mb
+    if min_audio_bytes(text_len) > mb * 1_000_000:
+        return (
+            "input is %d characters: that is at least %d MB of audio even at "
+            "the fastest speaking pace, over the %d MB ceiling of one spoken "
+            "answer. Ask for a shorter reply, or set %s to raise the ceiling"
+            % (text_len, min_audio_bytes(text_len) // 1_000_000 + 1,
+               mb, env)
+        )
+    return None
+
+
+def long_input_error(text_len: int, policy: Any = LONG_INPUT_SPEAK,
+                     max_audio_mb_: int | None = None) -> str | None:
     """Why this utterance must not be rendered, or ``None`` to render it.
 
-    Two limits, on purpose. OpenAI's ``/v1/audio/speech`` documents 4096
+    Three limits, on purpose. OpenAI's ``/v1/audio/speech`` documents 4096
     characters and answers 400 past it; an operator who wants that exact
     behaviour picks ``reject``. Everyone else gets the whole utterance said:
     the router splits it at sentence boundaries and stitches the pieces, which
     costs about 0.9 s of setup per extra call (measured) and buys a bounded
-    render and a first byte that does not wait for the last sentence. Only the
-    absurd is refused here; the byte ceiling in the settings does the real
+    render and a first byte that does not wait for the last sentence. The
+    absurd is refused here, and so is text that cannot fit the MB ceiling at
+    ANY pace (:func:`ceiling_refusal`); the byte ceiling still does the real
     limiting, because characters say nothing about the size of the audio."""
     if text_len > MAX_SAY_CHARS:
         return (
@@ -1109,7 +1151,7 @@ def long_input_error(text_len: int, policy: Any = LONG_INPUT_SPEAK) -> str | Non
             "Settings > Integrations > macOS Speech"
             % (text_len, OPENAI_INPUT_CHARS)
         )
-    return None
+    return ceiling_refusal(text_len, max_audio_mb_)
 
 
 def synth_bytes(
