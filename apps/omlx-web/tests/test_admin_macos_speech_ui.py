@@ -116,20 +116,24 @@ def test_saves_send_the_whole_voice_map():
 
 
 def test_the_copy_describes_what_the_engine_actually_does():
-    """Two copies of the truth the card had wrong. The long-text control must
-    name the limit it is about, and say in words what it does to the text:
-    nothing is cut up or split, it is spoken whole or refused."""
+    """The long-text control must name the limit it is about and say what it
+    does to the text. It is not allowed to promise that nothing is split any
+    more, because a long reply IS split - at sentence boundaries, into pieces
+    that are stitched back into one file. The promise that still holds, and
+    that has to stay in words the owner can rely on, is that nothing is cut."""
     label = EN["settings.integrations.speech.long_label"]
     assert "OpenAI" in label and "limit" in label.lower()
     hint = EN["settings.integrations.speech.long_hint"]
-    for needle in ("4096", "10000"):
-        assert needle in hint, f"the hint lost the {needle} character figure"
-    assert "never cut or split" in hint, "the hint must rule out chunking in words"
-    assert "spoken whole" in hint and "refused" in hint
+    assert "4096" in hint, "the hint lost the OpenAI character figure"
+    assert "10000" not in hint, "the retired character ceiling must not reappear"
+    assert "Nothing is ever cut short" in hint, "the promise the engine keeps"
+    assert "sentence-sized pieces" in hint and "stitched" in hint, "how it keeps it"
+    assert "refus" in hint.lower(), "the reject option must be described"
     # and the same promises must hold in the translated catalog, not just en
     cs = json.loads((ROOT / "omlx_web/i18n/cs.json").read_text())
-    assert "10000" in cs["settings.integrations.speech.long_hint"]
-    assert "4096" in cs["settings.integrations.speech.long_hint"]
+    long_cs = cs["settings.integrations.speech.long_hint"]
+    assert "4096" in long_cs and "10000" not in long_cs
+    assert "dílc" in long_cs and "spoj" in long_cs, "cs must say split-and-stitch too"
 
 
 def test_the_usage_example_covers_every_way_to_address_the_engine():
@@ -192,6 +196,32 @@ def test_dashboard_defaults_to_speaking_long_text():
     assert (
         "say_long_input: this.globalSettings.integrations.say_long_input" in save
     )
+
+
+def test_the_two_limits_are_editable_on_the_card():
+    """Segment size and audio ceiling belong to the operator, like the policy
+    above them: they are settings, not constants the caller has to guess."""
+    for field, key in (
+        ("say_chunk_chars", "chunk_label"),
+        ("say_max_audio_mb", "max_label"),
+    ):
+        at = CARD.index(f"speech.{key}")
+        block = CARD[at - 400 : at + 900]
+        assert f'x-model.number="globalSettings.integrations.{field}"' in block, field
+        assert 'type="number"' in block, field
+        assert "@change=\"saveSayLimits()\"" in block, field
+    assert "say_chunk_chars" in DASHBOARD_JS and "say_max_audio_mb" in DASHBOARD_JS
+
+
+def test_the_ceiling_hint_explains_bytes_rather_than_characters():
+    """Characters are the unit that lies about cost here: the same text is
+    3x the audio on a slow voice. The hint has to say what the number means."""
+    hint = EN["settings.integrations.speech.max_hint"]
+    assert "48 KB" in hint and "second" in hint, "the rate that makes MB meaningful"
+    assert "minute" in hint, "what the default actually buys"
+    assert "never cut short" in hint, "the refusal promise, in the owner's words"
+    chunk = EN["settings.integrations.speech.chunk_hint"]
+    assert "0 never splits" in chunk, "the escape hatch is documented where it is set"
 
 
 def test_a_failed_save_puts_the_dropdown_back():

@@ -738,44 +738,151 @@ def _speech_request(**kwargs):
     return AudioSpeechRequest(**base)
 
 
+def _mini_wav(text, frames_per_char=1, rate=24000):
+    """A real WAV the size of its text, so a test can measure the stitch."""
+    import io as _io
+    import wave as _wave
+
+    buf = _io.BytesIO()
+    with _wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(rate)
+        wf.writeframes(b"\x01\x02" * max(1, len(text) * frames_per_char))
+    return buf.getvalue()
+
+
 @pytest.fixture
 def say_endpoint(monkeypatch):
+    """The endpoint with `say` replaced by a deterministic WAV maker that
+    records every segment, so the split and the stitch are observed rather
+    than trusted. ``frames_per_char`` scales the audio without scaling the
+    text, which is how the ceiling gets tested without rendering an hour."""
     from omlx.api import audio_routes as ar
     from omlx.utils import macos_say as engine
 
     monkeypatch.setattr(engine, "available", lambda: True)
     monkeypatch.setattr(engine, "resolve", lambda name: None)
     monkeypatch.setattr(
-        ar, "_macos_say_settings", lambda: (True, {"cs-CZ": "Zuzana"}, "speak")
+        ar,
+        "_macos_say_settings",
+        lambda: (True, {"cs-CZ": "Zuzana"}, "speak", 1200, 256),
     )
-    calls = {}
+    calls = {"segments": [], "frames_per_char": 1}
 
-    def fake_synth(text, voice, language, voices, speed, long_input):
+    def fake_route(voice, language, text, voices):
         calls["voice"] = voice
         calls["language"] = language
         calls["voices"] = voices
-        calls["long_input"] = long_input
-        return b"RIFF" + b"\0" * 500
+        # routing must see the WHOLE utterance: sentence-by-sentence detection
+        # is how one Czech answer ends up in three different voices
+        calls["routed_for"] = len(text)
+        return voice or ""
 
-    monkeypatch.setattr(engine, "synth_bytes", fake_synth)
-    return ar, calls
+    def fake_synth(text, address, speed=None):
+        calls["segments"].append(text)
+        calls["address"] = address
+        calls["speed"] = speed
+        return _mini_wav(text, calls["frames_per_char"])
+
+    monkeypatch.setattr(engine, "route", fake_route)
+    monkeypatch.setattr(engine, "synth_wav", fake_synth)
+
+    # A spool is only deleted by the response's background task, and a
+    # hand-called endpoint never runs one: without this check the suite would
+    # litter the temp directory a few MB per test and nobody would notice for
+    # a hundred commits. Anything left behind is reported and removed.
+    import glob
+    import os
+    import tempfile
+
+    spools = os.path.join(tempfile.gettempdir(), "omlx-say-*")
+    before = set(glob.glob(spools))
+    yield ar, calls
+    leaked = sorted(set(glob.glob(spools)) - before)
+    for path in leaked:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+    assert not leaked, f"{len(leaked)} spool file(s) never cleaned up: " \
+        f"{[os.path.basename(p) for p in leaked]}"
+
+
+def _drain_file(response):
+    """Bytes a FileResponse would stream, then its own cleanup. The background
+    task only runs inside ASGI, so a direct call must delete the spool and the
+    test must prove it gets deleted - a leaked temp file per request is how a
+    Mac quietly runs out of space."""
+    import os as _os
+
+    task = response.background
+    assert task is not None, "a spooled reply must clean itself up after sending"
+    with open(response.path, "rb") as fh:
+        data = fh.read()
+    task.func(*task.args, **task.kwargs)
+    assert not _os.path.exists(response.path), "spool left behind after sending"
+    return data
+
+
+def _use(monkeypatch, ar, chunk=1200, mb=256, policy="speak"):
+    """Point the endpoint at one set of operator settings."""
+    monkeypatch.setattr(
+        ar, "_macos_say_settings", lambda: (True, {}, policy, chunk, mb)
+    )
+
+
+def _off(monkeypatch, ar):
+    """Same, with the engine switched off."""
+    monkeypatch.setattr(
+        ar, "_macos_say_settings", lambda: (False, {}, "speak", 1200, 256)
+    )
+
+
+def _ask(ar, fmt="wav", **kwargs):
+    """One request through the macOS speech path."""
+    return asyncio.run(ar._speech_via_macos_say(_speech_request(**kwargs), "", fmt))
+
+
+def _wav_frames(payload):
+    import io as _io
+    import wave as _wave
+
+    with _wave.open(_io.BytesIO(payload), "rb") as wf:
+        return wf.getnframes(), wf.getframerate(), wf.getnchannels()
 
 
 def test_speech_serves_the_macos_engine(monkeypatch, say_endpoint):
     ar, calls = say_endpoint
     response = asyncio.run(ar._speech_via_macos_say(_speech_request(), "", "wav"))
-    assert response.body.startswith(b"RIFF")
+    data = _drain_file(response)
+    assert data.startswith(b"RIFF")
     assert response.media_type == "audio/wav"
     assert calls["voices"] == {"cs-CZ": "Zuzana"}
+    assert len(calls["segments"]) == 1, "a short reply is one call, as it was"
 
 
-def test_speech_passes_the_long_input_policy_to_the_engine(monkeypatch, say_endpoint):
+def test_the_long_input_policy_is_applied_before_rendering(
+    monkeypatch, say_endpoint
+):
+    """The policy is checked once, on the whole utterance, in the router: it
+    cannot travel to the engine any more because the engine now sees segments,
+    and a segment is never the thing the operator meant to allow or refuse."""
     ar, calls = say_endpoint
-    asyncio.run(ar._speech_via_macos_say(_speech_request(), "", "wav"))
-    assert calls["long_input"] == "speak"
-    monkeypatch.setattr(ar, "_macos_say_settings", lambda: (True, {}, "reject"))
-    asyncio.run(ar._speech_via_macos_say(_speech_request(), "", "wav"))
-    assert calls["long_input"] == "reject"
+    long_text = "word " * 1000  # 5000 characters, past OpenAI's limit
+    _use(monkeypatch, ar, policy="speak")
+    _drain_file(_ask(ar, input=long_text))
+    assert len(calls["segments"]) > 1, "speak means say it all, in pieces"
+
+    _use(monkeypatch, ar, policy="reject")
+    with pytest.raises(HTTPException) as exc:
+        _ask(ar, input=long_text)
+    assert exc.value.status_code == 400
+    assert "4096" in str(exc.value.detail)
+    calls["segments"].clear()
+    with pytest.raises(HTTPException):
+        _ask(ar, input=long_text)
+    assert calls["segments"] == [], "a refusal must not render anything first"
 
 
 def test_the_engine_is_advertised_only_when_it_can_answer(monkeypatch):
@@ -786,12 +893,12 @@ def test_the_engine_is_advertised_only_when_it_can_answer(monkeypatch):
     from omlx.utils import macos_say as engine
 
     monkeypatch.setattr(engine, "available", lambda: True)
-    monkeypatch.setattr(ar, "_macos_say_settings", lambda: (True, {}, "speak"))
+    _use(monkeypatch, ar)
     assert ar.say_model_visible() is True
-    monkeypatch.setattr(ar, "_macos_say_settings", lambda: (False, {}, "speak"))
+    _off(monkeypatch, ar)
     assert ar.say_model_visible() is False, "a switched-off engine is not offered"
     monkeypatch.setattr(engine, "available", lambda: False)
-    monkeypatch.setattr(ar, "_macos_say_settings", lambda: (True, {}, "speak"))
+    _use(monkeypatch, ar)
     assert ar.say_model_visible() is False, "Linux has no say to offer"
 
 
@@ -827,7 +934,7 @@ def test_speech_answers_400_for_a_language_the_mac_cannot_speak(say_endpoint):
 
     from omlx.utils import macos_say as engine
 
-    engine.synth_bytes = raise_lookup
+    engine.route = raise_lookup
     with pytest.raises(HTTPException) as exc:
         asyncio.run(ar._speech_via_macos_say(_speech_request(language="de-DE"), "", "wav"))
     assert exc.value.status_code == 400
@@ -840,7 +947,7 @@ def test_speech_answers_500_when_say_itself_fails(say_endpoint):
     def explode(*args, **kwargs):
         raise RuntimeError("macOS say: no audio produced")
 
-    engine.synth_bytes = explode
+    engine.synth_wav = explode
     with pytest.raises(HTTPException) as exc:
         asyncio.run(ar._speech_via_macos_say(_speech_request(), "", "wav"))
     assert exc.value.status_code == 500
@@ -848,12 +955,12 @@ def test_speech_answers_500_when_say_itself_fails(say_endpoint):
 
 def test_speech_refuses_a_switched_off_engine(monkeypatch, say_endpoint):
     ar, calls = say_endpoint
-    monkeypatch.setattr(ar, "_macos_say_settings", lambda: (False, {}, "speak"))
+    _off(monkeypatch, ar)
     with pytest.raises(HTTPException) as exc:
         asyncio.run(ar._speech_via_macos_say(_speech_request(), "", "wav"))
     assert exc.value.status_code == 400
     assert "switched off" in str(exc.value.detail)
-    assert calls == {}
+    assert calls["segments"] == [], "an off engine must not render anything"
 
 
 def test_speech_refuses_a_non_macos_server(monkeypatch, say_endpoint):
@@ -879,8 +986,11 @@ def test_speech_refuses_voice_cloning(monkeypatch, say_endpoint):
 
 def test_openai_voice_field_is_ignored_when_it_is_not_a_macos_voice(say_endpoint):
     ar, calls = say_endpoint
-    asyncio.run(ar._speech_via_macos_say(_speech_request(voice="alloy"), "", "wav"))
+    _drain_file(ar_ := asyncio.run(
+        ar._speech_via_macos_say(_speech_request(voice="alloy"), "", "wav")
+    ))
     assert calls["voice"] == ""
+    assert ar_.status_code == 200
 
 
 def test_macos_voice_from_the_voice_field_is_honoured(say_endpoint):
@@ -891,38 +1001,151 @@ def test_macos_voice_from_the_voice_field_is_honoured(say_endpoint):
         return {"name": name, "identifier": "id-" + name} if name == "Zuzana" else None
 
     engine.resolve = fake_resolve
-    asyncio.run(ar._speech_via_macos_say(_speech_request(voice="Zuzana"), "", "wav"))
+    _drain_file(asyncio.run(
+        ar._speech_via_macos_say(_speech_request(voice="Zuzana"), "", "wav")
+    ))
     assert calls["voice"] == "Zuzana"
 
 
 def test_voice_named_in_the_model_token_is_held_to(say_endpoint):
     ar, _ = say_endpoint
 
-    def explode(text, voice, language, voices, speed, long_input):
+    def explode(voice, language, text, voices):
         raise LookupError("voice 'Ghost' is not installed on this Mac")
 
     from omlx.utils import macos_say as engine
 
-    engine.synth_bytes = explode
+    engine.route = explode
     with pytest.raises(HTTPException) as exc:
         asyncio.run(ar._speech_via_macos_say(_speech_request(), "Ghost", "wav"))
     assert exc.value.status_code == 400
 
 
-def test_streaming_request_gets_the_finished_audio_in_chunks(say_endpoint):
-    ar, _ = say_endpoint
+def _collect(response):
+    async def run():
+        return [chunk async for chunk in response.body_iterator]
+
+    return asyncio.run(run())
+
+
+def test_a_streamed_reply_sends_the_first_sentence_before_the_last(say_endpoint):
+    """`say` renders one piece at a time, so a streamed reply can carry piece
+    one while piece two is still being spoken: header, then one block per
+    segment. The header is the house unknown-length one (audio_utils), the same
+    promise the model streaming path makes; a client that needs the true
+    length asks without `stream` and gets the stitched file instead."""
+    ar, calls = say_endpoint
+    text = "Alpha beta gamma. Delta epsilon zeta. " * 80
     response = asyncio.run(
-        ar._speech_via_macos_say(_speech_request(stream=True), "", "wav")
+        ar._speech_via_macos_say(_speech_request(input=text, stream=True), "", "wav")
     )
     from fastapi.responses import StreamingResponse
 
     assert isinstance(response, StreamingResponse)
+    pieces = _collect(response)
+    assert len(calls["segments"]) > 1
+    # header first, then one block per segment
+    assert len(pieces) == len(calls["segments"]) + 1
+    assert pieces[0][:4] == b"RIFF" and len(pieces[0]) == 44
+    first = 2 * len(calls["segments"][0])
+    assert len(pieces[1]) == first, "the first audio IS the first sentence"
+    assert b"".join(pieces[1:]).count(b"\x01\x02") >= sum(
+        len(s) for s in calls["segments"]
+    ), "every segment reached the wire"
 
-    async def collect():
-        return [chunk async for chunk in response.body_iterator]
 
-    pieces = asyncio.run(collect())
-    assert b"".join(pieces).startswith(b"RIFF")
+def test_a_long_reply_is_split_at_sentences_and_stitched(say_endpoint):
+    """The whole point of segmentation: many `say` calls, one honest WAV.
+    Asserted on the bytes, because a stitched file that lies about its length
+    is the failure mode nobody notices until a player shows the wrong duration."""
+    ar, calls = say_endpoint
+    text = "One two three four five six. " * 120  # 3000 characters
+    data = _drain_file(_ask(ar, input=text))
+    segments = calls["segments"]
+    assert len(segments) > 1, "a 3000 character reply must not be one call"
+    joined = "".join(segments).replace(" ", "")
+    assert joined == text.replace(" ", ""), "the text survives intact"
+    assert calls["routed_for"] == len(text.strip()), "routing saw the whole utterance"
+    frames, rate, channels = _wav_frames(data)
+    assert frames == sum(len(s) for s in segments), "every segment is in the file"
+    assert len(data) == frames * 2 + 44, "the header matches the payload exactly"
+    assert (rate, channels) == (24000, 1)
+
+
+def test_segmentation_can_be_switched_off(monkeypatch, say_endpoint):
+    ar, calls = say_endpoint
+    _use(monkeypatch, ar, chunk=0)
+    _drain_file(_ask(ar, input="One two three four five six. " * 120))
+    assert len(calls["segments"]) == 1, "chunk size 0 means one `say` call"
+
+
+def test_the_audio_ceiling_refuses_rather_than_cutting_short(
+    monkeypatch, say_endpoint
+):
+    """Over the ceiling the caller gets a 400 that names the setting. A partial
+    file would be the worse answer, and so would a leaked spool."""
+    import glob
+    import os
+    import tempfile
+
+    ar, calls = say_endpoint
+    before = set(glob.glob(os.path.join(tempfile.gettempdir(), "omlx-say-*")))
+    _use(monkeypatch, ar, chunk=300, mb=1)
+    calls["frames_per_char"] = 400  # ~800 KB of audio per character of text
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            ar._speech_via_macos_say(
+                _speech_request(input="word " * 400), "", "wav"
+            )
+        )
+    assert exc.value.status_code == 400
+    assert "ceiling" in str(exc.value.detail)
+    assert len(calls["segments"]) < 400 / 5, "it must stop early, not render it all"
+    left = set(glob.glob(os.path.join(tempfile.gettempdir(), "omlx-say-*")))
+    assert left == before, "a refused request left spool files behind"
+
+
+def test_an_encoded_reply_is_written_from_the_spool_file(
+    monkeypatch, say_endpoint
+):
+    """mp3 and friends must be encoded by block copy from the stitched file:
+    loading the reply to transcode it is the memory this path exists to avoid."""
+    import os
+
+    ar, calls = say_endpoint
+    seen = {}
+
+    def fake_encode(src, dst, response_format):
+        seen["src"] = src
+        seen["format"] = response_format
+        assert os.path.getsize(src) > 44, "the spool must be a real WAV on disk"
+        with open(dst, "wb") as fh:
+            fh.write(b"ID3fake")
+
+    monkeypatch.setattr(ar, "_transcode_speech_file", fake_encode)
+    data = _drain_file(
+        _ask(ar, fmt="mp3", input="One two three four five six. " * 120)
+    )
+    assert seen["format"] == "mp3"
+    assert data == b"ID3fake"
+    assert not os.path.exists(seen["src"]), "the WAV spool must not outlive the encode"
+
+
+def test_the_two_limits_are_settings_not_surprises():
+    """The card writes them, the endpoint reads them, and both are clamped on
+    the way in: a stray 0 in the ceiling would otherwise refuse every request."""
+    from omlx.settings import IntegrationSettings
+
+    loaded = IntegrationSettings.from_dict(
+        {"say_chunk_chars": 50, "say_max_audio_mb": 0}
+    )
+    assert loaded.say_chunk_chars == 200, "raised to the floor, not taken literally"
+    assert loaded.say_max_audio_mb == 1, "a ceiling of zero is refused by the cleaner"
+    junk = IntegrationSettings.from_dict({"say_chunk_chars": "off"})
+    blank = IntegrationSettings.from_dict({"say_chunk_chars": None})
+    assert junk.say_chunk_chars == 1200, "junk reads as the default"
+    assert blank.say_chunk_chars == 1200, "absent reads as the default too"
+    assert IntegrationSettings().to_dict()["say_max_audio_mb"] == 256
 
 
 # --------------------------------------------------------- settings schema --

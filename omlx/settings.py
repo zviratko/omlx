@@ -984,6 +984,46 @@ def _clean_say_long_input(raw: Any) -> str:
     return value if value in _SAY_LONG_INPUTS else _SAY_LONG_INPUTS[0]
 
 
+# Segment size and audio ceiling for the same engine. Bounds repeated from
+# omlx.utils.macos_say (DEFAULT_CHUNK_CHARS, DEFAULT_MAX_AUDIO_MB and friends)
+# for the same reason as the policies above.
+_SAY_CHUNK_DEFAULT = 1200
+_SAY_CHUNK_MIN = 200
+_SAY_CHUNK_MAX = 20000
+_SAY_MB_DEFAULT = 256
+_SAY_MB_MIN = 1
+_SAY_MB_MAX = 4096
+
+
+def _clean_say_chunk_chars(raw: Any) -> int:
+    """Characters per `say` call. 0 means 'never split, one call whatever the
+    length'; anything under the floor is raised, because each extra call costs
+    about 0.9 s of setup and a 20-character chunk would only be slow."""
+    if raw is None:
+        return _SAY_CHUNK_DEFAULT
+    try:
+        value = int(float(str(raw).strip()))
+    except (TypeError, ValueError):
+        return _SAY_CHUNK_DEFAULT
+    if value <= 0:
+        return 0
+    return max(_SAY_CHUNK_MIN, min(_SAY_CHUNK_MAX, value))
+
+
+def _clean_say_max_audio_mb(raw: Any) -> int:
+    """Ceiling for one utterance in MB of AUDIO, not characters: 24 kHz mono
+    16-bit is 48 KB per second of speech, while characters per second is a
+    property of the voice (18 chars/s measured for Samantha, 5 chars/s for a
+    novelty voice). The megabyte is the unit that means the same on every Mac."""
+    if raw is None:
+        return _SAY_MB_DEFAULT
+    try:
+        value = int(float(str(raw).strip()))
+    except (TypeError, ValueError):
+        return _SAY_MB_DEFAULT
+    return max(_SAY_MB_MIN, min(_SAY_MB_MAX, value))
+
+
 @dataclass
 class IntegrationSettings:
     """Other integrations settings."""
@@ -1024,6 +1064,12 @@ class IntegrationSettings:
     # utterance (one `say` call renders it in seconds), "reject" answers 400
     # exactly like OpenAI does.
     say_long_input: str = "speak"
+    # A reply past one segment is rendered in sentence-sized pieces and
+    # stitched into one file, so memory tracks the longest segment, not the
+    # longest answer. That is why the limit below is bytes of audio: with the
+    # reply on disk, characters say nothing about the cost.
+    say_chunk_chars: int = _SAY_CHUNK_DEFAULT
+    say_max_audio_mb: int = _SAY_MB_DEFAULT
     # External engines: Splash (omlx/engine/splash.py). An empty path means
     # oMLX looks for an installed launcher itself.
     splash_path: str | None = None
@@ -1060,6 +1106,8 @@ class IntegrationSettings:
             "say_enabled": self.say_enabled,
             "say_voices": dict(self.say_voices),
             "say_long_input": self.say_long_input,
+            "say_chunk_chars": self.say_chunk_chars,
+            "say_max_audio_mb": self.say_max_audio_mb,
             "splash_path": self.splash_path,
             "splash_kv_format": self.splash_kv_format,
             "splash_max_memory_gb": self.splash_max_memory_gb,
@@ -1104,6 +1152,8 @@ class IntegrationSettings:
             say_enabled=bool(data.get("say_enabled", True)),
             say_voices=_clean_say_voices(data.get("say_voices")),
             say_long_input=_clean_say_long_input(data.get("say_long_input")),
+            say_chunk_chars=_clean_say_chunk_chars(data.get("say_chunk_chars")),
+            say_max_audio_mb=_clean_say_max_audio_mb(data.get("say_max_audio_mb")),
             splash_path=data.get("splash_path") or None,
             splash_kv_format=data.get("splash_kv_format", "int8"),
             splash_max_memory_gb=data.get("splash_max_memory_gb"),

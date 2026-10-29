@@ -88,7 +88,9 @@ from ..settings import (
     BURST_DECODE_MODES,
     SPLASH_KV_FORMATS,
     SubKeyEntry,
+    _clean_say_chunk_chars,
     _clean_say_long_input,
+    _clean_say_max_audio_mb,
     burst_decode_env,
 )
 from ..utils import gpu_power
@@ -793,6 +795,8 @@ class GlobalSettingsRequest(BaseModel):
     say_enabled: bool | None = None
     say_voices: dict[str, str] | None = None
     say_long_input: str | None = None
+    say_chunk_chars: int | None = None
+    say_max_audio_mb: int | None = None
     markitdown_enabled: bool | None = None
     markitdown_expose_model: bool | None = None
     markitdown_max_file_size_mb: int | None = None
@@ -4753,6 +4757,8 @@ def _global_settings_response(global_settings):
             "say_enabled": global_settings.integrations.say_enabled,
             "say_voices": dict(global_settings.integrations.say_voices),
             "say_long_input": global_settings.integrations.say_long_input,
+            "say_chunk_chars": global_settings.integrations.say_chunk_chars,
+            "say_max_audio_mb": global_settings.integrations.say_max_audio_mb,
             # Whether THIS server can speak at all: the card hides its
             # controls off macOS instead of offering a dead engine.
             "say_supported": macos_say.available(),
@@ -5705,6 +5711,26 @@ async def update_global_settings(
         logger.info(
             "macOS speech long-input policy: %s",
             global_settings.integrations.say_long_input,
+        )
+    if "say_chunk_chars" in request.model_fields_set:
+        # 0 switches segmentation off (one `say` call, however long the text);
+        # the bounds are the engine's, since it is what pays per call.
+        global_settings.integrations.say_chunk_chars = _clean_say_chunk_chars(
+            request.say_chunk_chars
+        )
+        integrations_changed = True
+        logger.info(
+            "macOS speech segment size: %s characters",
+            global_settings.integrations.say_chunk_chars or "unsegmented",
+        )
+    if "say_max_audio_mb" in request.model_fields_set:
+        global_settings.integrations.say_max_audio_mb = _clean_say_max_audio_mb(
+            request.say_max_audio_mb
+        )
+        integrations_changed = True
+        logger.info(
+            "macOS speech audio ceiling: %d MB",
+            global_settings.integrations.say_max_audio_mb,
         )
     if "markitdown_enabled" in request.model_fields_set:
         global_settings.integrations.markitdown_enabled = bool(

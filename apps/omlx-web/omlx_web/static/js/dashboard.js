@@ -204,6 +204,8 @@
                     say_enabled: true,
                     say_voices: {},
                     say_long_input: 'speak',
+                    say_chunk_chars: 1200,
+                    say_max_audio_mb: 256,
                     say_supported: false,
                 },
                 external_engines: {
@@ -4425,6 +4427,8 @@
                             say_enabled: this.globalSettings.integrations.say_enabled,
                             say_voices: this.sayVoicesMap(),
                             say_long_input: this.globalSettings.integrations.say_long_input,
+                            say_chunk_chars: this.globalSettings.integrations.say_chunk_chars,
+                            say_max_audio_mb: this.globalSettings.integrations.say_max_audio_mb,
                         }),
                     });
                     if (!response.ok) {
@@ -4569,6 +4573,23 @@
                 this.saveIntegrationSettings().then(err => {
                     if (!err) return;
                     integrations.say_long_input = chosen === 'speak' ? 'reject' : 'speak';
+                    this.macosSay.error = err;
+                });
+            },
+
+            // Segment size and audio ceiling. The server clamps both to the
+            // bounds the engine actually honours, so a field that reads 5 after
+            // a reload is not a bug - the next page load shows the truth, and
+            // min/max on the input keeps the guess close to it.
+            saveSayLimits() {
+                const integrations = this.globalSettings.integrations;
+                const previous = {
+                    say_chunk_chars: integrations.say_chunk_chars,
+                    say_max_audio_mb: integrations.say_max_audio_mb,
+                };
+                this.saveIntegrationSettings().then(err => {
+                    if (!err) return;
+                    Object.assign(integrations, previous);
                     this.macosSay.error = err;
                 });
             },

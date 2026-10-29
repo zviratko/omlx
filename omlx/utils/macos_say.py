@@ -59,8 +59,19 @@ logger = logging.getLogger(__name__)
 
 SAY_ENGINE = "say"              # model token that selects this engine
 SAY_PREFIX = "say:"             # model token carrying an explicit voice
-MAX_SAY_CHARS = 10000           # a whole long reply already; keep the cap honest
+MAX_SAY_CHARS = 200000          # a text this long is a mistake, not a reply
 OPENAI_INPUT_CHARS = 4096       # OpenAI's documented input limit for this call
+# Long replies are rendered in sentence-sized calls and stitched, so the
+# engine's own bound is bytes of audio, not characters: 24 kHz mono 16-bit is
+# 48 KB per second of speech whatever the text, while characters per second is
+# a property of the voice (measured here: 18 chars/s for Samantha, 5 chars/s
+# for the novelty voice this Mac ships as its English default).
+DEFAULT_CHUNK_CHARS = 1200      # ~1-2 sentences; one call per chunk
+DEFAULT_MAX_AUDIO_MB = 256      # ~89 minutes of speech
+MIN_CHUNK_CHARS = 200           # below this the per-call cost dominates
+MAX_CHUNK_CHARS = 20000         # `say` reads a file, so argv is not the limit
+MIN_MAX_AUDIO_MB = 1
+MAX_MAX_AUDIO_MB = 4096
 LONG_INPUT_SPEAK = "speak"      # operator policy: say the whole thing
 LONG_INPUT_REJECT = "reject"    # operator policy: refuse like OpenAI does
 LONG_INPUT_POLICIES = (LONG_INPUT_SPEAK, LONG_INPUT_REJECT)
@@ -71,6 +82,7 @@ _TIMEOUT_S = 180
 # 24 kHz, not 22.05: libsndfile encodes Opus only at 8/12/16/24/48 kHz, so a
 # 22.05 kHz render breaks response_format=opus for this engine alone.
 _SAMPLE_RATE = 24000
+BYTES_PER_AUDIO_SECOND = _SAMPLE_RATE * 2  # mono 16-bit, 48 KB per second
 _BASE_WPM = 175                 # say's own pace is ~175-190; multipliers ride on it
 _CACHE_TTL_S = 300
 _PROBE_TTL_S = 300              # system settings rarely change, but they can
@@ -1040,18 +1052,45 @@ def _speed_wpm(speed: Any) -> Optional[str]:
     return str(max(80, min(450, round(_BASE_WPM * mult))))
 
 
+def clean_chunk_chars(raw: Any) -> int:
+    """Chunk size in characters: 0 switches segmentation off (one `say` call
+    whatever the length), anything else lands in the useful range. Junk means
+    the default, because a settings file with `null` in it is not a request to
+    stop speaking."""
+    if raw is None:
+        return DEFAULT_CHUNK_CHARS
+    try:
+        value = int(float(str(raw).strip()))
+    except (TypeError, ValueError):
+        return DEFAULT_CHUNK_CHARS
+    if value <= 0:
+        return 0
+    return max(MIN_CHUNK_CHARS, min(MAX_CHUNK_CHARS, value))
+
+
+def clean_max_audio_mb(raw: Any) -> int:
+    """Ceiling in megabytes of AUDIO, the unit that means the same thing on
+    every Mac and for every voice."""
+    if raw is None:
+        return DEFAULT_MAX_AUDIO_MB
+    try:
+        value = int(float(str(raw).strip()))
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_AUDIO_MB
+    return max(MIN_MAX_AUDIO_MB, min(MAX_MAX_AUDIO_MB, value))
+
+
 def long_input_error(text_len: int, policy: Any = LONG_INPUT_SPEAK) -> str | None:
     """Why this utterance must not be rendered, or ``None`` to render it.
 
     Two limits, on purpose. OpenAI's ``/v1/audio/speech`` documents 4096
     characters and answers 400 past it; an operator who wants that exact
-    behaviour picks ``reject``. Everyone else gets the whole utterance said,
-    up to a ceiling this Mac can still turn into audio in a few seconds:
-    measured here, `say` renders 8.3k characters (7.5 minutes of speech) in
-    7 s of wall time, so one call is cheap and stays one call. Splitting a
-    long reply across calls costs ~0.9 s of CPU each time, an order of
-    magnitude more for the same bytes, and buys nothing until the response
-    streams per segment, so this engine does not do it."""
+    behaviour picks ``reject``. Everyone else gets the whole utterance said:
+    the router splits it at sentence boundaries and stitches the pieces, which
+    costs about 0.9 s of setup per extra call (measured) and buys a bounded
+    render and a first byte that does not wait for the last sentence. Only the
+    absurd is refused here; the byte ceiling in the settings does the real
+    limiting, because characters say nothing about the size of the audio."""
     if text_len > MAX_SAY_CHARS:
         return (
             "input is %d characters; this engine speaks at most %d"
@@ -1092,8 +1131,21 @@ def synth_bytes(
         raise ValueError(refused)
     # An addressing failure is the caller's fault (LookupError), a synthesis
     # failure is the machine's (RuntimeError): endpoints map them apart.
-    target = route(voice, language, text, voices)
-    args = ["say"] + (["-v", target] if target else [])
+    return synth_wav(text, route(voice, language, text, voices), speed)
+
+
+def synth_wav(text: str, address: Any = None, speed: Any = None) -> bytes:
+    """Render one string with an ALREADY resolved voice address.
+
+    :func:`synth_bytes` routes, which is right for a single utterance and
+    wrong per segment: re-detecting the language sentence by sentence can hand
+    one Czech answer to three different voices. The segmentation path routes
+    once, then calls this for each piece. ``address`` empty means 'let macOS
+    decide', exactly as :func:`route` returns when nothing answers.'"""
+    text = (text or "").strip()
+    if not text:
+        raise ValueError("nothing to say")
+    args = ["say"] + (["-v", str(address)] if address else [])
     wpm = _speed_wpm(speed)
     if wpm:
         args += ["-r", wpm]
