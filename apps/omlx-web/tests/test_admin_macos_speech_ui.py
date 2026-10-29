@@ -198,28 +198,31 @@ def test_dashboard_defaults_to_speaking_long_text():
     )
 
 
-def test_the_two_limits_are_editable_on_the_card():
-    """Segment size and audio ceiling belong to the operator, like the policy
-    above them: they are settings, not constants the caller has to guess."""
-    for field, key in (
-        ("say_chunk_chars", "chunk_label"),
-        ("say_max_audio_mb", "max_label"),
-    ):
-        at = CARD.index(f"speech.{key}")
-        block = CARD[at - 400 : at + 900]
-        assert f'x-model.number="globalSettings.integrations.{field}"' in block, field
-        assert 'type="number"' in block, field
-        assert "@change=\"saveSayLimits()\"" in block, field
-    assert "say_chunk_chars" in DASHBOARD_JS and "say_max_audio_mb" in DASHBOARD_JS
+def test_the_segment_size_is_editable_and_the_ceiling_knob_is_gone():
+    """Segment size belongs to the operator, like the policy above it. The
+    audio ceiling does not: 256 MB is about ninety minutes of speech, no chat
+    reply gets near it, so the card carries no knob for it (decided
+    2026-10-29) - and the dead shape must stay dead."""
+    at = CARD.index("speech.chunk_label")
+    block = CARD[at - 400 : at + 900]
+    assert 'x-model.number="globalSettings.integrations.say_chunk_chars"' in block
+    assert 'type="number"' in block
+    assert "@change=\"saveSayLimits()\"" in block
+    assert "say_chunk_chars" in DASHBOARD_JS
+    assert "say_max_audio_mb" not in DASHBOARD_JS, "the JS kept a dead field"
+    assert "speech.max_label" not in CARD and "speech.max_hint" not in CARD
 
 
-def test_the_ceiling_hint_explains_bytes_rather_than_characters():
-    """Characters are the unit that lies about cost here: the same text is
-    3x the audio on a slow voice. The hint has to say what the number means."""
-    hint = EN["settings.integrations.speech.max_hint"]
-    assert "48 KB" in hint and "second" in hint, "the rate that makes MB meaningful"
-    assert "minute" in hint, "what the default actually buys"
-    assert "never cut short" in hint, "the refusal promise, in the owner's words"
+def test_the_ceiling_copy_is_out_of_every_locale():
+    """The hint used to explain what the MB number bought. The number is no
+    longer on the card, so no locale may still carry its copy - a translated
+    string for a control that does not exist is noise waiting for a bug."""
+    assert "settings.integrations.speech.max_label" not in EN
+    assert "settings.integrations.speech.max_hint" not in EN
+    for locale in sorted((ROOT / "omlx_web/i18n").glob("*.json")):
+        data = json.loads(locale.read_text(encoding="utf-8"))
+        assert "settings.integrations.speech.max_label" not in data, locale.name
+        assert "settings.integrations.speech.max_hint" not in data, locale.name
     chunk = EN["settings.integrations.speech.chunk_hint"]
     assert "0 never splits" in chunk, "the escape hatch is documented where it is set"
 

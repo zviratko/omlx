@@ -205,7 +205,6 @@
                     say_voices: {},
                     say_long_input: 'speak',
                     say_chunk_chars: 1200,
-                    say_max_audio_mb: 256,
                     say_supported: false,
                 },
                 external_engines: {
@@ -4428,7 +4427,6 @@
                             say_voices: this.sayVoicesMap(),
                             say_long_input: this.globalSettings.integrations.say_long_input,
                             say_chunk_chars: this.globalSettings.integrations.say_chunk_chars,
-                            say_max_audio_mb: this.globalSettings.integrations.say_max_audio_mb,
                         }),
                     });
                     if (!response.ok) {
@@ -4577,15 +4575,16 @@
                 });
             },
 
-            // Segment size and audio ceiling. The server clamps both to the
-            // bounds the engine actually honours, so a field that reads 5 after
-            // a reload is not a bug - the next page load shows the truth, and
-            // min/max on the input keeps the guess close to it.
+            // Segment size. The server clamps it to the bound the engine
+            // actually honours, so a field that reads 5 after a reload is not
+            // a bug - the next page load shows the truth, and min/max on the
+            // input keeps the guess close to it. The audio ceiling is fixed in
+            // the engine (256 MB, about ninety minutes of speech): there is
+            // nothing to tune there, only a refusal past the limit.
             saveSayLimits() {
                 const integrations = this.globalSettings.integrations;
                 const previous = {
                     say_chunk_chars: integrations.say_chunk_chars,
-                    say_max_audio_mb: integrations.say_max_audio_mb,
                 };
                 this.saveIntegrationSettings().then(err => {
                     if (!err) return;

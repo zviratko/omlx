@@ -537,8 +537,6 @@
   "settings.integrations.speech.long_reject": "Odmítnout jako OpenAI",
   "settings.integrations.speech.chunk_label": "Počet znaků na dílek řeči",
   "settings.integrations.speech.chunk_hint": "Dlouhou odpověď přečte po dílcích této velikosti a spojí je do jednoho souboru, takže server drží jen dílek, ne celou odpověď. Méně znaků znamená plynulejší průběh, více znamená méně času navíc. 0 nedělí nikdy.",
-  "settings.integrations.speech.max_label": "Nejdelší odpověď, kterou lze přečíst",
-  "settings.integrations.speech.max_hint": "Megabajty zvuku, protože právě ten odpověď skutečně stojí: tahle řeč má 48 KB za sekundu, takže 256 MB je zhruba 90 minut poslechu. Odpověď nad stropem se odmítne, zkrácená nikdy není.",
   "settings.integrations.speech.voices": "Hlas pro každý jazyk",
   "settings.integrations.speech.voices_hint": "Jeden hlas pro každý jazyk, na výběr jsou hlasy pro něj nainstalované. Stejné jméno v jiném jazyce je jiný hlas; pokud jazyk necháte na výchozím nastavení, rozhodne macOS.",
   "settings.integrations.speech.default_system": "Výchozí hlas macOS",

@@ -792,7 +792,7 @@ def say_endpoint(monkeypatch):
     monkeypatch.setattr(
         ar,
         "_macos_say_settings",
-        lambda: (True, {"cs-CZ": "Zuzana"}, "speak", 1200, 256),
+        lambda: (True, {"cs-CZ": "Zuzana"}, "speak", 1200),
     )
     calls = {"segments": [], "frames_per_char": 1}
 
@@ -851,17 +851,19 @@ def _drain_file(response):
     return data
 
 
-def _use(monkeypatch, ar, chunk=1200, mb=256, policy="speak"):
-    """Point the endpoint at one set of operator settings."""
+def _use(monkeypatch, ar, chunk=1200, policy="speak"):
+    """Point the endpoint at one set of operator settings. The audio ceiling
+    is not among them any more - it is the engine's fixed guardrail, and a
+    test that wants a small one patches macos_say.DEFAULT_MAX_AUDIO_MB."""
     monkeypatch.setattr(
-        ar, "_macos_say_settings", lambda: (True, {}, policy, chunk, mb)
+        ar, "_macos_say_settings", lambda: (True, {}, policy, chunk)
     )
 
 
 def _off(monkeypatch, ar):
     """Same, with the engine switched off."""
     monkeypatch.setattr(
-        ar, "_macos_say_settings", lambda: (False, {}, "speak", 1200, 256)
+        ar, "_macos_say_settings", lambda: (False, {}, "speak", 1200)
     )
 
 
@@ -1108,15 +1110,19 @@ def test_segmentation_can_be_switched_off(monkeypatch, say_endpoint):
 def test_the_audio_ceiling_refuses_rather_than_cutting_short(
     monkeypatch, say_endpoint
 ):
-    """Over the ceiling the caller gets a 400 that names the setting. A partial
-    file would be the worse answer, and so would a leaked spool."""
+    """Past the ceiling the caller gets a 400 that names the ceiling and the
+    way out - there is no setting to raise any more. A partial file would be
+    the worse answer, and so would a leaked spool."""
     import glob
     import os
     import tempfile
 
+    from omlx.utils import macos_say as engine
+
     ar, calls = say_endpoint
     before = set(glob.glob(os.path.join(tempfile.gettempdir(), "omlx-say-*")))
-    _use(monkeypatch, ar, chunk=300, mb=1)
+    _use(monkeypatch, ar, chunk=300)
+    monkeypatch.setattr(engine, "DEFAULT_MAX_AUDIO_MB", 1)
     calls["frames_per_char"] = 400  # ~800 KB of audio per character of text
     with pytest.raises(HTTPException) as exc:
         asyncio.run(
@@ -1157,21 +1163,24 @@ def test_an_encoded_reply_is_written_from_the_spool_file(
     assert not os.path.exists(seen["src"]), "the WAV spool must not outlive the encode"
 
 
-def test_the_two_limits_are_settings_not_surprises():
-    """The card writes them, the endpoint reads them, and both are clamped on
-    the way in: a stray 0 in the ceiling would otherwise refuse every request."""
+def test_the_segment_size_is_a_setting_and_the_ceiling_is_not():
+    """The card writes the segment size and the loader clamps it on the way in.
+    The audio ceiling is no longer a setting at all (user 2026-10-29: 256 MB
+    is about ninety minutes of speech, no reply needs a knob for it): the
+    settings schema must not carry it, and a settings.json left over from the
+    version that did must simply drop the key."""
     from omlx.settings import IntegrationSettings
 
-    loaded = IntegrationSettings.from_dict(
-        {"say_chunk_chars": 50, "say_max_audio_mb": 0}
-    )
+    loaded = IntegrationSettings.from_dict({"say_chunk_chars": 50})
     assert loaded.say_chunk_chars == 200, "raised to the floor, not taken literally"
-    assert loaded.say_max_audio_mb == 1, "a ceiling of zero is refused by the cleaner"
     junk = IntegrationSettings.from_dict({"say_chunk_chars": "off"})
     blank = IntegrationSettings.from_dict({"say_chunk_chars": None})
     assert junk.say_chunk_chars == 1200, "junk reads as the default"
     assert blank.say_chunk_chars == 1200, "absent reads as the default too"
-    assert IntegrationSettings().to_dict()["say_max_audio_mb"] == 256
+    assert not hasattr(IntegrationSettings(), "say_max_audio_mb")
+    stale = IntegrationSettings.from_dict({"say_max_audio_mb": 1})
+    assert "say_max_audio_mb" not in stale.to_dict(), \
+        "an old settings file must not resurrect the ceiling"
 
 
 # --------------------------------------------------------- settings schema --

@@ -537,8 +537,6 @@
   "settings.integrations.speech.long_reject": "Reject it, like OpenAI",
   "settings.integrations.speech.chunk_label": "Characters per speech segment",
   "settings.integrations.speech.chunk_hint": "A long reply is spoken in pieces this size and stitched back into one file, so the server holds a piece rather than the whole answer. Fewer characters give more even progress, more of them spend less time on setup. 0 never splits.",
-  "settings.integrations.speech.max_label": "Largest reply that can be spoken",
-  "settings.integrations.speech.max_hint": "Megabytes of audio, which is what a reply really costs: this speech is 48 KB per second, so 256 MB is around 90 minutes of listening. A reply past the ceiling is refused, never cut short.",
   "settings.integrations.speech.voices": "Voice per language",
   "settings.integrations.speech.voices_hint": "One voice per language, chosen from the voices installed for it. A name that also exists in other languages is a different voice there; leaving a language on its default lets macOS decide.",
   "settings.integrations.speech.default_system": "macOS default",
