@@ -388,6 +388,32 @@ def test_a_named_voice_outlives_a_language_field_but_not_its_own(shared_names):
     assert ms.route("Rico", "pt-BR", "Ola", {}) == "com.apple.eloquence.it-IT.Rico"
 
 
+NAMED_ROSTER = """Albert              en_US    # Hello! My name is Albert.
+Rico                 it_IT    # Ciao! Mi chiamo Rico.
+Rico                 pt_BR    # Ola! Meu nome e Rico.
+Zuzana               cs_CZ    # Ahoj! Jsem Zuzana.
+"""
+
+
+def test_a_pinned_language_survives_a_row_whose_identifier_is_just_its_name(
+    monkeypatch,
+):
+    """`say -v ?` alone yields rows whose identifier IS the display name - the
+    non-unique string. Without care a pinned language then matched that name
+    first and returned whichever row happened to be listed, quietly answering
+    'Rico:pt-BR' with the Italian voice."""
+    rows = ms.parse_voices(NAMED_ROSTER)   # identifiers are the bare names
+    monkeypatch.setattr(ms, "available", lambda: True)
+    monkeypatch.setattr(ms, "list_voices", lambda force=False: list(rows))
+    assert [r["identifier"] for r in rows if r["name"] == "Rico"] == ["Rico", "Rico"]
+    assert ms.resolve("Rico")["locale"] == "it-IT", "no language: first row, as ever"
+    assert ms.resolve("Rico:pt-BR")["locale"] == "pt-BR"
+    assert ms.resolve("Rico:it-IT")["locale"] == "it-IT"
+    assert ms.resolve("Rico:de-DE") is None
+    with pytest.raises(LookupError, match="pt-BR"):
+        ms.route("Rico:de-DE", None, "Hallo", {})
+
+
 def test_display_names_with_spaces_and_parentheses_stay_addressable(shared_names):
     """'(Premium)' is part of how macOS lists the voice, and the model field is
     JSON, so a space needs no encoding - pinned so nobody 'cleans' it away."""

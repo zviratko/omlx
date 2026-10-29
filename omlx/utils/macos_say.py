@@ -550,7 +550,13 @@ def resolve(
             if v.get("installed") is not False  # downloadable-but-absent
         ]
         for v in rows:
-            if v["identifier"] == want:
+            # A voice only `say -v ?` knows carries its DISPLAY NAME as its
+            # identifier - the very string that is not unique. Under a pinned
+            # language such a row only answers if it speaks that language; a
+            # real identifier (dotted, locale inside) passes the same test.
+            if v["identifier"] == want and (
+                not language or locale_score(language, v.get("locale")) > 0
+            ):
                 return v
         shares = [v for v in rows if v["name"] == want]
         if not shares:
